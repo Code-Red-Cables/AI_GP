@@ -122,11 +122,13 @@ altitude traces and `source` field.
   the mode switch may have failed. Check the sim's HUD — it should show "FLIGHT MODE: ANGLE".
   If the mode is wrong, try manually investigating the sim's mode names and editing
   `controller.py` `request_offboard_mode()` to try them.
-- **Drone climbs uncontrollably (24+ m/s vertical)** → usually under-tuned `HOVER_THRUST` in
+- **Drone climbs uncontrollably (24+ m/s vertical or ~5.5 m/s steady climb)** → usually under-tuned `HOVER_THRUST` in
   `controller.py`. The attitude control can track desired vertical velocity, but if the
-  collective thrust baseline is wrong, the drone climbs (or sinks). **Re-calibrate `HOVER_THRUST`:**
-  arm the drone, steer toward a gate slowly, and watch the `[FLY]` console line altitude and the `att=`
-  angles. If hovering level causes climb, lower `HOVER_THRUST`. Once level flight is stable, raise
-  `KP_LEAN` for responsiveness. See Step 4 tuning checklist.
+  collective thrust baseline is wrong, the drone climbs (or sinks). First live test (logs/run_1780521287.jsonl) 
+  showed steady climb at ~5.5 m/s with `HOVER_THRUST=0.5` because that was above the racing quad's true hover 
+  throttle and `KP_THRUST=0.05` was too weak to overcome it. Current starting values: `HOVER_THRUST=0.35`, 
+  `KP_THRUST=0.15`. **Re-calibrate `HOVER_THRUST`:** arm the drone, steer toward a gate slowly, and watch the 
+  `[FLY]` console line altitude and the `att=` angles. If hovering level causes climb, lower `HOVER_THRUST` further. 
+  Once level flight is stable, raise `KP_LEAN` for responsiveness. See Step 4 tuning checklist.
 - `src=known` only, never `vision` → HSV thresholds need calibration (Step 2).
 - Watchdog `src=watchdog_hover` → telemetry stopped arriving (the planner safely holds).

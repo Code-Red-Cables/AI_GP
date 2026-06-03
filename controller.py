@@ -59,13 +59,17 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
 # thrust that tracks the desired vertical velocity. Mask uses the quaternion + thrust
 # and ignores the body-rate fields.
 #
-# These gains MUST be tuned against the sim. Start by confirming HOVER_THRUST holds
-# altitude (level, zero lean), then raise KP_LEAN for responsiveness.
+# These gains MUST be tuned against the sim. HOVER_THRUST is the critical one: the
+# first observed flight climbed away steadily (~5.5 m/s, to 100 m+) because 0.5 was
+# well above this racing quad's true hover throttle, and the vertical loop was too weak
+# to pull it back (logs/run_1780521287.jsonl). Tuning order: find the HOVER_THRUST that
+# holds altitude (level, zero lean) — if it climbs lower it, if it sinks raise it — then
+# raise KP_LEAN for responsiveness. KP_THRUST sets how hard we fight vertical error.
 # --------------------------------------------------------------------------------------
-HOVER_THRUST = 0.5         # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
-KP_THRUST = 0.05           # extra thrust per (m/s) of vertical-velocity error
-THRUST_MIN, THRUST_MAX = 0.1, 0.9
-KP_LEAN = 0.15             # rad of lean per (m/s) of desired horizontal velocity
+HOVER_THRUST = 0.15        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
+KP_THRUST = 0.05           # extra thrust per (m/s) of vertical-velocity error (more authority)
+THRUST_MIN, THRUST_MAX = 0.05, 0.9  # allow near-zero thrust so we can actually descend
+KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
 MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
 
 ATTITUDE_CONTROL_MASK = (

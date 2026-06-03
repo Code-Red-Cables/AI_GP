@@ -121,7 +121,7 @@ New functions and constants:
 - `_euler_to_quat(roll, pitch, yaw) -> [w,x,y,z]` — aerospace ZYX euler → quaternion.
 - `send_attitude_target(conn, system_boot_ms, roll, pitch, yaw, thrust)` — sends `SET_ATTITUDE_TARGET` with a mask that uses the quaternion + thrust and ignores body-rate fields.
 - `velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vz_now) -> (roll, pitch, yaw, thrust)` — maps the planner's desired NED velocity and yaw into body-frame lean angles and thrust that tracks desired vertical velocity. Signs: forward→nose-down pitch (negative), rightward→right roll (positive), climb command→thrust > HOVER, descend→thrust < HOVER. Lean angles capped at `±MAX_LEAN_RAD`.
-- **Tunable gains (must be calibrated on live sim):** `HOVER_THRUST=0.5` (collective thrust that holds altitude; TUNE FIRST), `KP_THRUST=0.05` (extra thrust per m/s vertical error), `KP_LEAN=0.15` (rad lean per m/s horizontal velocity), `MAX_LEAN_RAD=radians(20.0)`, `THRUST_MIN=0.1, THRUST_MAX=0.9`.
+- **Tunable gains (must be calibrated on live sim):** `HOVER_THRUST=0.35` (collective thrust that holds altitude; TUNE FIRST), `KP_THRUST=0.15` (extra thrust per m/s vertical error), `KP_LEAN=0.15` (rad lean per m/s horizontal velocity), `MAX_LEAN_RAD=radians(20.0)`, `THRUST_MIN=0.05, THRUST_MAX=0.9`.
 - Old `send_velocity_ned()` function **retained but unused** (kept for reference + offline test).
 
 **Mode-entry sequence (required):** The sim boots in ACRO mode and must switch to ANGLE before

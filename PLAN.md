@@ -248,8 +248,8 @@ A minimal end-to-end loop that flies the known track open-loop, then closes the 
 > Flight control now uses **`SET_ATTITUDE_TARGET`** (roll/pitch/yaw quaternion + collective
 > thrust). The `Planner` remains the **guidance layer** (desired velocity + yaw toward the gate);
 > the `Controller` is now the **attitude layer** (maps velocity to lean angles and thrust tracking
-> desired vertical velocity). New constants in `controller.py`: `HOVER_THRUST=0.5` (tunable collective
-> thrust for altitude hold), `KP_THRUST=0.05`, `KP_LEAN=0.15`, `MAX_LEAN_RAD=20°`, `THRUST_MIN/MAX=0.1/0.9`.
+> desired vertical velocity). New constants in `controller.py`: `HOVER_THRUST=0.35` (tunable collective
+> thrust for altitude hold), `KP_THRUST=0.15`, `KP_LEAN=0.15`, `MAX_LEAN_RAD=20°`, `THRUST_MIN/MAX=0.05/0.9`.
 > New functions: `_euler_to_quat()`, `send_attitude_target()`, `velocity_to_attitude()`. Offline tests
 > pass (new `test_velocity_to_attitude_signs` checks forward→nose-down pitch, rightward→roll-right,
 > climb→thrust>HOVER, capping). **IMPLEMENTED, PENDING LIVE-SIM TUNING** — especially `HOVER_THRUST`
@@ -287,7 +287,7 @@ A minimal end-to-end loop that flies the known track open-loop, then closes the 
 | `tools/capture_frames.py` | Dump live FPV frames to disk for tuning (debug-only, never in timed run). | n/a |
 | `tools/hsv_tuner.py` | Trackbar UI to calibrate HSV thresholds against captured frames. | n/a |
 | `planner.py` | Pick the active gate + emit a target setpoint (desired velocity + yaw) to `shared_data['target']` — the **guidance layer**. | partly |
-| `controller.py` (modify) | Map planner's desired velocity to attitude+thrust for `SET_ATTITUDE_TARGET` in ANGLE mode — the **attitude layer**. `<100 Hz`; dry-run flag. New functions: `_euler_to_quat()`, `send_attitude_target()`, `velocity_to_attitude()`. Tunable gains: `HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, `MAX_LEAN_RAD`, `THRUST_MIN/MAX`. | n/a |
+| `controller.py` (modify) | Map planner's desired velocity to attitude+thrust for `SET_ATTITUDE_TARGET` in ANGLE mode — the **attitude layer**. `<100 Hz`; dry-run flag. New functions: `_euler_to_quat()`, `send_attitude_target()`, `velocity_to_attitude()`. Tunable gains (current values): `HOVER_THRUST=0.35`, `KP_THRUST=0.15`, `KP_LEAN=0.15`, `MAX_LEAN_RAD=20°`, `THRUST_MIN/MAX=0.05/0.9`. | n/a |
 
 `vision/` is a package (add `__init__.py`). Do **not** put cv2/HSV logic in `camera_model.py`
 — geometry must stay dependency-light so its unit tests run without a frame or the sim.
@@ -380,9 +380,12 @@ Turn a `GateDetection` into a position estimate:
   - Rotate desired velocity into the current heading frame (`body_fwd = cos(yaw)*vn + sin(yaw)*ve`,
     `body_lat = -sin(yaw)*vn + cos(yaw)*ve`)
   - `pitch = -KP_LEAN * body_fwd`, `roll = KP_LEAN * body_lat`, each capped at `±MAX_LEAN_RAD`
-  - All gains (`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, `MAX_LEAN_RAD`, `THRUST_MIN/MAX`) are
-    **tunable and must be calibrated on the live sim** (especially `HOVER_THRUST` for steady
-    altitude hold in ANGLE mode). Respect `CONTROL_HZ < 100` (set 60). Keep a **`DRY_RUN` flag**:
+  - All gains are **tunable and must be calibrated on the live sim**. Current values (after first live test):
+    `HOVER_THRUST=0.35` (critical knob: if drone climbs, lower it; if sinks, raise it),
+    `KP_THRUST=0.15` (vertical authority — increased from 0.05 to ensure descent commands bite),
+    `KP_LEAN=0.15` (horizontal lean), `MAX_LEAN_RAD=20°`, `THRUST_MIN=0.05, THRUST_MAX=0.9`
+    (lowered MIN from 0.1 to allow near-zero thrust so alt_guard can drive descent).
+    Respect `CONTROL_HZ < 100` (set 60). Keep a **`DRY_RUN` flag**:
     when set, compute and log/print commands but **don't send** flight setpoints — lets us validate
     perception + planning safely before the drone moves.
 
@@ -448,12 +451,15 @@ thread's internals — `shared_data` is the only contract.
   identified and fixed: flight control now uses `SET_ATTITUDE_TARGET` (attitude quaternion +
   collective thrust in ANGLE mode). The `Planner` emits desired NED velocity + yaw (guidance
   layer); the `Controller` maps this to roll/pitch/yaw/thrust (attitude layer) via the
-  `velocity_to_attitude()` function. Constants (`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`,
-  `MAX_LEAN_RAD`, `THRUST_MIN/MAX`) are **tunable and must be calibrated on the live sim**.
+  `velocity_to_attitude()` function. First live test (2026-06-03) revealed `HOVER_THRUST` was the
+  critical tuning knob: with 0.5 the drone climbed steadily at ~5.5 m/s to 100+ m because that
+  was above the racing quad's true hover throttle and `KP_THRUST=0.05` was too weak to pull it back
+  (logs/run_1780521287.jsonl). Values adjusted: `HOVER_THRUST` → 0.35, `KP_THRUST` → 0.15 to enable
+  decisive altitude control and descent authority; `THRUST_MIN` → 0.05 to allow near-zero thrust.
   Offline tests pass (`test_velocity_to_attitude_signs` verifies mapping signs and capping).
   On the live sim, confirm the HUD shows "FLIGHT MODE: ANGLE" post-startup, then tune gains
   in this order: (1) `HOVER_THRUST` first — ensure the drone holds altitude level with zero
-  lean when armed; if it climbs/sinks, adjust `HOVER_THRUST` up/down; (2) once altitude is
+  lean when armed; if it climbs, lower it further; if it sinks, raise it; (2) once altitude is
   stable, raise `KP_LEAN` for forward/lateral responsiveness; (3) fine-tune other gains.
   If the drone still behaves unexpectedly, the sim may need ACRO (raw rate) mode instead of
   ANGLE — investigate and document.

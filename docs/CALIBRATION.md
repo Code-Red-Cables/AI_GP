@@ -121,9 +121,9 @@ the live simulator, in this order**, before guidance gains are adjusted.
 
 | constant            | default | meaning                                                        | symptom → change                                                             |
 | ------------------- | ------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `HOVER_THRUST`      | 0.5     | collective thrust (0..1) that holds altitude level (TUNE FIRST)| **climbs while level/hovering** → lower; **sinks** → raise                   |
-| `KP_THRUST`         | 0.05    | extra thrust per m/s of vertical-velocity error                | sluggish altitude correction → raise; altitude oscillates → lower            |
-| `THRUST_MIN`        | 0.1     | minimum collective thrust (safety floor)                       | rarely changed unless drone goes too slow                                   |
+| `HOVER_THRUST`      | 0.35    | collective thrust (0..1) that holds altitude level (TUNE FIRST)| **climbs while level/hovering** → lower; **sinks** → raise                   |
+| `KP_THRUST`         | 0.15    | extra thrust per m/s of vertical-velocity error                | sluggish altitude correction → raise; altitude oscillates → lower            |
+| `THRUST_MIN`        | 0.05    | minimum collective thrust (safety floor)                       | rarely changed unless drone goes too slow                                   |
 | `THRUST_MAX`        | 0.9     | maximum collective thrust (safety cap)                         | rarely changed unless drone can't climb fast enough                         |
 | `KP_LEAN`           | 0.15    | rad of lean per m/s of horizontal-velocity error               | **sluggish forward/lateral flight** → raise; oscillates/overshoots → lower  |
 | `MAX_LEAN_RAD`      | 20.0°   | cap on commanded pitch/roll angle                              | rarely tuned; raise if pitch/roll authority seems limited                   |
@@ -164,12 +164,16 @@ velocity is capped separately at `MAX_VSPEED` (1.0 m/s by default) because the u
 FPV camera (20° tilt) biases gate elevation upward: a gate near image-centre is
 estimated to sit well above the drone. Without a vertical speed limit, the planner can
 command an aggressive climb. The controller's thrust loop (`thrust = HOVER_THRUST + KP_THRUST*(vz_now - vd)`)
-tracks the desired vertical velocity, but if `HOVER_THRUST` is poorly calibrated or `KP_THRUST`
-is too high, the drone can overshoot and climb significantly (observed: 586 m runaway in early tests).
+tracks the desired vertical velocity. The first live-sim test revealed that `HOVER_THRUST` was the critical tuning knob: 
+with `HOVER_THRUST=0.5`, the drone climbed steadily at ~5.5 m/s to 100+ m altitude even though `alt_guard` 
+was commanding descent, because 0.5 was well above the racing quad's true hover throttle and `KP_THRUST=0.05` was 
+too weak to pull it back (evidence: logs/run_1780521287.jsonl). Values have been adjusted: `HOVER_THRUST` → 0.35 
+and `KP_THRUST` → 0.15 to enable decisive altitude control. These are current tuning values; continue bisecting 
+`HOVER_THRUST` (lower if it still climbs, raise if it sinks) and `KP_THRUST` as needed for your aircraft.
 If the drone climbs past `MAX_ALT_M` (15 m), the planner abandons the gate target and publishes
 a controlled descent at `MAX_VSPEED` until back below the ceiling (`target['source'] = 'alt_guard'`,
 visible in logs). This is a **client-side fail-safe** — if you hit it frequently, the root cause
-is usually an under-tuned `HOVER_THRUST` or over-tuned `KP_THRUST`. Re-calibrate `HOVER_THRUST`
+is usually an under-tuned `HOVER_THRUST`. Re-calibrate `HOVER_THRUST`
 first (see §5a) and ensure it holds altitude level when hovering.
 
 ---
