@@ -24,7 +24,7 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # Timesync request Loop
     # -------------------------------
     print("Setting up Timesync loop...", flush=True)
-    ts_loop = TimeSync(sim_conn, shared_data)
+    ts_loop = TimeSync.create_timesync(sim_conn, shared_data)
 
     # -------------------------------
     # Connect Vision receiver
