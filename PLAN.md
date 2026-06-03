@@ -234,6 +234,15 @@ A minimal end-to-end loop that flies the known track open-loop, then closes the 
 
 ## 8. Vision-first vertical slice — detailed step-by-step plan (current focus)
 
+> **STATUS (2026-06-03): Days 1–7 implemented on branch `modified-starter` and
+> verified offline.** Modules built: `camera_model.py`, `vision/gate_detector.py`,
+> `gate_estimator.py`, `planner.py`, `logger.py`, telemetry store in `mavlink_rx.py`,
+> velocity control in `controller.py`, vision wiring in `vision_rx.py`, plus
+> `tools/capture_frames.py` + `tools/hsv_tuner.py` and tests
+> (`test_camera_model.py`, `test_pipeline_smoke.py`). See `docs/IMPLEMENTATION.md`.
+> **Remaining (needs the live sim + a human):** calibrate HSV thresholds and tune
+> guidance gains — see `docs/CALIBRATION.md`. `main.py` ships `DRY_RUN=True`.
+>
 > **Goal of this slice:** a classic-CV perception pipeline that finds the next gate in the
 > FPV frame, recovers the gate's position relative to the drone (pinhole reverse-projection),
 > and drives the drone through it. Built as **small, independently testable modules** so each

@@ -12,7 +12,15 @@ The committed code on `main` is the organizer-provided **example client**: it co
 Vision + Telemetry → Perception → Planning → Control → Pilot Commands → Sim
 ```
 
-`PLAN.md` is the engineering plan and the **source of truth for requirements, the current bug list, and intended design** — read it before changing behavior. The authoritative spec is `notes/AI Grand Prix Tech Specs.pdf` (extracted text in `notes/_specs_text.txt`).
+The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-starter` branch (perception → planning → velocity control), verified offline; what remains is HSV calibration and on-sim flight tuning.
+
+### Documentation map
+- `PLAN.md` — engineering plan, requirements, original bug list, intended design (source of truth before changing behavior). §8 is the vision-slice plan.
+- `docs/IMPLEMENTATION.md` — what's built, module-by-module, the geometry math, and the `shared_data` schema/contract.
+- `docs/TESTING.md` — how to run the offline test suites and what each asserts.
+- `docs/CALIBRATION.md` — HSV calibration, detector-filter and guidance-gain tuning, reading run logs.
+- `notes/VERIFY.md` — launching the sim and the end-to-end verification runbook.
+- `notes/AI Grand Prix Tech Specs.pdf` — authoritative spec (extracted text in `notes/_specs_text.txt`).
 
 ## Running
 
