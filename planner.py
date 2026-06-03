@@ -12,7 +12,7 @@ The planner reads the shared blackboard each control tick and decides where to g
    **hover** (zero velocity) rather than guessing — a safety watchdog.
 
 Output is written to ``shared_data['target']`` as a NED velocity command + desired
-yaw; `controller.py` turns it into a SET_POSITION_TARGET_LOCAL_NED message.
+yaw; `controller.py` maps it to attitude+thrust (roll/pitch/yaw/thrust) via SET_ATTITUDE_TARGET.
 """
 
 import math
@@ -25,7 +25,13 @@ import camera_model as cm
 # --------------------------------------------------------------------------------------
 # Guidance tuning (start conservative; tune against the deterministic course).
 # --------------------------------------------------------------------------------------
-MAX_SPEED = 2.0            # m/s cap on commanded velocity
+MAX_SPEED = 2.0            # m/s cap on commanded velocity magnitude
+MAX_VSPEED = 1.0           # m/s cap on the *vertical* component (climb or descend).
+                           # The FPV camera is tilted up 20deg, so a gate seen near
+                           # image-centre is estimated well above the drone, and a single
+                           # size-based range is noisy; without a separate vertical limit
+                           # the guidance commands an aggressive climb that the vehicle's
+                           # vertical loop overshoots. Keep this < MAX_SPEED.
 KP_POS = 3              # proportional gain: speed = KP_POS * distance, capped
 PASS_THROUGH_DIST = 2.5    # m: within this range, punch through at full speed
 ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the waypoint
@@ -33,6 +39,13 @@ ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the wa
 CONF_MIN = 0.40            # min vision confidence to trust a detection
 VISION_TIMEOUT_NS = 300_000_000    # 300 ms: older vision is "stale"
 TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without pose -> hover (watchdog)
+
+# Altitude-envelope safety guard. NED z is negative-up with the origin at the arm
+# point on the ground; race gates sit only a few metres up. If we ever climb past
+# MAX_ALT_M the vertical loop has run away (observed: a 586 m climb in
+# logs/run_1780515186.jsonl), so we abandon the gate target and descend at MAX_VSPEED
+# until back below the ceiling. A pure client-side fail-safe.
+MAX_ALT_M = 15.0           # m above the arm point we ever allow before recovering
 
 
 def _clamp_speed(vec, max_speed):
@@ -110,26 +123,40 @@ class Planner:
 
         return None, 'no_target'
 
+    def _publish(self, target):
+        """Store the target on the blackboard and return it."""
+        with self.data['lock']:
+            self.data['target'] = target
+        return target
+
     def compute_target(self):
         """Compute and publish the current velocity setpoint. Returns the target dict."""
         now = time.time_ns()
         s = self._snapshot()
         position, rpy = self._pose(s)
+        yaw_hold = rpy[2] if rpy else 0.0
 
-        # Watchdog: no recent pose at all -> hover.
+        # Watchdog: no recent pose at all -> hover (we'd otherwise be flying blind).
         att_ts = s['attitude']['ts'] if s['attitude'] else (s['odometry']['ts'] if s['odometry'] else None)
         telem_stale = att_ts is None or (now - att_ts) > TELEM_TIMEOUT_NS
+        if telem_stale:
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'source': 'watchdog_hover', 'ts': now})
+
+        # Altitude-envelope safety guard (overrides the gate target). NED z is
+        # negative-up, so height above the arm point is -z. Past the ceiling the
+        # vertical loop has run away -> abandon the gate and descend back down.
+        if position is not None:
+            altitude = -float(position[2])
+            if altitude > MAX_ALT_M:
+                return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, MAX_VSPEED),
+                                      'yaw': yaw_hold, 'range_m': altitude,
+                                      'source': 'alt_guard', 'ts': now})
 
         offset, source = self._target_offset_ned(s, now)
-
-        if telem_stale or offset is None:
-            target = {'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
-                      'yaw': (rpy[2] if rpy else 0.0),
-                      'source': 'hover' if not telem_stale else 'watchdog_hover',
-                      'ts': now}
-            with self.data['lock']:
-                self.data['target'] = target
-            return target
+        if offset is None:
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'source': 'hover', 'ts': now})
 
         dist = float(np.linalg.norm(offset))
         if dist <= ARRIVE_DIST:
@@ -142,15 +169,17 @@ class Planner:
         direction = offset / dist if dist > 1e-9 else np.zeros(3)
         vel_ned = _clamp_speed(direction * speed, MAX_SPEED)
 
+        # Cap the vertical component separately. The up-tilted camera biases the gate
+        # elevation upward and the range estimate is noisy, so a large commanded
+        # climb/descent is rarely justified and is what triggers vertical overshoot.
+        vd = max(-MAX_VSPEED, min(MAX_VSPEED, float(vel_ned[2])))
+
         # Point the nose (and thus the camera) at the gate: NED yaw, 0=North,+East.
         yaw = math.atan2(offset[1], offset[0])
 
-        target = {'mode': 'velocity',
-                  'vel_ned': tuple(float(c) for c in vel_ned),
-                  'yaw': float(yaw),
-                  'range_m': dist,
-                  'source': source,
-                  'ts': now}
-        with self.data['lock']:
-            self.data['target'] = target
-        return target
+        return self._publish({'mode': 'velocity',
+                              'vel_ned': (float(vel_ned[0]), float(vel_ned[1]), vd),
+                              'yaw': float(yaw),
+                              'range_m': dist,
+                              'source': source,
+                              'ts': now})

@@ -84,11 +84,11 @@ def test_planner_watchdog():
 
 
 def test_controller_send_path():
-    """Verify the velocity send builds a valid MAVLink call (capture args, no socket)."""
+    """Verify the attitude send builds a valid MAVLink call (capture args, no socket)."""
     captured = {}
 
     class FakeMav:
-        def set_position_target_local_ned_send(self, *args):
+        def set_attitude_target_send(self, *args):
             captured["args"] = args
 
     class FakeConn:
@@ -96,9 +96,31 @@ def test_controller_send_path():
         target_component = 1
         mav = FakeMav()
 
-    ctrl.send_velocity_ned(FakeConn(), 0, 1.0, 0.0, -0.2, 0.5)
-    assert "args" in captured and len(captured["args"]) == 16, captured
-    print("PASS controller send  set_position_target_local_ned_send built OK")
+    ctrl.send_attitude_target(FakeConn(), 0, 0.0, -0.1, 0.5, 0.5)
+    # time_boot, sys, comp, mask, quat(list), rollrate, pitchrate, yawrate, thrust
+    assert "args" in captured and len(captured["args"]) == 9, captured
+    assert len(captured["args"][4]) == 4, "quaternion must have 4 elements"
+    print("PASS controller send  set_attitude_target built OK")
+
+
+def test_velocity_to_attitude_signs():
+    """ANGLE-mode mapping sign checks: forward -> nose-down, right -> roll-right, etc."""
+    # Heading North (yaw=0). Desired velocity due North (forward) -> nose-down pitch.
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((2.0, 0.0, 0.0), 0.0, 0.0, 0.0)
+    assert pitch < 0, f"forward flight should pitch nose-down (neg), got {pitch}"
+    assert abs(roll) < 1e-6, f"pure-forward should not roll, got {roll}"
+    # Desired velocity due East while heading North -> roll right (positive).
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((0.0, 2.0, 0.0), 0.0, 0.0, 0.0)
+    assert roll > 0, f"rightward flight should roll right (pos), got {roll}"
+    # Commanded climb (vd<0) while sinking (vz>0) -> more than hover thrust.
+    *_, thrust_climb = ctrl.velocity_to_attitude((0.0, 0.0, -1.0), 0.0, 0.0, 0.5)
+    *_, thrust_descend = ctrl.velocity_to_attitude((0.0, 0.0, 1.0), 0.0, 0.0, 0.0)
+    assert thrust_climb > ctrl.HOVER_THRUST, f"climb cmd should exceed hover, got {thrust_climb}"
+    assert thrust_descend < ctrl.HOVER_THRUST, f"descend cmd should drop thrust, got {thrust_descend}"
+    # Lean is capped.
+    roll, pitch, *_ = ctrl.velocity_to_attitude((100.0, 0.0, 0.0), 0.0, 0.0, 0.0)
+    assert abs(pitch) <= ctrl.MAX_LEAN_RAD + 1e-9, "pitch must be capped at MAX_LEAN_RAD"
+    print("PASS velocity->attitude  signs & caps OK")
 
 
 if __name__ == "__main__":
@@ -107,4 +129,5 @@ if __name__ == "__main__":
     test_planner_known_geometry()
     test_planner_watchdog()
     test_controller_send_path()
+    test_velocity_to_attitude_signs()
     print("ALL PIPELINE SMOKE TESTS PASSED")

@@ -12,7 +12,7 @@ The committed code on `main` is the organizer-provided **example client**: it co
 Vision + Telemetry → Perception → Planning → Control → Pilot Commands → Sim
 ```
 
-The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-starter` branch (perception → planning → velocity control), verified offline. **HSV is calibrated** (2026-06-03): the Round-1 gate is **red/orange (glowing)** using a two-piece hue mask → `LOWER_HSV=(0,150,150)`, `UPPER_HSV=(15,255,255)`, `LOWER_HSV2=(170,150,150)`, `UPPER_HSV2=(180,255,255)` in `vision/gate_detector.py` to handle the OpenCV hue wrap-around at 0/180 (see `docs/CALIBRATION.md` §2 for details and re-verification steps). What remains is on-sim flight tuning (fly with `DRY_RUN=False`, tune gains in `planner.py`). Note: `main.py` ships `DRY_RUN=True`, so the armed drone computes setpoints but **sends nothing and never moves** until you flip it to `False`.
+The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-starter` branch (perception → planning → attitude+thrust control), verified offline. **HSV is calibrated** (2026-06-03): the Round-1 gate is **red/orange (glowing)** using a two-piece hue mask → `LOWER_HSV=(0,0,80)`, `UPPER_HSV=(15,255,255)`, `LOWER_HSV2=(170,0,80)`, `UPPER_HSV2=(180,255,255)` in `vision/gate_detector.py` to handle the OpenCV hue wrap-around at 0/180 (see `docs/CALIBRATION.md` §2 for details and re-verification steps). The **control strategy was reworked** after discovery that the DCL simulator is a Betaflight-style FPV racer (boots in ACRO, runs in ANGLE self-levelling mode) with **no velocity or position loop** — velocity setpoints via `SET_POSITION_TARGET_LOCAL_NED` are silently ignored (evidence: logs/run_1780516557.jsonl shows 24 m/s uncontrolled climb while commanding descent). Flight control now uses **attitude+thrust** via `SET_ATTITUDE_TARGET` (roll/pitch/yaw + collective thrust), with the planner's velocity command mapped to small lean angles and a thrust that tracks desired vertical velocity. **IMPLEMENTED, PENDING LIVE-SIM TUNING** (gains especially HOVER_THRUST must be tuned). **CAUTION:** `main.py` currently ships with `DRY_RUN=False`, meaning the drone will attempt to fly on startup — set `DRY_RUN=True` for safe perception-only validation (computes commands but sends nothing).
 
 ### Documentation map
 - `PLAN.md` — engineering plan, requirements, original bug list, intended design (source of truth before changing behavior). §8 is the vision-slice plan.
@@ -34,9 +34,11 @@ python main.py
 - Target runtime is **Python 3.14.2 on Windows 11** (the sim does not run on Linux).
 - **Use the bundled interpreter** `C:\Users\rocky\docs\AI_GP\PyAIPilotExample\myenv\Scripts\python.exe` — it has `numpy`/`cv2`/`pymavlink`; the system `py` does not.
 - **Offline tests (no sim needed):** `python test_camera_model.py` (geometry sign-checks) and `python test_pipeline_smoke.py` (detector→estimator→planner→control-send). Both print `ALL ... PASSED`. There is no linter/build step.
-- **Safety flags in `main.py`:** `DRY_RUN` (default **True** — computes & logs guidance but sends no flight setpoints; flip to False to actually fly), `DEBUG_VISION` (write detection overlays; keep off for timed runs), `LOGGING` (JSONL run logs under `logs/`).
+- **Safety flags in `main.py`:** `DRY_RUN` (default **False** — CAUTION: the drone will attempt to fly on startup; set to True to compute & log guidance only without sending flight setpoints), `DEBUG_VISION` (write detection overlays; keep off for timed runs), `LOGGING` (JSONL run logs under `logs/`).
 - End-to-end verification against the sim (manual login required): see `reference/VERIFY.md`.
 - Connection defaults live at the top of `main.py` (MAVLink `udpin:127.0.0.1:14550`) and `vision_rx.py` (camera `udp:0.0.0.0:5600`). Edit these to talk to a remote sim.
+
+**Startup sequence (when `DRY_RUN=False`):** The DCL simulator is a Betaflight-style FPV racer that boots in ACRO (raw rate) mode, which ignores our commands when armed. Before arming, `main.py` establishes a setpoint (attitude-hold) stream, switches the sim to ANGLE (self-levelling attitude) mode via `request_offboard_mode()` (which prints the available sim mode names and the one requested), then keeps the stream alive across the mode switch, and finally arms. This handshake is required because (1) ACRO mode ignores all commands, and (2) the mode switch is rejected unless a setpoint stream is already flowing. In `DRY_RUN=True` mode, this entire block is skipped — no setpoints are sent, and the drone remains grounded.
 
 ## Architecture
 
@@ -46,8 +48,8 @@ Concurrency model — **one main-thread control loop + background daemon threads
 
 | Component | File | Thread? | Role |
 |-----------|------|---------|------|
-| `Controller` | `controller.py` | main loop | **Outbound**: each tick calls `Planner.compute_target()` then sends NED-velocity `SET_POSITION_TARGET_LOCAL_NED` (≤`CONTROL_HZ`=60); gated by `shared_data['dry_run']`. Owns `arm()` / sim-reset |
-| `Planner` | `planner.py` | (called in loop) | Picks the active gate (fresh vision else known geometry by `active_gate_index`) → writes `shared_data['target']`; telemetry watchdog → hover |
+| `Controller` | `controller.py` | main loop | **Outbound**: each tick calls `Planner.compute_target()` then sends attitude+thrust (`SET_ATTITUDE_TARGET`: roll/pitch/yaw quaternion + collective thrust, ≤`CONTROL_HZ`=60); gated by `shared_data['dry_run']`. Maps planner's desired velocity to lean angles and thrust tracking desired vertical velocity. Owns the offboard-entry sequence (attitude-hold stream prime → mode switch to ANGLE → arm), plus `arm()` and sim-reset. |
+| `Planner` | `planner.py` | (called in loop) | Picks the active gate (fresh vision else known geometry by `active_gate_index`) → writes `shared_data['target']`; telemetry watchdog → hover; altitude-envelope guard (fail-safe if climb runaway) |
 | `MAVLinkRX` | `mavlink_rx.py` | background | **Inbound telemetry**: parses + **stores** HEARTBEAT/ATTITUDE/ODOMETRY/IMU/race/gates/collision into `shared_data` under the lock |
 | `VisionRX` | `vision_rx.py` | background | **Inbound video**: reassembles chunked JPEG → `cv2` image → `detect_gate` → `estimate_gate` → `shared_data['vision']` |
 | `TimeSync` | `timesync.py` | background | Sends MAVLink TIMESYNC requests at 10 Hz |
@@ -61,7 +63,9 @@ Pure helper modules (no threads): `camera_model.py` (intrinsics + frame transfor
 
 ## Protocol details that aren't obvious from a single file
 
-- **Control commands**: the spec only supports `SET_POSITION_TARGET_LOCAL_NED` and `SET_ATTITUDE_TARGET` from Client→Sim (NOT actuator control — the original example's motor control was a bug). `controller.py` uses NED **velocity** via `set_position_target_local_ned_send` with a type-mask that ignores position/accel/yaw-rate.
+- **Flight control via attitude+thrust (not velocity):** The DCL simulator is a Betaflight-style FPV racer with ACRO (raw rate) and ANGLE (self-levelling) modes. It has **no velocity or position loop** — `SET_POSITION_TARGET_LOCAL_NED` velocity setpoints are silently ignored (evidence: logs/run_1780516557.jsonl shows 24 m/s uncontrolled climb while commanding descent). Flight control uses `SET_ATTITUDE_TARGET` (roll/pitch/yaw quaternion + collective thrust in ANGLE mode). `controller.py` maps the `Planner`'s desired NED velocity into lean angles (roll/pitch) and a thrust that tracks desired vertical velocity (`thrust = HOVER_THRUST + KP_THRUST*(vz_now - vd)`). Velocity send path (`send_velocity_ned`) is retained for reference and offline testing but is **not used in flight**.
+- **Mode entry handshake (required):** The sim boots in ACRO mode and must be switched to ANGLE before armed commands are accepted. The mode switch is rejected unless a setpoint stream is already flowing. `controller.py` provides `hold()` (send a single attitude-hold setpoint), `prime_setpoint_stream(seconds, hz)` (stream holds for a duration, stays under 100 Hz spec cap), and `request_offboard_mode()` (resolve and request ANGLE, STABILIZE, STABILIZED, ALTCTL, GUIDED by name from the autopilot's mode map, or fall back to PX4 custom mode id 6). `main.py` uses these before arming (skipped in `DRY_RUN=True` where no setpoints are sent).
+- **Spec note:** The spec lists both `SET_POSITION_TARGET_LOCAL_NED` and `SET_ATTITUDE_TARGET` as supported; this sim ignores the former. Not actuator control — the original example's motor control was a bug.
 - **No GPS / global position** — everything is **local NED**, origin at the arm point. Z is negative-up.
 - **Custom payloads ride inside `ENCAPSULATED_DATA`**, demuxed by a leading byte: `1` = race status, `2` = track info (see `ENCAPSULATED_*_MSG_ID` in `mavlink_rx.py`). These are hand-unpacked with `struct`.
 - **`DATA_TRANSMISSION_HANDSHAKE` is repurposed** as the header for chunked **track/gate geometry**; `mavlink_rx.py` reassembles the numbered chunks (`track_chunks` / `expected_num_track_chunks`) before decoding gate positions/orientations.
@@ -69,7 +73,7 @@ Pure helper modules (no threads): `camera_model.py` (intrinsics + frame transfor
 
 ## Hard constraints from the spec (enforce when writing control code)
 
-- **Outbound command rate must stay < 100 Hz.** Note `controller.py` sets `CONTROL_HZ = 250`, which violates this — see `PLAN.md` for the full bug list before relying on loop timing.
+- **Outbound command rate must stay < 100 Hz.** `controller.py` sets `CONTROL_HZ = 60` (safe margin).
 - Heartbeat must be kept alive at **≥ 2 Hz**; physics runs at 120 Hz, camera at 30 Hz / 640×360; max run length **8 minutes**.
 - Course geometry and physics are deterministic and identical across teams.
 

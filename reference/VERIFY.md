@@ -43,14 +43,14 @@ check detection on a saved frame:
 ```
 (writes `_detect_debug.png`).
 
-## Step 3 — perception-only run (DRY_RUN, the safe default)
-`main.py` ships with `DRY_RUN = True` and `DEBUG_VISION` available. Run the client
-while the sim is in a race:
+## Step 3 — perception-only run (DRY_RUN=True for safe validation)
+**CAUTION:** `main.py` currently ships with `DRY_RUN = False` (the drone will attempt to fly).
+Set `DRY_RUN = True` to validate perception safely before flying. Run the client while the sim is in a race:
 ```
 cd C:\Users\rocky\docs\AI_GP\AI_GP
 & "C:\Users\rocky\docs\AI_GP\PyAIPilotExample\myenv\Scripts\python.exe" main.py
 ```
-**Expected console output:**
+**Expected console output (with `DRY_RUN=True`):**
 ```
 Waiting for heartbeat...
 Connected to system: <N>
@@ -61,26 +61,72 @@ Setting up planner...
 Logging run to logs/run_<ts>.jsonl
 Arming drone...
 Starting control loop... (DRY_RUN=True)
-[DRY] src=...  range=...m vel_ned=(...) yaw=...
+[DRY] src=...  range=...m vel_ned=(+...,+...,-...) att=(r...,p...,y...) thr=...
 ```
 Because `DRY_RUN=True`, the drone does **not** move — the `[DRY]` lines show what the
-planner *would* command. Confirm: heartbeat connects, the gate list is received
-(check `logs/...jsonl` for a `gates` array), `src=vision` appears when a gate is in
-view (else `src=known`), and detection overlays look right (set `DEBUG_VISION=True`).
+planner and controller would command (desired velocity, then the attitude+thrust mapping).
+The "Priming" and "Requested control mode" lines are **skipped** in `DRY_RUN=True`.
+Confirm: heartbeat connects, the gate list is received (check `logs/...jsonl` for a `gates` array),
+`src=vision` appears when a gate is in view (else `src=known`), and detection overlays look right
+(set `DEBUG_VISION=True`).
 
-## Step 4 — enable flight
+## Step 4 — enable flight & tune gains
+
 Once the `[DRY]` commands look sane, set `DRY_RUN = False` in `main.py` and re-run.
-The drone should steer toward the active gate. Tune the gains in `planner.py`
-(`MAX_SPEED`, `KP_POS`, `PASS_THROUGH_DIST`) against the deterministic course using
-the JSONL logs. Keep `DEBUG_VISION=False` for any compliant timed run (no human
-interaction allowed — disqualification per spec §7).
+The drone should steer toward the active gate. On startup you will see:
+```
+Priming attitude-hold stream...
+Sim mode map: [list of mode names or 'unknown (no mode_mapping)']
+Requested control mode: <ANGLE|STABILIZE|...>
+Arming drone...
+Starting control loop... (DRY_RUN=False)
+[FLY] src=...  range=...m vel_ned=(+...,+...,-...) att=(r...,p...,y...) thr=...
+```
+
+**Watch for controlled startup & attitude mode confirmation:** After the mode-switch message,
+the sim's HUD (top-right) should show **"FLIGHT MODE: ANGLE"** (self-levelling attitude mode).
+The drone should hold steady or take off smoothly once armed. If it climbs uncontrollably
+(24+ m/s vertical as in logs/run_1780516557.jsonl), something is wrong with the attitude
+control setup — **check the console output first**: if `Sim mode map` is empty or shows unexpected
+mode names, the mode switch may have failed; if mode-switch succeeded but the drone still climbs,
+re-verify `HOVER_THRUST` is tuned correctly (see below).
+
+**Tuning checklist (in order):**
+1. **Attitude gains (MUST DO FIRST)** — `controller.py` constants:
+   - Confirm **`HOVER_THRUST` holds altitude level** when hovering with zero lean. Watch
+     the `att=(r,p,y)` line — when hovering, roll/pitch should be ~0.0, and altitude should
+     be stable. If it climbs, lower `HOVER_THRUST`; if it sinks, raise it.
+   - Once altitude is solid, raise `KP_LEAN` (start ~0.15) and test forward/lateral flight.
+     Watch lean angles in the `att=` line; they should scale reasonably with commanded velocity.
+   - If the drone oscillates, lower `KP_LEAN` and/or check `HOVER_THRUST` again.
+2. **Guidance gains** (after attitude is stable) — `planner.py` constants:
+   - `MAX_SPEED`, `MAX_VSPEED`, `KP_POS`, `PASS_THROUGH_DIST` per `docs/CALIBRATION.md` §5b.
+
+Tune against the deterministic course using the JSONL logs. Keep `DEBUG_VISION=False` for
+any compliant timed run (no human interaction allowed — disqualification per spec §7).
+
+**Monitor the altitude envelope:** the planner enforces a 15 m ceiling above the arm point;
+if the drone climbs past it, `target['source']` switches to `'alt_guard'` and the drone descends.
+If this happens early in a run, the root cause is usually under-tuned `HOVER_THRUST` (drone's
+collective thrust is too high for level flight) — re-calibrate it per the checklist above.
+Review the JSONL log with `Get-Content logs\run_*.jsonl | ConvertFrom-Json | Select-Object -Last 20` to inspect
+altitude traces and `source` field.
 
 ## Failure signals
 - Hangs at `Waiting for heartbeat...` → sim not in a race, wrong port, or firewall.
-- **Drone arms but never takes off / doesn't move** → expected with the shipping
-  default `DRY_RUN=True`: the planner computes setpoints (the `[DRY]` lines, logged as
-  `target`) but `controller.update()` does **not** transmit them. Set `DRY_RUN=False`
-  in `main.py` (Step 4) to actually fly. (Confirmed from a log: `armed=True` and
-  thousands of nonzero `vel_ned` targets including climb, none sent — purely the flag.)
+- **Drone arms but never takes off / doesn't move (in DRY_RUN=True mode)** → expected behavior.
+  The planner computes setpoints (the `[DRY]` lines) but `controller.update()` does **not** transmit them.
+  Set `DRY_RUN=False` in `main.py` (Step 4) to actually fly.
+- **Drone arms but doesn't move (in DRY_RUN=False)** → check that the mode switch succeeded.
+  Look for "Requested control mode: ANGLE" in the console; if it's absent or shows a different mode,
+  the mode switch may have failed. Check the sim's HUD — it should show "FLIGHT MODE: ANGLE".
+  If the mode is wrong, try manually investigating the sim's mode names and editing
+  `controller.py` `request_offboard_mode()` to try them.
+- **Drone climbs uncontrollably (24+ m/s vertical)** → usually under-tuned `HOVER_THRUST` in
+  `controller.py`. The attitude control can track desired vertical velocity, but if the
+  collective thrust baseline is wrong, the drone climbs (or sinks). **Re-calibrate `HOVER_THRUST`:**
+  arm the drone, steer toward a gate slowly, and watch the `[FLY]` console line altitude and the `att=`
+  angles. If hovering level causes climb, lower `HOVER_THRUST`. Once level flight is stable, raise
+  `KP_LEAN` for responsiveness. See Step 4 tuning checklist.
 - `src=known` only, never `vision` → HSV thresholds need calibration (Step 2).
 - Watchdog `src=watchdog_hover` → telemetry stopped arriving (the planner safely holds).

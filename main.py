@@ -18,8 +18,8 @@ SIM_SERVER_UDP_PORT = 14550
 #   DEBUG_VISION: write annotated gate-detection overlays to disk (tuning only — keep
 #                 OFF for compliant timed runs; no human interaction is allowed there).
 # --------------------------------------------------------------------------------------
-DRY_RUN = True
-DEBUG_VISION = True
+DRY_RUN = False
+DEBUG_VISION = False
 LOGGING = True
 
 # time since sim started ms
@@ -40,6 +40,18 @@ ts_loop = components['ts_loop']
 mavlink_rx = components['mavlink_rx']
 vision_rx = components['vision_rx']
 logger = components.get('logger')
+
+# Flight-mode entry. The sim is a Betaflight-style FPV racer that boots in ACRO (raw
+# rate control) — which has no velocity/position loop, so the armed quad ignored our
+# commands and climbed away. We stream level-attitude holds, switch to a self-levelling
+# ANGLE mode, then arm; the control loop then flies it with attitude+thrust commands.
+# Order: stream holds -> set mode -> arm. (DRY_RUN skips this — nothing is sent.)
+if not DRY_RUN:
+    print("Priming attitude-hold stream...", flush=True)
+    controller.prime_setpoint_stream(seconds=1.0)
+    mode = controller.request_offboard_mode()
+    print(f"Requested control mode: {mode}", flush=True)
+    controller.prime_setpoint_stream(seconds=0.3)  # keep stream alive across the switch
 
 print("Arming drone...", flush=True)
 controller.arm()

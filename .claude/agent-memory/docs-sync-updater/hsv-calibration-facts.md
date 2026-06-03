@@ -10,9 +10,9 @@ metadata:
 **File:** `vision/gate_detector.py` (lines 25-28)
 
 ```python
-LOWER_HSV  = (0, 150, 150)
+LOWER_HSV  = (0, 0, 80)
 UPPER_HSV  = (15, 255, 255)
-LOWER_HSV2 = (170, 150, 150)
+LOWER_HSV2 = (170, 0, 80)
 UPPER_HSV2 = (180, 255, 255)
 ```
 

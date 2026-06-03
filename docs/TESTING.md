@@ -39,7 +39,7 @@ expectation, so a flipped sign fails loudly:
 If you change `R_CB`, the tilt, or the rotation conventions, these are the guardrail
 — **fix the code to match the physics, never weaken the asserts.**
 
-### `test_pipeline_smoke.py` — integration (5 checks)
+### `test_pipeline_smoke.py` — integration (6 checks)
 Runs the whole chain on a synthetic gate frame, no sim:
 
 1. **detect + estimate** — synthetic gate is found; with the 20° tilt a gate at
@@ -50,8 +50,11 @@ Runs the whole chain on a synthetic gate frame, no sim:
 3. **planner (known geometry)** — with no vision but a known gate at `(10,0,−2)` and
    the drone at origin, `source=known` and it heads straight North.
 4. **planner (watchdog)** — empty `shared_data` → zero velocity, `source=*hover*`.
-5. **controller send path** — `send_velocity_ned()` builds a valid 16-arg
-   `set_position_target_local_ned_send` call (captured via a fake connection; no socket).
+5. **controller send path** — `send_attitude_target()` builds a valid 9-arg
+   `set_attitude_target_send` call with quaternion + thrust (captured via a fake connection; no socket).
+6. **velocity→attitude sign checks** — `velocity_to_attitude()` correctly maps: forward velocity →
+   nose-down pitch, rightward velocity → right roll, climb command → thrust > HOVER_THRUST, and caps
+   lean angles at `MAX_LEAN_RAD`.
 
 ## 2. Import / compile check (catches wiring breakage)
 

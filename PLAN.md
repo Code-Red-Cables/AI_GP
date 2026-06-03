@@ -237,11 +237,36 @@ A minimal end-to-end loop that flies the known track open-loop, then closes the 
 > **STATUS (2026-06-03): Days 1–7 implemented on branch `modified-starter` and
 > verified offline.** Modules built: `camera_model.py`, `vision/gate_detector.py`,
 > `gate_estimator.py`, `planner.py`, `logger.py`, telemetry store in `mavlink_rx.py`,
-> velocity control in `controller.py`, vision wiring in `vision_rx.py`, plus
+> attitude+thrust control in `controller.py`, vision wiring in `vision_rx.py`, plus
 > `tools/capture_frames.py` + `tools/hsv_tuner.py` and tests
 > (`test_camera_model.py`, `test_pipeline_smoke.py`). See `docs/IMPLEMENTATION.md`.
+>
+> **Control strategy reworked:** The DCL simulator is a **Betaflight-style FPV racer**
+> (boots in ACRO, runs in ANGLE self-levelling mode) with **no velocity or position loop**.
+> Velocity setpoints via `SET_POSITION_TARGET_LOCAL_NED` are silently ignored (evidence:
+> logs/run_1780516557.jsonl shows 24 m/s uncontrolled climb while commanding descent).
+> Flight control now uses **`SET_ATTITUDE_TARGET`** (roll/pitch/yaw quaternion + collective
+> thrust). The `Planner` remains the **guidance layer** (desired velocity + yaw toward the gate);
+> the `Controller` is now the **attitude layer** (maps velocity to lean angles and thrust tracking
+> desired vertical velocity). New constants in `controller.py`: `HOVER_THRUST=0.5` (tunable collective
+> thrust for altitude hold), `KP_THRUST=0.05`, `KP_LEAN=0.15`, `MAX_LEAN_RAD=20°`, `THRUST_MIN/MAX=0.1/0.9`.
+> New functions: `_euler_to_quat()`, `send_attitude_target()`, `velocity_to_attitude()`. Offline tests
+> pass (new `test_velocity_to_attitude_signs` checks forward→nose-down pitch, rightward→roll-right,
+> climb→thrust>HOVER, capping). **IMPLEMENTED, PENDING LIVE-SIM TUNING** — especially `HOVER_THRUST`
+> which must be calibrated to hold altitude in ANGLE mode.
+>
 > **Remaining (needs the live sim + a human):** calibrate HSV thresholds and tune
-> guidance gains — see `docs/CALIBRATION.md`. `main.py` ships `DRY_RUN=True`.
+> all control gains (especially `HOVER_THRUST` for stable altitude hold) — see `docs/CALIBRATION.md`.
+> **CAUTION:** `main.py` currently ships `DRY_RUN=False` (drone will attempt to fly on startup) —
+> set to `True` for safe perception-only validation.
+>
+> **Flight-mode entry (FIXED, verified on sim HUD):** The DCL simulator boots in ACRO (raw rate)
+> mode and must be switched to ANGLE (self-levelling attitude) before armed commands are accepted.
+> The mode switch is rejected unless a setpoint stream is already flowing. Fix implemented in
+> `controller.py` (`hold()`/`prime_setpoint_stream()`/`request_offboard_mode()`) and wired into
+> `main.py` startup sequence: prime attitude-hold stream → request ANGLE mode → keep stream alive →
+> arm. Mode map is printed on startup for diagnostics. On the live sim, the HUD shows "FLIGHT MODE: ANGLE"
+> post-switch, confirming the mode change took effect.
 >
 > **Goal of this slice:** a classic-CV perception pipeline that finds the next gate in the
 > FPV frame, recovers the gate's position relative to the drone (pinhole reverse-projection),
@@ -261,8 +286,8 @@ A minimal end-to-end loop that flies the known track open-loop, then closes the 
 | `vision/gate_estimator.py` | Combine `GateDetection` + `camera_model` + current attitude → gate position in **body** and **NED**, range, bearing. | **Yes** — feed a fake detection |
 | `tools/capture_frames.py` | Dump live FPV frames to disk for tuning (debug-only, never in timed run). | n/a |
 | `tools/hsv_tuner.py` | Trackbar UI to calibrate HSV thresholds against captured frames. | n/a |
-| `planner.py` | Pick the active gate + emit a target setpoint to `shared_data['target']`. | partly |
-| `controller.py` (modify) | Velocity guidance toward `shared_data['target']`; `<100 Hz`; dry-run flag. | n/a |
+| `planner.py` | Pick the active gate + emit a target setpoint (desired velocity + yaw) to `shared_data['target']` — the **guidance layer**. | partly |
+| `controller.py` (modify) | Map planner's desired velocity to attitude+thrust for `SET_ATTITUDE_TARGET` in ANGLE mode — the **attitude layer**. `<100 Hz`; dry-run flag. New functions: `_euler_to_quat()`, `send_attitude_target()`, `velocity_to_attitude()`. Tunable gains: `HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, `MAX_LEAN_RAD`, `THRUST_MIN/MAX`. | n/a |
 
 `vision/` is a package (add `__init__.py`). Do **not** put cv2/HSV logic in `camera_model.py`
 — geometry must stay dependency-light so its unit tests run without a frame or the sim.
@@ -340,17 +365,26 @@ Turn a `GateDetection` into a position estimate:
 
 ### 8.4 Planner + control — fly through the gate
 
-- **Planner (`planner.py`):** if a fresh vision detection exists, target = its gate position;
-  else fall back to **known track geometry** (`shared_data['gates']` indexed by the race
-  status `active_gate_index` — see Task A) so we never fly blind. Emit
-  `shared_data['target'] = { mode, vel_body|pos_ned, yaw, ts }`. Use `active_gate_index`
-  increments as the ground-truth **gate-passed** signal to advance to the next gate.
-- **Control (`controller.py`, modify):** start with **velocity control** via
-  `SET_POSITION_TARGET_LOCAL_NED` (PLAN §4-D): a proportional guidance law — yaw to center the
-  gate (drive bearing azimuth → 0), hold/adjust altitude (elevation), and command forward
-  speed scaled down as range shrinks. Respect `CONTROL_HZ < 100` (set 50–90). Keep a
-  **`DRY_RUN` flag**: when set, compute and log/print commands but **don't send** flight
-  setpoints — lets us validate perception + planning safely before the drone moves.
+- **Planner (`planner.py` — guidance layer):** if a fresh vision detection exists, target = its
+  gate position; else fall back to **known track geometry** (`shared_data['gates']` indexed by
+  the race status `active_gate_index` — see Task A) so we never fly blind. Emit
+  `shared_data['target'] = { mode:'velocity', vel_ned, yaw, ts }` (desired NED velocity + yaw
+  toward the gate). Use `active_gate_index` increments as the ground-truth **gate-passed** signal
+  to advance to the next gate. Implements a proportional guidance law: forward speed scaled to
+  distance, yaw to center the gate, vertical speed to hit the gate plane elevation.
+- **Control (`controller.py` — attitude layer):** The DCL sim is a Betaflight-style FPV racer
+  with no velocity loop — flight control uses **`SET_ATTITUDE_TARGET`** (attitude quaternion +
+  collective thrust in ANGLE mode, not velocity setpoints). Map the planner's desired NED velocity
+  into body-frame lean angles and a thrust that tracks desired vertical velocity:
+  - `thrust = HOVER_THRUST + KP_THRUST * (vz_now - vd)`, clamped to `[THRUST_MIN, THRUST_MAX]`
+  - Rotate desired velocity into the current heading frame (`body_fwd = cos(yaw)*vn + sin(yaw)*ve`,
+    `body_lat = -sin(yaw)*vn + cos(yaw)*ve`)
+  - `pitch = -KP_LEAN * body_fwd`, `roll = KP_LEAN * body_lat`, each capped at `±MAX_LEAN_RAD`
+  - All gains (`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, `MAX_LEAN_RAD`, `THRUST_MIN/MAX`) are
+    **tunable and must be calibrated on the live sim** (especially `HOVER_THRUST` for steady
+    altitude hold in ANGLE mode). Respect `CONTROL_HZ < 100` (set 60). Keep a **`DRY_RUN` flag**:
+    when set, compute and log/print commands but **don't send** flight setpoints — lets us validate
+    perception + planning safely before the drone moves.
 
 ### 8.5 Calibration & offline test workflow (do this before trusting live flight)
 
@@ -406,3 +440,31 @@ thread's internals — `shared_data` is the only contract.
   timed-run path** (human interaction = DQ, spec §7).
 - Preserve `setup_components()`'s returned keys and the `create_*`/`on_*` style (PLAN §6).
 - The sim is deterministic — log enough to reproduce and diff runs while tuning.
+
+- **Attitude+thrust control (IMPLEMENTED, pending live-sim tuning):** The DCL simulator is a
+  **Betaflight-style FPV racer** (boots in ACRO, runs in ANGLE self-levelling mode) with
+  **no velocity or position loop** — `SET_POSITION_TARGET_LOCAL_NED` setpoints are silently
+  ignored. Root cause of the observed 24 m/s uncontrolled climb in logs/run_1780516557.jsonl
+  identified and fixed: flight control now uses `SET_ATTITUDE_TARGET` (attitude quaternion +
+  collective thrust in ANGLE mode). The `Planner` emits desired NED velocity + yaw (guidance
+  layer); the `Controller` maps this to roll/pitch/yaw/thrust (attitude layer) via the
+  `velocity_to_attitude()` function. Constants (`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`,
+  `MAX_LEAN_RAD`, `THRUST_MIN/MAX`) are **tunable and must be calibrated on the live sim**.
+  Offline tests pass (`test_velocity_to_attitude_signs` verifies mapping signs and capping).
+  On the live sim, confirm the HUD shows "FLIGHT MODE: ANGLE" post-startup, then tune gains
+  in this order: (1) `HOVER_THRUST` first — ensure the drone holds altitude level with zero
+  lean when armed; if it climbs/sinks, adjust `HOVER_THRUST` up/down; (2) once altitude is
+  stable, raise `KP_LEAN` for forward/lateral responsiveness; (3) fine-tune other gains.
+  If the drone still behaves unexpectedly, the sim may need ACRO (raw rate) mode instead of
+  ANGLE — investigate and document.
+
+- **Flight-mode entry (FIXED, verified on sim HUD):** The DCL simulator boots in ACRO mode
+  and must be switched to ANGLE before armed commands work. The mode switch is rejected unless
+  a setpoint stream is already flowing (Betaflight/PX4 semantics — the "chicken-and-egg"
+  problem). Fix implemented in `controller.py` with three methods: `hold()` (send one
+  attitude-hold), `prime_setpoint_stream(seconds=1.0, hz=50.0)` (stream holds at ~50 Hz,
+  respects < 100 Hz spec cap), and `request_offboard_mode()` (resolve autopilot's mode map
+  and request ANGLE, STABILIZE, STABILIZED, ALTCTL, GUIDED by name; fall back to PX4 custom
+  mode id 6; prints available mode names for diagnostics). Wired into `main.py`: **prime
+  stream → request ANGLE mode → keep stream alive → arm** (skipped in `DRY_RUN=True`).
+  Verified: the sim's HUD shows "FLIGHT MODE: ANGLE" after the mode switch succeeds.
