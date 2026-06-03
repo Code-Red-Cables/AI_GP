@@ -18,3 +18,9 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+
+# Run artifacts / debug output
+logs/
+notes/frames/
+_detect_debug.png
+_vision_*.png

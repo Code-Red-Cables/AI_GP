@@ -3,6 +3,8 @@ from timesync import TimeSync
 from vision_rx import VisionRX
 from mavlink_rx import MAVLinkRX
 from controller import Controller
+from planner import Planner
+from logger import Logger
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # -------------------------------
@@ -32,14 +34,25 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     vision_rx = VisionRX(shared_data)
 
     # -------------------------------
-    # Main control loop
+    # Planner + main control loop
     # -------------------------------
-    controller = Controller(sim_conn, shared_data, system_boot_ms)
+    print("Setting up planner...", flush=True)
+    planner = Planner(shared_data)
+    controller = Controller(sim_conn, shared_data, system_boot_ms, planner)
+
+    # -------------------------------
+    # Run logger (optional, for offline tuning)
+    # -------------------------------
+    logger = None
+    if shared_data.get('logging', True):
+        logger = Logger.create_logger(shared_data)
 
     return {
         'vision_rx': vision_rx,
         'mavlink_rx': mavlink_rx,
         'ts_loop': ts_loop,
         'sim_conn': sim_conn,
-        'controller': controller
+        'controller': controller,
+        'planner': planner,
+        'logger': logger
     }
