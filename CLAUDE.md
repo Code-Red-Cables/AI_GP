@@ -19,8 +19,8 @@ The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-star
 - `docs/IMPLEMENTATION.md` — what's built, module-by-module, the geometry math, and the `shared_data` schema/contract.
 - `docs/TESTING.md` — how to run the offline test suites and what each asserts.
 - `docs/CALIBRATION.md` — HSV calibration, detector-filter and guidance-gain tuning, reading run logs.
-- `notes/VERIFY.md` — launching the sim and the end-to-end verification runbook.
-- `notes/AI Grand Prix Tech Specs.pdf` — authoritative spec (extracted text in `notes/_specs_text.txt`).
+- `reference/VERIFY.md` — launching the sim and the end-to-end verification runbook.
+- `reference/AI Grand Prix Tech Specs.pdf` — authoritative spec (extracted text in `reference/_specs_text.txt`).
 
 ## Running
 
@@ -35,7 +35,7 @@ python main.py
 - **Use the bundled interpreter** `C:\Users\rocky\docs\AI_GP\PyAIPilotExample\myenv\Scripts\python.exe` — it has `numpy`/`cv2`/`pymavlink`; the system `py` does not.
 - **Offline tests (no sim needed):** `python test_camera_model.py` (geometry sign-checks) and `python test_pipeline_smoke.py` (detector→estimator→planner→control-send). Both print `ALL ... PASSED`. There is no linter/build step.
 - **Safety flags in `main.py`:** `DRY_RUN` (default **True** — computes & logs guidance but sends no flight setpoints; flip to False to actually fly), `DEBUG_VISION` (write detection overlays; keep off for timed runs), `LOGGING` (JSONL run logs under `logs/`).
-- End-to-end verification against the sim (manual login required): see `notes/VERIFY.md`.
+- End-to-end verification against the sim (manual login required): see `reference/VERIFY.md`.
 - Connection defaults live at the top of `main.py` (MAVLink `udpin:127.0.0.1:14550`) and `vision_rx.py` (camera `udp:0.0.0.0:5600`). Edit these to talk to a remote sim.
 
 ## Architecture

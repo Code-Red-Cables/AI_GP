@@ -2,7 +2,7 @@
 
 How to test the pipeline. Most of it runs **offline with no simulator** — that's
 deliberate, so logic bugs are caught before flying. End-to-end on-sim verification
-(which needs a human login) is in [`../notes/VERIFY.md`](../notes/VERIFY.md).
+(which needs a human login) is in [`../reference/VERIFY.md`](../reference/VERIFY.md).
 
 ## The interpreter
 All Python must run on the bundled venv (it has `numpy`, `cv2`, `pymavlink`); the
@@ -68,14 +68,14 @@ sim — a fast way to catch interface mismatches after edits.
 
 ```powershell
 & $PY vision/gate_detector.py                       # synthetic gate -> _detect_debug.png
-& $PY vision/gate_detector.py notes/frames/frame_0000.png   # a real captured frame
+& $PY vision/gate_detector.py reference/frames/frame_0000.png   # a real captured frame
 ```
 Prints the `GateDetection` and writes an annotated `_detect_debug.png`. Use this
 while calibrating HSV (see [`CALIBRATION.md`](CALIBRATION.md)).
 
 ## 4. On-sim verification (manual)
 Requires launching the sim and logging in — full runbook in
-[`../notes/VERIFY.md`](../notes/VERIFY.md). Summary: launch sim → log in / start a
+[`../reference/VERIFY.md`](../reference/VERIFY.md). Summary: launch sim → log in / start a
 race → `& $PY main.py` (ships in `DRY_RUN`, so it logs `[DRY]` guidance without
 flying) → confirm heartbeat connects, gates are received, and `[DRY]` commands look
 sane → set `DRY_RUN=False` to fly.

@@ -2,7 +2,7 @@
 
 DEBUG / calibration tool only. Feed it a captured frame:
 
-    & "<repo>/PyAIPilotExample/myenv/Scripts/python.exe" tools/hsv_tuner.py notes/frames/frame_0000.png
+    & "<repo>/PyAIPilotExample/myenv/Scripts/python.exe" tools/hsv_tuner.py reference/frames/frame_0000.png
 
 Drag the trackbars until only the gate is white in the mask / visible in the
 masked view, then press 'q'. The chosen LOWER_HSV / UPPER_HSV are printed — paste

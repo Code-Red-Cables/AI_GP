@@ -1,8 +1,8 @@
 # AI Grand Prix — Autonomous Pilot: Implementation Plan
 
 > Planning document for engineering agents. Read this before touching code.
-> Source of truth for requirements: `notes/AI Grand Prix Tech Specs.pdf`
-> (doc `VADR-TS-001`, issue 00.02). Extracted text: `notes/_specs_text.txt`.
+> Source of truth for requirements: `reference/AI Grand Prix Tech Specs.pdf`
+> (doc `VADR-TS-001`, issue 00.02). Extracted text: `reference/_specs_text.txt`.
 
 ---
 
@@ -355,7 +355,7 @@ Turn a `GateDetection` into a position estimate:
 ### 8.5 Calibration & offline test workflow (do this before trusting live flight)
 
 1. `tools/capture_frames.py`: run sim, fly/hover manually *outside a timed run*, dump ~50
-   frames containing gates to `notes/frames/`.
+   frames containing gates to `reference/frames/`.
 2. `tools/hsv_tuner.py`: load a frame, expose HSV trackbars, read off `LOWER/UPPER_HSV`, paste
    into `gate_detector.py`.
 3. Offline harness: load a saved frame → `detect_gate` → `gate_estimator` → print

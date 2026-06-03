@@ -2,7 +2,7 @@
 
 What has been built, how it fits together, and the math behind it. This is the
 "what exists and why" companion to `PLAN.md` (the forward-looking plan).
-For running against the sim see [`../notes/VERIFY.md`](../notes/VERIFY.md);
+For running against the sim see [`../reference/VERIFY.md`](../reference/VERIFY.md);
 for tuning see [`CALIBRATION.md`](CALIBRATION.md); for tests see [`TESTING.md`](TESTING.md).
 
 Status: **Days 1–7 of PLAN.md §8 implemented and verified offline.** The only

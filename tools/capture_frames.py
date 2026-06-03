@@ -20,7 +20,7 @@ UDP_IP, UDP_PORT = "0.0.0.0", 5600
 HEADER_FMT = "<IHHIIQ"   # frame_id, chunk_id, total_chunks, jpeg_size, payload_size, sim_time_ns
 
 
-def main(count=50, out_dir="notes/frames"):
+def main(count=50, out_dir="reference/frames"):
     os.makedirs(out_dir, exist_ok=True)
     header_sz = struct.calcsize(HEADER_FMT)
     frames = {}
@@ -62,5 +62,5 @@ def main(count=50, out_dir="notes/frames"):
 
 if __name__ == "__main__":
     cnt = int(sys.argv[1]) if len(sys.argv) > 1 else 50
-    od = sys.argv[2] if len(sys.argv) > 2 else "notes/frames"
+    od = sys.argv[2] if len(sys.argv) > 2 else "reference/frames"
     main(cnt, od)

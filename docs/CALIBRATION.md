@@ -18,13 +18,13 @@ $PY = "C:\Users\rocky\docs\AI_GP\PyAIPilotExample\myenv\Scripts\python.exe"
 
 ## 1. Capture real frames
 Launch the sim, log in, start a Round 1 race so video streams (see
-[`../notes/VERIFY.md`](../notes/VERIFY.md)), then dump frames:
+[`../reference/VERIFY.md`](../reference/VERIFY.md)), then dump frames:
 ```powershell
-& $PY tools/capture_frames.py 60 notes/frames
+& $PY tools/capture_frames.py 60 reference/frames
 ```
-This binds UDP 5600, reassembles JPEGs, and saves `notes/frames/frame_0000.png …`.
+This binds UDP 5600, reassembles JPEGs, and saves `reference/frames/frame_0000.png …`.
 Grab frames where a gate is clearly in view at a few distances/angles.
-(`notes/frames/` is git-ignored.)
+(`reference/frames/` is git-ignored.)
 
 ---
 
@@ -34,7 +34,7 @@ V 0–255**). Round 1 is a *high-contrast, desaturated* environment, so the gate
 the saturated/bright object — generally a **high-S, high-V** band.
 
 ```powershell
-& $PY tools/hsv_tuner.py notes/frames/frame_0000.png
+& $PY tools/hsv_tuner.py reference/frames/frame_0000.png
 ```
 Drag the 6 trackbars (`Hlo/Hhi/Slo/Shi/Vlo/Vhi`) until the **mask shows only the
 gate** (right pane = original masked by your range). Aim for the gate solid white
@@ -59,7 +59,7 @@ LOWER_HSV2 = (170, 120, 120);  UPPER_HSV2 = (179, 255, 255)
 
 **Verify** on saved frames:
 ```powershell
-& $PY vision/gate_detector.py notes/frames/frame_0000.png   # writes _detect_debug.png
+& $PY vision/gate_detector.py reference/frames/frame_0000.png   # writes _detect_debug.png
 ```
 Open `_detect_debug.png`: the green bbox should hug the gate, the red dot sit at the
 opening center, and TL/TR/BR/BL magenta corners land on the inner square. Good
@@ -138,7 +138,7 @@ What to look for: mostly `source=vision` near gates (else HSV needs work);
 
 ## Quick checklist
 - [ ] `test_camera_model.py` + `test_pipeline_smoke.py` pass.
-- [ ] Frames captured to `notes/frames/`.
+- [ ] Frames captured to `reference/frames/`.
 - [ ] HSV calibrated; `_detect_debug.png` shows a clean gate with 4 corners.
 - [ ] Perception-only (`DRY_RUN=True`) run shows `source=vision` when a gate is in view.
 - [ ] Gains tuned with `DRY_RUN=False`; course completed without repeated collisions.

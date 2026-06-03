@@ -34,12 +34,12 @@ video are streaming. (None of this can be automated.)
 With video streaming, dump frames, then tune thresholds:
 ```
 & "...\myenv\Scripts\python.exe" tools/capture_frames.py 50
-& "...\myenv\Scripts\python.exe" tools/hsv_tuner.py notes/frames/frame_0000.png
+& "...\myenv\Scripts\python.exe" tools/hsv_tuner.py reference/frames/frame_0000.png
 ```
 Paste the printed `LOWER_HSV` / `UPPER_HSV` into `vision/gate_detector.py`. Sanity-
 check detection on a saved frame:
 ```
-& "...\myenv\Scripts\python.exe" vision/gate_detector.py notes/frames/frame_0000.png
+& "...\myenv\Scripts\python.exe" vision/gate_detector.py reference/frames/frame_0000.png
 ```
 (writes `_detect_debug.png`).
 
