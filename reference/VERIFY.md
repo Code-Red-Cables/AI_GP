@@ -77,5 +77,10 @@ interaction allowed — disqualification per spec §7).
 
 ## Failure signals
 - Hangs at `Waiting for heartbeat...` → sim not in a race, wrong port, or firewall.
+- **Drone arms but never takes off / doesn't move** → expected with the shipping
+  default `DRY_RUN=True`: the planner computes setpoints (the `[DRY]` lines, logged as
+  `target`) but `controller.update()` does **not** transmit them. Set `DRY_RUN=False`
+  in `main.py` (Step 4) to actually fly. (Confirmed from a log: `armed=True` and
+  thousands of nonzero `vel_ned` targets including climb, none sent — purely the flag.)
 - `src=known` only, never `vision` → HSV thresholds need calibration (Step 2).
 - Watchdog `src=watchdog_hover` → telemetry stopped arriving (the planner safely holds).

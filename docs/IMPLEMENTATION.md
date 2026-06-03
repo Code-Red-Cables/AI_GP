@@ -60,9 +60,9 @@ See §3 for the math. Has its own unit tests (`test_camera_model.py`).
 `findContours(RETR_CCOMP)` → filter by area/squareness/extent → pick best →
 inner-hole centroid + `approxPolyDP` corners (TL,TR,BR,BL) + confidence.
 `GateDetection` = `{center_px, corners_px|None, bbox_px, area_px, confidence}`.
-Thresholds (`LOWER_HSV`/`UPPER_HSV`, `DEFAULT_CFG`) are **placeholders pending
-calibration**. `draw_detection()` annotates a copy; `__main__` self-tests on a
-synthetic frame or an image path argument.
+Thresholds (`LOWER_HSV`/`UPPER_HSV`/`LOWER_HSV2`/`UPPER_HSV2`, `DEFAULT_CFG`) are
+**calibrated for the red/orange Round-1 gate** using a two-piece hue mask (see `CALIBRATION.md` §2).
+`draw_detection()` annotates a copy; `__main__` self-tests on a synthetic frame or an image path argument.
 
 ### `gate_estimator.py` — pixels → 3D pose (uses camera_model, cv2 for PnP)
 `estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None) -> dict`.

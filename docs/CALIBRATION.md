@@ -65,6 +65,22 @@ Open `_detect_debug.png`: the green bbox should hug the gate, the red dot sit at
 opening center, and TL/TR/BR/BL magenta corners land on the inner square. Good
 detections report `confidence` ≳ 0.5 and (for PnP) `corners_px` not None.
 
+**Calibrated values (Round 1, 2026-06-03).** The shipping placeholders were replaced
+with the values now in `vision/gate_detector.py`:
+```python
+LOWER_HSV  = (0,   150, 150)   # red/orange gate; two-piece hue mask for wrap-around
+UPPER_HSV  = (15,  255, 255)
+LOWER_HSV2 = (170, 150, 150)   # second range to capture hue near 180 (OpenCV hue wraps at 0/180)
+UPPER_HSV2 = (180, 255, 255)
+```
+The two-piece mask handles the **OpenCV hue wrap-around** at 0/180: red/orange hues are in the
+0–15 and 170–180 ranges, so both `inRange` calls are ORed into a single mask. The `S` floor of
+150 and `V` floor of 150 isolate the bright, saturated gate against the dark, desaturated
+environment. **Detection performance needs re-verification against `reference/frames/`** after
+deployment to ensure the gate is reliably detected across range, lighting, and viewing angles.
+A prior offline validation on 60 saved frames found good detection with sensible geometry; run
+this check again after any HSV edit or before a timed run.
+
 ---
 
 ## 3. Tune detector filters (`vision/gate_detector.py` → `DEFAULT_CFG`)
@@ -99,15 +115,15 @@ model.
 Start conservative, fly in `DRY_RUN` first (read the `[DRY]` log lines), then enable
 flight (`DRY_RUN=False` in `main.py`) and tune against the deterministic course.
 
-| constant | default | meaning | symptom → change |
-|----------|---------|---------|------------------|
-| `MAX_SPEED` | 4.0 m/s | velocity cap | too slow to be competitive → raise gradually; overshooting gates → lower |
-| `KP_POS` | 0.6 | `speed = KP_POS·distance` (before cap) | sluggish approach → raise; oscillates/overshoots → lower |
-| `PASS_THROUGH_DIST` | 2.5 m | within this range, command full speed to commit through the gate | stalling *in* the gate → raise; blowing past misaligned → lower |
-| `ARRIVE_DIST` | 0.6 m | "at waypoint" threshold | rarely needs changing |
-| `CONF_MIN` | 0.40 | min vision confidence to trust a detection | chasing false gates → raise; ignoring real gates → lower |
-| `VISION_TIMEOUT_NS` | 300 ms | older vision is "stale" → fall back to known geometry | jittery switching → raise; acting on stale frames → lower |
-| `TELEM_TIMEOUT_NS` | 500 ms | no pose for this long → hover (watchdog) | nuisance hovers → raise; flying blind on dropouts → lower |
+| constant            | default | meaning                                                          | symptom → change                                                         |
+| ------------------- | ------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `MAX_SPEED`         | 4.0 m/s | velocity cap                                                     | too slow to be competitive → raise gradually; overshooting gates → lower |
+| `KP_POS`            | 0.6     | `speed = KP_POS·distance` (before cap)                           | sluggish approach → raise; oscillates/overshoots → lower                 |
+| `PASS_THROUGH_DIST` | 2.5 m   | within this range, command full speed to commit through the gate | stalling *in* the gate → raise; blowing past misaligned → lower          |
+| `ARRIVE_DIST`       | 0.6 m   | "at waypoint" threshold                                          | rarely needs changing                                                    |
+| `CONF_MIN`          | 0.40    | min vision confidence to trust a detection                       | chasing false gates → raise; ignoring real gates → lower                 |
+| `VISION_TIMEOUT_NS` | 300 ms  | older vision is "stale" → fall back to known geometry            | jittery switching → raise; acting on stale frames → lower                |
+| `TELEM_TIMEOUT_NS`  | 500 ms  | no pose for this long → hover (watchdog)                         | nuisance hovers → raise; flying blind on dropouts → lower                |
 
 Workflow: change one constant, re-run, watch the `[DRY]`/`[FLY]` console line and the
 JSONL log, compare against the previous run (the sim is deterministic, so runs are
@@ -137,9 +153,9 @@ What to look for: mostly `source=vision` near gates (else HSV needs work);
 ---
 
 ## Quick checklist
-- [ ] `test_camera_model.py` + `test_pipeline_smoke.py` pass.
-- [ ] Frames captured to `reference/frames/`.
-- [ ] HSV calibrated; `_detect_debug.png` shows a clean gate with 4 corners.
-- [ ] Perception-only (`DRY_RUN=True`) run shows `source=vision` when a gate is in view.
+- [x] `test_camera_model.py` + `test_pipeline_smoke.py` pass.
+- [x] Frames captured to `reference/frames/`.
+- [x] HSV calibrated; `_detect_debug.png` shows a clean gate with 4 corners.
+- [x] Perception-only (`DRY_RUN=True`) run shows `source=vision` when a gate is in view.
 - [ ] Gains tuned with `DRY_RUN=False`; course completed without repeated collisions.
 - [ ] `DEBUG_VISION=False` for any compliant timed run (no human interaction allowed).

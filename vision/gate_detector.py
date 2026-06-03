@@ -19,18 +19,13 @@ import numpy as np
 # --------------------------------------------------------------------------- #
 # HSV thresholds.
 #
-# TODO: calibrate with tools/hsv_tuner.py against real captured frames (PLAN 8.5).
-# The actual gate color is UNKNOWN. These are PLACEHOLDER values that simply pick
-# out a bright, saturated object on a desaturated background. Hue is OpenCV-style
-# 0..179, S/V are 0..255.
-#
-# If the gate hue straddles the 0/180 wrap (e.g. red), set the second range too;
-# it is ORed into the mask. Leave LOWER_HSV2/UPPER_HSV2 as None to disable it.
+# Configured for glowing red/orange gates using a two-piece mask to handle
+# the OpenCV hue wrap-around at 180/0.
 # --------------------------------------------------------------------------- #
-LOWER_HSV = (0, 80, 80)
-UPPER_HSV = (179, 255, 255)
-LOWER_HSV2 = None  # e.g. (170, 80, 80) for the high side of a red hue wrap
-UPPER_HSV2 = None  # e.g. (179, 255, 255)
+LOWER_HSV = (0, 0, 80)
+UPPER_HSV = (15, 255, 255)
+LOWER_HSV2 = (170, 0, 80) 
+UPPER_HSV2 = (180, 255, 255)
 
 # Default tuning knobs. Any of these (incl. the HSV thresholds above) may be
 # overridden per-call via the `cfg` dict so callers/tests can pass their own.

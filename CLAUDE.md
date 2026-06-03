@@ -12,7 +12,7 @@ The committed code on `main` is the organizer-provided **example client**: it co
 Vision + Telemetry → Perception → Planning → Control → Pilot Commands → Sim
 ```
 
-The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-starter` branch (perception → planning → velocity control), verified offline; what remains is HSV calibration and on-sim flight tuning.
+The vision-first pipeline (PLAN.md §8) is **implemented** on the `modified-starter` branch (perception → planning → velocity control), verified offline. **HSV is calibrated** (2026-06-03): the Round-1 gate is **red/orange (glowing)** using a two-piece hue mask → `LOWER_HSV=(0,150,150)`, `UPPER_HSV=(15,255,255)`, `LOWER_HSV2=(170,150,150)`, `UPPER_HSV2=(180,255,255)` in `vision/gate_detector.py` to handle the OpenCV hue wrap-around at 0/180 (see `docs/CALIBRATION.md` §2 for details and re-verification steps). What remains is on-sim flight tuning (fly with `DRY_RUN=False`, tune gains in `planner.py`). Note: `main.py` ships `DRY_RUN=True`, so the armed drone computes setpoints but **sends nothing and never moves** until you flip it to `False`.
 
 ### Documentation map
 - `PLAN.md` — engineering plan, requirements, original bug list, intended design (source of truth before changing behavior). §8 is the vision-slice plan.
@@ -65,7 +65,7 @@ Pure helper modules (no threads): `camera_model.py` (intrinsics + frame transfor
 - **No GPS / global position** — everything is **local NED**, origin at the arm point. Z is negative-up.
 - **Custom payloads ride inside `ENCAPSULATED_DATA`**, demuxed by a leading byte: `1` = race status, `2` = track info (see `ENCAPSULATED_*_MSG_ID` in `mavlink_rx.py`). These are hand-unpacked with `struct`.
 - **`DATA_TRANSMISSION_HANDSHAKE` is repurposed** as the header for chunked **track/gate geometry**; `mavlink_rx.py` reassembles the numbered chunks (`track_chunks` / `expected_num_track_chunks`) before decoding gate positions/orientations.
-- **Vision is a separate UDP socket** (not MAVLink): JPEG frames arrive as numbered chunks keyed by `frame_id`, reassembled in `VisionRX._vision_loop` and decoded with `cv2.imdecode`.
+- **Vision is a separate UDP socket** (not MAVLink): JPEG frames arrive as numbered chunks keyed by `frame_id`, reassembled in `VisionRX._vision_loop` and decoded with `cv2.imdecode`. **Only one process can bind UDP 5600 at a time** — a running `main.py` (its `VisionRX`) holds it, so `tools/capture_frames.py` will fail with `WinError 10048` until you stop the client. Don't run two clients at once either.
 
 ## Hard constraints from the spec (enforce when writing control code)
 

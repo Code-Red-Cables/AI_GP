@@ -25,10 +25,10 @@ import camera_model as cm
 # --------------------------------------------------------------------------------------
 # Guidance tuning (start conservative; tune against the deterministic course).
 # --------------------------------------------------------------------------------------
-MAX_SPEED = 4.0            # m/s cap on commanded velocity
-KP_POS = 0.6               # proportional gain: speed = KP_POS * distance, capped
+MAX_SPEED = 2.0            # m/s cap on commanded velocity
+KP_POS = 3              # proportional gain: speed = KP_POS * distance, capped
 PASS_THROUGH_DIST = 2.5    # m: within this range, punch through at full speed
-ARRIVE_DIST = 0.6          # m: closer than this we consider ourselves at the waypoint
+ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the waypoint
 
 CONF_MIN = 0.40            # min vision confidence to trust a detection
 VISION_TIMEOUT_NS = 300_000_000    # 300 ms: older vision is "stale"

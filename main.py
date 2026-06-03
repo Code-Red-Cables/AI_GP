@@ -19,7 +19,7 @@ SIM_SERVER_UDP_PORT = 14550
 #                 OFF for compliant timed runs; no human interaction is allowed there).
 # --------------------------------------------------------------------------------------
 DRY_RUN = True
-DEBUG_VISION = False
+DEBUG_VISION = True
 LOGGING = True
 
 # time since sim started ms
