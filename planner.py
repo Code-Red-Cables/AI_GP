@@ -48,17 +48,33 @@ ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the wa
 # narrow FOV. If we drop to a hover the instant the gate index advances, two bad things
 # happen (log 2026-06-06): (1) the hard brake pitches the airframe ~19deg ("look up then
 # down") which swings the camera, and (2) we park just past the gate and the next one never
-# enters frame, so vision never re-acquires and we sit forever. Instead we COAST straight
-# ahead on the heading we passed through on until the next gate is detected (or the window
-# expires) — steady camera, and the course ahead scrolls into view.
-POST_GATE_COAST_NS = 6_000_000_000   # coast/search this long (ns) after a gate advance
-POST_GATE_COAST_SPEED = 1.2          # m/s forward during the coast (< MAX_SPEED, gentle)
+# enters frame, so vision never re-acquires and we sit forever. Instead we COMMIT to the
+# next gate: creep straight ahead on the heading we passed through on (steady camera) and
+# descend toward it, and we DO NOT give up to a hover — we keep going until the next gate
+# is acquired or passed. The course ahead scrolls into view as we advance.
+POST_GATE_COAST_NS = 6_000_000_000   # (legacy) yaw-freeze window after a gate advance
+POST_GATE_COAST_SPEED = 1.5          # m/s forward during the search (< MAX_SPEED). Carrying
+                                     # more forward speed also pitches the nose down more,
+                                     # which tilts the up-20deg camera toward the lower gate.
 # The NEXT gate sits BELOW the line we flew through gate 1 on, and the up-tilted (~20deg)
 # FPV camera can't see anything that low from here (log 2026-06-06: 0 detections in 4s of
-# level forward coast). So while coasting we also DESCEND gently to bring the lower gate up
-# into the camera's view, down to a safety floor.
-POST_GATE_DESCEND_SPEED = 0.6        # m/s descent during the post-gate search (<= MAX_VSPEED)
+# level forward coast). So while searching we also DESCEND to bring the lower gate up into
+# the camera's view, down to a safety floor.
+POST_GATE_DESCEND_SPEED = 0.8        # m/s descent during the post-gate search (<= MAX_VSPEED)
 POST_GATE_MIN_ALT_M = 0.4            # don't descend below this height (NED -z) while searching
+# While searching for the next gate we ACCEPT fainter detections than normal so a
+# low-confidence, edge-of-frame next gate still steers us ("always go toward gate 2, even
+# if confidence is low"). The range / world-jump plausibility gates below still reject
+# garbage, so relaxing confidence alone cannot cause a runaway.
+POST_GATE_SEARCH_CONF = 0.10         # min confidence to ACQUIRE the next gate while searching
+
+# Look DOWN through the FIRST gate. Gate 2 sits a little lower, and the camera is tilted
+# up 20deg, so as we commit through gate 1 we bias a gentle extra descent to drop toward
+# gate 2's height and bring it into the up-tilted FOV sooner. Scoped to the first gate
+# (cur_idx == 0); later gates use normal vertical guidance. Kept modest so we don't clip
+# gate 1's lower edge (1.5 m inner opening).
+GATE1_LOOKDOWN_RANGE_M = 9.0         # start the look-down descent within this range of gate 1
+GATE1_LOOKDOWN_VD = 0.5              # m/s extra descent added while approaching/passing gate 1
 
 CONF_MIN = 0.25            # min vision confidence to trust a detection. Loosened 0.40 ->
                            # 0.25 so a partially-visible / edge-clipped gate (low squareness,
@@ -204,6 +220,21 @@ class Planner:
         """Wrap an angle to (-pi, pi]."""
         return math.atan2(math.sin(a), math.cos(a))
 
+    def _conf_floor(self, now):
+        """Minimum vision confidence to accept a detection THIS tick.
+
+        After passing a gate (``self._cur_idx > 0``) and before the next is locked, relax
+        the floor to POST_GATE_SEARCH_CONF so a faint, edge-of-frame next gate is acquired
+        and steered to ("always go toward gate 2, even if confidence is low"). Once a fresh
+        ``_gate_world`` belief exists (locked), or before the first gate, use the normal
+        CONF_MIN. The range / world-jump plausibility gates still apply, so a weak detection
+        that is also implausible is still rejected.
+        """
+        searching = (self._cur_idx > 0 and
+                     (self._gate_world is None
+                      or (now - self._gate_world_ts) > GATE_MEMORY_TIMEOUT_NS))
+        return POST_GATE_SEARCH_CONF if searching else CONF_MIN
+
     def _fresh_gate_azimuth(self, s, now):
         """Body-frame azimuth (rad, +=gate to the right) of a fresh, confident detection.
 
@@ -213,7 +244,7 @@ class Planner:
         is no usable detection (caller then falls back to the world-waypoint bearing).
         """
         vis = s['vision']
-        if not (vis and vis.get('detected') and vis.get('confidence', 0) >= CONF_MIN
+        if not (vis and vis.get('detected') and vis.get('confidence', 0) >= self._conf_floor(now)
                 and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
                 and vis.get('gate_body')):
             return None
@@ -277,7 +308,7 @@ class Planner:
         # WORLD waypoint (outlier-reject + EMA). We do NOT steer off a single frame's
         # bearing: that bearing swings wildly while maneuvering (log 2026-06-06).
         vis = s['vision']
-        if (vis and vis.get('detected') and vis.get('confidence', 0) >= CONF_MIN
+        if (vis and vis.get('detected') and vis.get('confidence', 0) >= self._conf_floor(now)
                 and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
                 and rpy is not None and position is not None
                 and abs(rpy[0]) <= ROLL_TRUST_MAX):
@@ -434,17 +465,20 @@ class Planner:
 
         offset, source = self._target_offset_ned(s, now)
         if offset is None:
-            # No gate target. If we just passed a gate, COAST straight ahead (steady camera)
-            # to scroll the next gate into the FOV rather than braking to a hover and parking.
-            if now < self._coast_until_ns:
+            # No gate target yet. Once we have passed at least one gate, COMMIT to reaching
+            # the next one: keep creeping forward on the pass-through heading and descending
+            # toward the (lower) next gate until we acquire or pass it — never give up to a
+            # hover, which is what left us parked just past gate 1. Before the first gate is
+            # acquired, hold position rather than wandering blindly.
+            if self._cur_idx > 0:
                 vn = POST_GATE_COAST_SPEED * math.cos(yaw_hold)
                 ve = POST_GATE_COAST_SPEED * math.sin(yaw_hold)
-                # Descend to bring the lower next-gate into the up-tilted camera, with a floor.
+                # Descend to bring the lower next gate into the up-tilted camera, with a floor.
                 vd = POST_GATE_DESCEND_SPEED
                 if position is not None and (-float(position[2])) <= POST_GATE_MIN_ALT_M:
                     vd = 0.0
                 return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
-                                      'yaw': yaw_hold, 'source': 'post_gate_coast', 'ts': now})
+                                      'yaw': yaw_hold, 'source': 'post_gate_search', 'ts': now})
             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
                                   'yaw': yaw_hold, 'source': 'hover', 'ts': now})
 
@@ -505,6 +539,13 @@ class Planner:
         vd = 0.0
         if dist > 1e-9:
             vd = max(-MAX_VSPEED, min(MAX_VSPEED, speed * float(offset[2]) / dist))
+
+        # Look DOWN through the FIRST gate: gate 2 is a little lower and the camera is
+        # tilted up 20deg, so bias a gentle extra descent as we approach/commit through
+        # gate 1 to drop toward gate 2 and bring it into view sooner. Scoped to gate 1
+        # (cur_idx == 0) and capped at MAX_VSPEED so we don't clip the gate's lower edge.
+        if self._cur_idx == 0 and dist <= GATE1_LOOKDOWN_RANGE_M:
+            vd = min(MAX_VSPEED, vd + GATE1_LOOKDOWN_VD)
 
         return self._publish({'mode': 'velocity',
                               'vel_ned': (float(vn), float(ve), float(vd)),

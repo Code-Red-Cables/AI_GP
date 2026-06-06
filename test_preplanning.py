@@ -163,6 +163,66 @@ def test_self_pass_detector_advances_without_race():
     print(f"PASS self-pass detector       auto_idx -> {planner._auto_idx} (no race index)")
 
 
+# --------------------------------------------------------------------- gate-2 behaviour
+def test_post_gate_search_commits_forward_and_down():
+    """After passing a gate with no target, press forward + descend (never hover)."""
+    data = _base_data(race_idx=1)            # active gate is now #1 (gate 0 was passed)
+    _set_pos(data, 0.0, 0.0, -2.0)           # 2 m up, above the descend floor
+    _fresh(data)
+    target = Planner(data).compute_target()
+    assert target['source'] == 'post_gate_search', target['source']
+    vn, ve, vd = target['vel_ned']
+    assert vn > 0.0, f"should creep forward toward gate 2, got {target['vel_ned']}"
+    assert vd > 0.0, f"should descend toward the lower gate 2, got vd={vd}"
+    print(f"PASS post-gate search         source={target['source']} vel_ned=({vn:+.2f},{ve:+.2f},{vd:+.2f})")
+
+
+def test_low_confidence_accepted_only_when_searching():
+    """A faint detection is rejected before gate 1 but accepted while searching gate 2."""
+    import planner as P
+    faint = 0.12                              # between POST_GATE_SEARCH_CONF and CONF_MIN
+    assert P.POST_GATE_SEARCH_CONF < faint < P.CONF_MIN
+
+    # Before the first gate (cur_idx 0): faint detection is rejected -> hover.
+    d0 = _base_data(race_idx=0)
+    _set_pos(d0, 0.0, 0.0, -2.0)
+    d0['vision'] = {'detected': True, 'confidence': faint, 'gate_body': (8.0, 0.0, 0.0),
+                    'ts': time.time_ns()}
+    _fresh(d0)
+    t0 = Planner(d0).compute_target()
+    assert t0['source'] == 'hover', f"faint pre-gate detection should be ignored, got {t0['source']}"
+
+    # After passing a gate (cur_idx 1, searching): the same faint detection is accepted.
+    d1 = _base_data(race_idx=1)
+    _set_pos(d1, 0.0, 0.0, -2.0)
+    d1['vision'] = {'detected': True, 'confidence': faint, 'gate_body': (8.0, 0.0, 0.0),
+                    'ts': time.time_ns()}
+    _fresh(d1)
+    t1 = Planner(d1).compute_target()
+    assert t1['source'] in ('vision', 'gate_memory'), \
+        f"faint detection should steer us while searching gate 2, got {t1['source']}"
+    print(f"PASS low-conf gating          pre-gate={t0['source']!r}  searching={t1['source']!r}")
+
+
+def test_gate1_lookdown_bias():
+    """Targeting gate 1 within range adds an extra descent; beyond range it does not."""
+    near = CourseMap(path="/tmp/_unused.json"); near.record(0, (5.0, 0.0, -2.0))   # 5 m ahead
+    far = CourseMap(path="/tmp/_unused.json"); far.record(0, (12.0, 0.0, -2.0))    # 12 m ahead
+
+    dn = _base_data(preplan=True, course_map=near, race_idx=0)
+    _set_pos(dn, 0.0, 0.0, -2.0); _fresh(dn)
+    vd_near = Planner(dn).compute_target()['vel_ned'][2]
+
+    df = _base_data(preplan=True, course_map=far, race_idx=0)
+    _set_pos(df, 0.0, 0.0, -2.0); _fresh(df)
+    vd_far = Planner(df).compute_target()['vel_ned'][2]
+
+    import planner as P
+    assert vd_near >= P.GATE1_LOOKDOWN_VD, f"look-down should add descent within range, vd={vd_near}"
+    assert vd_far < P.GATE1_LOOKDOWN_VD, f"beyond range, no look-down bias, vd={vd_far}"
+    print(f"PASS gate1 look-down          vd(near)={vd_near:+.2f}  vd(far)={vd_far:+.2f}")
+
+
 if __name__ == "__main__":
     test_coursemap_record_and_average()
     test_coursemap_save_load_atomic()
@@ -170,4 +230,7 @@ if __name__ == "__main__":
     test_planner_without_preplan_unchanged()
     test_planner_learns_on_gate_pass()
     test_self_pass_detector_advances_without_race()
+    test_post_gate_search_commits_forward_and_down()
+    test_low_confidence_accepted_only_when_searching()
+    test_gate1_lookdown_bias()
     print("ALL PREPLANNING TESTS PASSED")
