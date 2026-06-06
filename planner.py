@@ -222,14 +222,17 @@ class Planner:
         return math.atan2(math.sin(a), math.cos(a))
 
     def _conf_floor(self, now):
-        """Minimum vision confidence to accept a detection THIS tick.
+        """Minimum vision confidence to ACCEPT a detection into the world waypoint.
 
         After passing a gate (``self._cur_idx > 0``) and before the next is locked, relax
         the floor to POST_GATE_SEARCH_CONF so a faint, edge-of-frame next gate is acquired
-        and steered to ("always go toward gate 2, even if confidence is low"). Once a fresh
+        and remembered ("always go toward gate 2, even if confidence is low"). Once a fresh
         ``_gate_world`` belief exists (locked), or before the first gate, use the normal
         CONF_MIN. The range / world-jump plausibility gates still apply, so a weak detection
         that is also implausible is still rejected.
+
+        NOTE: this governs only the world-seed / forward intent. YAW re-aim uses the strict
+        CONF_MIN (see _fresh_gate_azimuth) so a weak bearing never swings us off course.
         """
         searching = (self._cur_idx > 0 and
                      (self._gate_world is None
@@ -243,9 +246,15 @@ class Planner:
         far more reliable for steering than the attitude-sensitive world reconstruction,
         and it is what we drive to zero to keep the gate centred. Returns None when there
         is no usable detection (caller then falls back to the world-waypoint bearing).
+
+        YAW deliberately requires the STRICT CONF_MIN (not the relaxed search floor): the
+        bearing of a faint, edge-of-frame detection is unreliable, and re-aiming the nose
+        onto it swings the narrow camera and flies us off to the side (the gate-2 veer).
+        We still ADVANCE toward gate 2 at low confidence via the forward+down search and
+        the relaxed world-seed in _target_offset_ned — we just don't STEER off a weak one.
         """
         vis = s['vision']
-        if not (vis and vis.get('detected') and vis.get('confidence', 0) >= self._conf_floor(now)
+        if not (vis and vis.get('detected') and vis.get('confidence', 0) >= CONF_MIN
                 and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
                 and vis.get('gate_body')):
             return None
