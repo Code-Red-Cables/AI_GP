@@ -48,10 +48,19 @@ ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the wa
 # enters frame, so vision never re-acquires and we sit forever. Instead we COAST straight
 # ahead on the heading we passed through on until the next gate is detected (or the window
 # expires) — steady camera, and the course ahead scrolls into view.
-POST_GATE_COAST_NS = 4_000_000_000   # coast forward this long (ns) after a gate advance
-POST_GATE_COAST_SPEED = 1.5          # m/s forward during the coast (< MAX_SPEED, gentle)
+POST_GATE_COAST_NS = 6_000_000_000   # coast/search this long (ns) after a gate advance
+POST_GATE_COAST_SPEED = 1.2          # m/s forward during the coast (< MAX_SPEED, gentle)
+# The NEXT gate sits BELOW the line we flew through gate 1 on, and the up-tilted (~20deg)
+# FPV camera can't see anything that low from here (log 2026-06-06: 0 detections in 4s of
+# level forward coast). So while coasting we also DESCEND gently to bring the lower gate up
+# into the camera's view, down to a safety floor.
+POST_GATE_DESCEND_SPEED = 0.6        # m/s descent during the post-gate search (<= MAX_VSPEED)
+POST_GATE_MIN_ALT_M = 0.4            # don't descend below this height (NED -z) while searching
 
-CONF_MIN = 0.40            # min vision confidence to trust a detection
+CONF_MIN = 0.25            # min vision confidence to trust a detection. Loosened 0.40 ->
+                           # 0.25 so a partially-visible / edge-clipped gate (low squareness,
+                           # so low confidence) is accepted sooner — e.g. the lower next-gate
+                           # as it first edges into the up-tilted frame during the descent.
 VISION_TIMEOUT_NS = 300_000_000    # 300 ms: older vision is "stale"
 TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without pose -> hover (watchdog)
 
@@ -368,7 +377,11 @@ class Planner:
             if now < self._coast_until_ns:
                 vn = POST_GATE_COAST_SPEED * math.cos(yaw_hold)
                 ve = POST_GATE_COAST_SPEED * math.sin(yaw_hold)
-                return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), 0.0),
+                # Descend to bring the lower next-gate into the up-tilted camera, with a floor.
+                vd = POST_GATE_DESCEND_SPEED
+                if position is not None and (-float(position[2])) <= POST_GATE_MIN_ALT_M:
+                    vd = 0.0
+                return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
                                       'yaw': yaw_hold, 'source': 'post_gate_coast', 'ts': now})
             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
                                   'yaw': yaw_hold, 'source': 'hover', 'ts': now})

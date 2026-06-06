@@ -36,7 +36,10 @@ DEFAULT_CFG = {
     "upper_hsv2": UPPER_HSV2,
     "kernel_size": 5,        # morphology kernel (odd, small)
     "min_area": 400.0,       # area floor in px for a candidate contour
-    "min_extent": 0.30,      # contour_area / bbox_area floor (frame is an annulus)
+    "min_extent": 0.15,      # contour_area / bbox_area floor (frame is an annulus).
+                             # Loosened 0.30 -> 0.15 so a gate still CLIPPED by the frame
+                             # edge (how the lower next-gate first appears as we descend
+                             # toward it) isn't rejected for being a partial shape.
     "approx_eps_frac": 0.04, # approxPolyDP epsilon as fraction of perimeter
 }
 
