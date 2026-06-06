@@ -5,10 +5,13 @@ The planner reads the shared blackboard each control tick and decides where to g
 1. If a **fresh, confident vision detection** exists, steer toward the gate it sees
    (body-relative vector rotated into NED with the current attitude — needs no
    absolute position fix).
-2. Otherwise fall back to the **known track geometry**: the gate indexed by the
-   race-status ``active_gate_index`` (the sim increments this as gates are passed,
-   so it doubles as our gate-passed signal — no manual bookkeeping).
-3. If telemetry is stale (we'd be flying blind) or nothing is targetable, command a
+2. Otherwise fall back to the **preplanned course map**: the learned world position of
+   the gate indexed by ``active_gate_index`` (the course is deterministic — spec 3.5 —
+   so a map recorded on a prior run is replayable). This is what carries us toward a gate
+   that is not yet in the narrow FOV instead of hovering. Inert unless preplanning is on.
+3. Otherwise fall back to the **sim-broadcast track geometry** — absent on this sim
+   (spec 4.3 defines no track-data message), kept only for forward-compat.
+4. If telemetry is stale (we'd be flying blind) or nothing is targetable, command a
    **hover** (zero velocity) rather than guessing — a safety watchdog.
 
 Output is written to ``shared_data['target']`` as a NED velocity command + desired
@@ -173,6 +176,29 @@ class Planner:
         # Post-gate coast (see POST_GATE_COAST_*): keep flying forward to find the next gate.
         self._coast_until_ns = 0
 
+        # ---- Preplanning (learn-then-replay the DETERMINISTIC course; spec 3.5) --------
+        # The sim broadcasts no track geometry (spec 4.3), so we build our own gate map:
+        # record each gate's world position when we pass it, persist it, and on later runs
+        # fly to the KNOWN next-gate position when vision can't yet see it (fixes the
+        # gate-2 hover). ALL of this is inert unless a course_map is injected AND the
+        # preplan/learn flags are set, so a default run is identical to the reactive planner.
+        self._course_map = self.data.get('course_map')
+        self._preplan = bool(self.data.get('preplan', False))
+        self._learn = bool(self.data.get('learn', False))
+        # The index the planner currently believes is the active gate (race-provided when
+        # available, else self-detected). Read by _target_offset_ned for the map lookup.
+        self._cur_idx = 0
+        # True once the CURRENT gate belief (_gate_world) has been confirmed by a vision
+        # detection. Only vision-confirmed beliefs are recorded into the map, so a
+        # preplan-seeded waypoint never feeds back on itself and drifts. Reset on advance.
+        self._gate_world_vis = False
+        self._recorded = set()   # gate indices already written this run (record once)
+        # Self gate-pass detector — used ONLY when the sim provides no active_gate_index.
+        # active_gate_index (race) is authoritative when present; this is the fallback so
+        # learning/replay still advance gate-to-gate without it.
+        self._auto_idx = 0
+        self._armed_pass = False
+
     @staticmethod
     def _wrap(a):
         """Wrap an angle to (-pi, pi]."""
@@ -306,6 +332,11 @@ class Planner:
                         self._reseed_buf = []
                         updated = True
 
+        # Record whether vision CONFIRMED the current world belief this tick (used to
+        # decide what is safe to learn into the course map — preplan-only seeds are not).
+        if updated:
+            self._gate_world_vis = True
+
         # 2) Fly to the filtered world waypoint (whether or not vision updated it this
         # tick — dead-reckoning via odometry keeps us closing the gap when it's out of
         # view). This is a fixed point, so steering to it is stable.
@@ -314,7 +345,24 @@ class Planner:
             return (self._gate_world - np.asarray(position, float),
                     'vision' if updated else 'gate_memory')
 
-        # 3) Known track geometry indexed by active_gate_index (unused: sim sends none).
+        # 3) Preplanned course map (learned from prior DETERMINISTIC runs). When vision
+        # has no fresh lock, fly to the KNOWN world position of the current gate so it
+        # scrolls into the narrow up-tilted FOV — instead of coasting blind and parking
+        # just past the previous gate (the gate-2 hover failure). Seeding _gate_world here
+        # lets the existing yaw-lock / vertical-trust / pass-through machinery apply, and
+        # lets a later vision lock EMA-refine from a good prior instead of acquiring cold.
+        if self._preplan and self._course_map is not None and position is not None:
+            wp = self._course_map.get(self._cur_idx)
+            if wp is not None:
+                wp = np.asarray(wp, float)
+                if self._gate_world is None:
+                    self._gate_world = wp.copy()
+                    self._gate_world_ts = now
+                    self._gate_world_vis = False   # a seed, NOT a vision confirmation
+                return wp - np.asarray(position, float), 'preplan'
+
+        # 4) Known track geometry from the sim broadcast (absent on this sim — kept for
+        # forward-compat in case a future sim issue starts sending it).
         gates, race = s['gates'], s['race']
         if gates and position is not None:
             idx = int(race['active_gate_index']) if race and race.get('active_gate_index', -1) >= 0 else 0
@@ -341,9 +389,23 @@ class Planner:
         # gate we just passed -> drop it so we don't dead-reckon backward into it. The
         # next gate's memory is seeded as soon as vision picks it up.
         race = s.get('race')
-        gidx = int(race['active_gate_index']) if race and race.get('active_gate_index', -1) >= 0 else 0
+        if race and race.get('active_gate_index', -1) >= 0:
+            gidx = int(race['active_gate_index'])   # authoritative when the sim sends it
+        else:
+            gidx = self._auto_idx                   # self-detected fallback (see below)
+        self._cur_idx = gidx
         if gidx != self._last_gate_idx:
+            # LEARN: record the gate we just passed into the course map BEFORE dropping
+            # the belief. Only vision-confirmed beliefs are stored, so preplan seeds never
+            # feed back on themselves. Persist incrementally so a crash still keeps the map.
+            if (self._learn and self._course_map is not None and self._gate_world is not None
+                    and self._gate_world_vis and self._last_gate_idx not in self._recorded):
+                self._course_map.record(self._last_gate_idx,
+                                        tuple(float(v) for v in self._gate_world))
+                self._course_map.save()
+                self._recorded.add(self._last_gate_idx)
             self._gate_world = None
+            self._gate_world_vis = False
             self._reseed_buf = []
             # Keep flying the heading we passed through on (don't snap to whatever garbage
             # bearing the just-passed gate gives at point-blank). The lock re-aims itself
@@ -393,6 +455,18 @@ class Planner:
 
         dist = float(np.linalg.norm(offset))
         horiz = float(np.linalg.norm(offset[:2]))
+
+        # Self gate-pass detection: advance our own gate counter when we close to within
+        # the pass radius and then move clearly past it. Used ONLY when the sim provides
+        # no active_gate_index (otherwise race is authoritative and _auto_idx is unused),
+        # so learn/replay can still step gate-to-gate. The advance takes effect next tick
+        # via the same reset/record path as a race-driven advance.
+        if not (race and race.get('active_gate_index', -1) >= 0):
+            if dist < PASS_THROUGH_DIST:
+                self._armed_pass = True
+            elif self._armed_pass and dist > PASS_THROUGH_DIST + 1.5:
+                self._auto_idx += 1
+                self._armed_pass = False
         if dist <= PASS_THROUGH_DIST:
             speed = MAX_SPEED  # commit to the pass — don't decelerate inside the gate
         else:

@@ -2,6 +2,7 @@
 # Sample Python client for the AI GP controller
 #
 
+import os
 import threading
 import time
 
@@ -22,6 +23,20 @@ DRY_RUN = False
 DEBUG_VISION = False
 LOGGING = True
 
+# --------------------------------------------------------------------------------------
+# Preplanning (learn-then-replay the deterministic course; spec 3.5). The sim sends no
+# track map (spec 4.3), so we LEARN each gate's world position as we pass it and PREPLAN
+# (fly to the known next-gate position) on later runs — fixing the "see gate 1, then
+# hover because gate 2 is out of the FOV" failure.
+#   LEARN:   record gate world positions into COURSE_MAP_PATH as they are passed.
+#   PREPLAN: when vision has no fresh lock, fly to the mapped gate instead of coasting.
+# Both default ON on this branch (env-overridable: PREPLAN=0 / LEARN=0). First run with an
+# empty map behaves like the reactive planner but learns gate 0+; later runs replay it.
+# --------------------------------------------------------------------------------------
+PREPLAN = os.environ.get('PREPLAN', '1') != '0'
+LEARN = os.environ.get('LEARN', '1') != '0'
+COURSE_MAP_PATH = os.environ.get('COURSE_MAP_PATH', 'course_map.json')
+
 # time since sim started ms
 system_boot_ms = int(time.time() * 1000)
 
@@ -31,6 +46,9 @@ shared_data = {
     'dry_run': DRY_RUN,
     'debug_vision': DEBUG_VISION,
     'logging': LOGGING,
+    'preplan': PREPLAN,
+    'learn': LEARN,
+    'course_map_path': COURSE_MAP_PATH,
 }
 
 # setup components
@@ -70,5 +88,11 @@ for component in (ts_loop, mavlink_rx, vision_rx, logger):
     thread = component.get_thread_for_join()
     if thread is not None:
         thread.join(timeout=1.0)
+
+# Persist the learned course map so the next run can preplan from it.
+course_map = shared_data.get('course_map')
+if course_map is not None:
+    course_map.save()
+    print(f"Course map saved: gates {course_map.indices()} -> {COURSE_MAP_PATH}", flush=True)
 
 print("Client exited!", flush=True)
