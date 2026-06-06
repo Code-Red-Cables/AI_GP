@@ -149,8 +149,15 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
         if extent < min_extent:
             continue
 
-        # Favor square, well-filled, larger contours.
-        score = square * (0.5 + 0.5 * extent)
+        # Prefer the NEAREST gate. The course is a tunnel of concentric gates (see the
+        # FPV frame 2026-06-06): several are visible at once, receding to a vanishing
+        # point. We fly the closest one first, and it is the largest in the image. The
+        # old score ranked on squareness*fill ONLY (no size term despite the comment), so
+        # a distant gate viewed dead-on could out-score the nearer one that is bigger but
+        # slightly perspective-skewed/clipped — the detector then flipped between gates
+        # frame to frame, which showed up as the range bouncing ~16m <-> ~21m in the logs.
+        # Make AREA the dominant term (nearest wins) while still requiring squareness/fill.
+        score = area * (0.5 + 0.5 * square) * (0.5 + 0.5 * extent)
         if best is None or score > best[0]:
             best = (score, i)
 

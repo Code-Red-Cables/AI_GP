@@ -128,9 +128,18 @@ class MAVLinkRX:
     def on_heartbeat(self, msg):
         armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
         ts = time.time_ns()
+        # Decode the human-readable flight-mode name so logs show what mode the FC is
+        # actually in (we depend on a self-levelling/rate mode; verifying it is critical).
+        try:
+            mode_name = self.mavlink_conn.flightmode
+        except Exception:
+            mode_name = None
         with self.data['lock']:
             self.data['armed'] = armed
             self.data['heartbeat_ts'] = ts
+            self.data['flight_mode'] = mode_name
+            self.data['base_mode'] = int(msg.base_mode)
+            self.data['custom_mode'] = int(msg.custom_mode)
 
     def on_timesync(self, msg):
         request_time = msg.ts1

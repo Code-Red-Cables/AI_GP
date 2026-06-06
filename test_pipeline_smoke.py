@@ -96,11 +96,15 @@ def test_controller_send_path():
         target_component = 1
         mav = FakeMav()
 
-    ctrl.send_attitude_target(FakeConn(), 0, 0.0, -0.1, 0.5, 0.5)
+    ctrl.send_rate_target(FakeConn(), 0, 0.1, -0.2, 0.3, 0.5)
     # time_boot, sys, comp, mask, quat(list), rollrate, pitchrate, yawrate, thrust
     assert "args" in captured and len(captured["args"]) == 9, captured
     assert len(captured["args"][4]) == 4, "quaternion must have 4 elements"
-    print("PASS controller send  set_attitude_target built OK")
+    assert captured["args"][5] == 0.1, "roll rate must reach the rollrate field"
+    assert captured["args"][6] == -0.2, "pitch rate must reach the pitchrate field"
+    assert captured["args"][7] == 0.3, "yaw rate must reach the yawrate field"
+    assert captured["args"][8] == 0.5, "thrust must reach the thrust field"
+    print("PASS controller send  set_attitude_target (rate) built OK")
 
 
 def test_velocity_to_attitude_signs():

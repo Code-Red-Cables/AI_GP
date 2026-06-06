@@ -23,18 +23,66 @@ def _quat_to_rpy(q):
 SIM_SERVER_UDP_IP = "0.0.0.0"
 SIM_SERVER_UDP_PORT = 5600
 
+# --------------------------------------------------------------------------- #
+# Vision estimate filtering. The range estimate is bimodal in quality (logs
+# 2026-06-05): the PnP path (clean 4-corner quad) is tight (~19-22m on the same
+# gate) while the size-method fallback (Z = f*1.5/sqrt(area)) is garbage (11-64m)
+# because the inner-opening area breaks up frame-to-frame. Unfiltered, every bad
+# frame reached the planner and yanked guidance/yaw around. We reject teleporting
+# detections and low-pass the accepted gate_body so range AND bearing are stable.
+# --------------------------------------------------------------------------- #
+VIS_MAX_RANGE_M = 40.0             # gates sit within ~25m; beyond is a bad estimate
+VIS_JUMP_MAX_M = 8.0               # reject a range that jumps this far from the belief
+VIS_BELIEF_TIMEOUT_NS = 500_000_000  # belief older than this is stale -> reseed
+VIS_EMA_ALPHA = 0.5                # gate_body low-pass (1.0 = no smoothing)
+
+
 class VisionRX:
 
     def __init__(self, data):
         self.data = data
         if 'lock' not in self.data:
             self.data['lock'] = threading.RLock()
+        # Temporal filter belief: last accepted (smoothed) gate_body + its timestamp.
+        self._gb_filt = None
+        self._gb_ts = 0
         self.thread = threading.Thread(
             target=self._vision_loop,
             daemon=False
         )
         self.is_running = True
         self.thread.start()
+
+    def _filter_estimate(self, est, now):
+        """Reject teleporting range outliers and EMA-smooth gate_body in place.
+
+        Drops a frame (marks detected=False) whose range is absurd or jumps more
+        than VIS_JUMP_MAX_M from the recent belief, so the noisy size-method spikes
+        never reach the planner. Accepted frames are low-passed for stability.
+        """
+        if not est.get('detected') or est.get('gate_body') is None:
+            return est
+        gb = np.asarray(est['gate_body'], float)
+        rng = float(np.linalg.norm(gb))
+        if not (0.0 < rng <= VIS_MAX_RANGE_M):
+            est['detected'] = False
+            est['reject'] = 'range'
+            return est
+        fresh = self._gb_filt is not None and (now - self._gb_ts) <= VIS_BELIEF_TIMEOUT_NS
+        if fresh and abs(rng - float(np.linalg.norm(self._gb_filt))) > VIS_JUMP_MAX_M:
+            est['detected'] = False
+            est['reject'] = 'jump'
+            return est
+        gb_f = (VIS_EMA_ALPHA * gb + (1.0 - VIS_EMA_ALPHA) * self._gb_filt
+                if fresh else gb)
+        self._gb_filt = gb_f
+        self._gb_ts = now
+        # Republish the smoothed body vector and its derived range/bearing.
+        x, y, z = float(gb_f[0]), float(gb_f[1]), float(gb_f[2])
+        est['gate_body'] = (x, y, z)
+        est['range_m'] = float(np.linalg.norm(gb_f))
+        est['bearing'] = (math.atan2(y, x), math.atan2(-z, math.hypot(x, y)))
+        return est
 
     def get_thread_for_join(self):
         self.is_running = False
@@ -127,8 +175,21 @@ class VisionRX:
         elif pos is not None:
             position = (pos['x'], pos['y'], pos['z'])
 
-        est = estimate_gate(det, attitude=attitude, position_ned=position,
-                            ts=time.time_ns())
+        now = time.time_ns()
+        est = estimate_gate(det, attitude=attitude, position_ned=position, ts=now)
+        # Temporal outlier-reject + smoothing on gate_body (kills size-method spikes).
+        est = self._filter_estimate(est, now)
+        # Recompute the absolute NED gate position from the SMOOTHED body vector so
+        # gate_ned stays consistent with the filtered estimate the planner uses.
+        if est.get('detected') and attitude is not None and est.get('gate_body'):
+            import camera_model as cm
+            offset_ned = cm.body_to_ned(
+                np.asarray(est['gate_body'], float),
+                attitude['roll'], attitude['pitch'], attitude['yaw'])
+            if position is not None:
+                est['gate_ned'] = tuple(float(a + b) for a, b in zip(position, offset_ned))
+            else:
+                est['gate_ned'] = tuple(float(c) for c in offset_ned)
         est['frame_id'] = frame_id
         est['sim_time_ns'] = sim_time_ns
 
