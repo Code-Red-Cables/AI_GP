@@ -205,22 +205,26 @@ def test_low_confidence_accepted_only_when_searching():
 
 
 def test_gate1_lookdown_bias():
-    """Targeting gate 1 within range adds an extra descent; beyond range it does not."""
-    near = CourseMap(path="/tmp/_unused.json"); near.record(0, (5.0, 0.0, -2.0))   # 5 m ahead
-    far = CourseMap(path="/tmp/_unused.json"); far.record(0, (12.0, 0.0, -2.0))    # 12 m ahead
-
-    dn = _base_data(preplan=True, course_map=near, race_idx=0)
-    _set_pos(dn, 0.0, 0.0, -2.0); _fresh(dn)
-    vd_near = Planner(dn).compute_target()['vel_ned'][2]
-
-    df = _base_data(preplan=True, course_map=far, race_idx=0)
-    _set_pos(df, 0.0, 0.0, -2.0); _fresh(df)
-    vd_far = Planner(df).compute_target()['vel_ned'][2]
-
+    """Look-down adds descent on the APPROACH but ramps to zero in the pass zone."""
     import planner as P
-    assert vd_near >= P.GATE1_LOOKDOWN_VD, f"look-down should add descent within range, vd={vd_near}"
-    assert vd_far < P.GATE1_LOOKDOWN_VD, f"beyond range, no look-down bias, vd={vd_far}"
-    print(f"PASS gate1 look-down          vd(near)={vd_near:+.2f}  vd(far)={vd_far:+.2f}")
+
+    def vd_for(gx):
+        cm = CourseMap(path="/tmp/_unused.json"); cm.record(0, (gx, 0.0, -2.0))
+        d = _base_data(preplan=True, course_map=cm, race_idx=0)
+        _set_pos(d, 0.0, 0.0, -2.0); _fresh(d)
+        return Planner(d).compute_target()['vel_ned'][2]
+
+    vd_band = vd_for(6.0)    # in the approach band -> look-down adds descent
+    vd_far = vd_for(12.0)    # beyond range -> no look-down
+    vd_pass = vd_for(2.0)    # inside PASS_THROUGH_DIST -> look-down ramped to zero
+
+    assert vd_band > vd_far, f"approach look-down should add descent: band={vd_band} far={vd_far}"
+    # In the pass zone the look-down must NOT inflate the descent, or we clip the bottom.
+    # Base centre-tracking there is ~MAX_SPEED * GATE_AIM_DOWN_M / dist; assert no extra.
+    assert vd_pass <= P.GATE_AIM_DOWN_M + 0.05, \
+        f"pass-zone vd must be base-only (no look-down), got {vd_pass}"
+    print(f"PASS gate1 look-down ramp     vd(band)={vd_band:+.2f} vd(far)={vd_far:+.2f} "
+          f"vd(pass)={vd_pass:+.2f}")
 
 
 if __name__ == "__main__":

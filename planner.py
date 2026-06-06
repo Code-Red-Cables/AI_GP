@@ -68,13 +68,14 @@ POST_GATE_MIN_ALT_M = 0.4            # don't descend below this height (NED -z) 
 # garbage, so relaxing confidence alone cannot cause a runaway.
 POST_GATE_SEARCH_CONF = 0.10         # min confidence to ACQUIRE the next gate while searching
 
-# Look DOWN through the FIRST gate. Gate 2 sits a little lower, and the camera is tilted
-# up 20deg, so as we commit through gate 1 we bias a gentle extra descent to drop toward
-# gate 2's height and bring it into the up-tilted FOV sooner. Scoped to the first gate
-# (cur_idx == 0); later gates use normal vertical guidance. Kept modest so we don't clip
-# gate 1's lower edge (1.5 m inner opening).
-GATE1_LOOKDOWN_RANGE_M = 9.0         # start the look-down descent within this range of gate 1
-GATE1_LOOKDOWN_VD = 0.5              # m/s extra descent added while approaching/passing gate 1
+# Look DOWN on the APPROACH to the FIRST gate. Gate 2 sits a little lower and the camera
+# is tilted up 20deg, so on the way in we bias a gentle descent to drop toward gate 2 and
+# bring it into view sooner. CRITICAL: this is RAMPED to zero as we commit to the pass
+# (within PASS_THROUGH_DIST) so we thread gate 1 on the normal centre-tracking trajectory
+# and do NOT sink into its lower edge — a raw descent through the opening clipped the
+# bottom. Most of the camera "look down" comes from the forward-speed nose-down anyway.
+GATE1_LOOKDOWN_RANGE_M = 9.0         # look down within this range of gate 1 (full at range)
+GATE1_LOOKDOWN_VD = 0.35             # m/s peak extra descent on approach (ramps to 0 at the gate)
 
 CONF_MIN = 0.25            # min vision confidence to trust a detection. Loosened 0.40 ->
                            # 0.25 so a partially-visible / edge-clipped gate (low squareness,
@@ -540,12 +541,14 @@ class Planner:
         if dist > 1e-9:
             vd = max(-MAX_VSPEED, min(MAX_VSPEED, speed * float(offset[2]) / dist))
 
-        # Look DOWN through the FIRST gate: gate 2 is a little lower and the camera is
-        # tilted up 20deg, so bias a gentle extra descent as we approach/commit through
-        # gate 1 to drop toward gate 2 and bring it into view sooner. Scoped to gate 1
-        # (cur_idx == 0) and capped at MAX_VSPEED so we don't clip the gate's lower edge.
-        if self._cur_idx == 0 and dist <= GATE1_LOOKDOWN_RANGE_M:
-            vd = min(MAX_VSPEED, vd + GATE1_LOOKDOWN_VD)
+        # Look DOWN on the APPROACH to gate 1 only, RAMPED to zero as we commit to the
+        # pass: full bias far out, fading to nothing by PASS_THROUGH_DIST so we thread the
+        # opening on the normal centre-tracking trajectory and do NOT sink into the gate's
+        # lower edge (a raw descent through the gate clipped the bottom). The base vertical
+        # loop then re-centres us on the gate before we cross the plane.
+        if self._cur_idx == 0 and PASS_THROUGH_DIST < dist <= GATE1_LOOKDOWN_RANGE_M:
+            frac = (dist - PASS_THROUGH_DIST) / (GATE1_LOOKDOWN_RANGE_M - PASS_THROUGH_DIST)
+            vd = min(MAX_VSPEED, vd + GATE1_LOOKDOWN_VD * frac)
 
         return self._publish({'mode': 'velocity',
                               'vel_ned': (float(vn), float(ve), float(vd)),
