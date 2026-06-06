@@ -3,6 +3,9 @@ from timesync import TimeSync
 from vision_rx import VisionRX
 from mavlink_rx import MAVLinkRX
 from controller import Controller
+from planner import Planner
+from logger import Logger
+from course_map import CourseMap
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # -------------------------------
@@ -24,7 +27,7 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # Timesync request Loop
     # -------------------------------
     print("Setting up Timesync loop...", flush=True)
-    ts_loop = TimeSync(sim_conn, shared_data)
+    ts_loop = TimeSync.create_timesync(sim_conn, shared_data)
 
     # -------------------------------
     # Connect Vision receiver
@@ -32,14 +35,39 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     vision_rx = VisionRX(shared_data)
 
     # -------------------------------
-    # Main control loop
+    # Preplanning course map (learn-then-replay). The sim broadcasts no track geometry
+    # (spec 4.3), but the course is deterministic (spec 3.5), so we learn each gate's
+    # world position on one run and replay it on the next. Loaded BEFORE the planner so
+    # it can read it in __init__. Only created when preplan/learn is enabled, so a
+    # default run is unaffected.
     # -------------------------------
-    controller = Controller(sim_conn, shared_data, system_boot_ms)
+    if shared_data.get('preplan') or shared_data.get('learn'):
+        course_map = CourseMap(shared_data.get('course_map_path', 'course_map.json')).load()
+        shared_data['course_map'] = course_map
+        print(f"Course map loaded: {course_map.indices()} "
+              f"(preplan={shared_data.get('preplan')}, learn={shared_data.get('learn')})",
+              flush=True)
+
+    # -------------------------------
+    # Planner + main control loop
+    # -------------------------------
+    print("Setting up planner...", flush=True)
+    planner = Planner(shared_data)
+    controller = Controller(sim_conn, shared_data, system_boot_ms, planner)
+
+    # -------------------------------
+    # Run logger (optional, for offline tuning)
+    # -------------------------------
+    logger = None
+    if shared_data.get('logging', True):
+        logger = Logger.create_logger(shared_data)
 
     return {
         'vision_rx': vision_rx,
         'mavlink_rx': mavlink_rx,
         'ts_loop': ts_loop,
         'sim_conn': sim_conn,
-        'controller': controller
+        'controller': controller,
+        'planner': planner,
+        'logger': logger
     }

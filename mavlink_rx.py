@@ -18,6 +18,15 @@ class MAVLinkRX:
         self.track_chunks = {}
         self.expected_num_track_chunks = {}
 
+        # shared_data is written by 3 RX threads and read by the control loop.
+        # Guard all access with a single re-entrant lock created exactly once.
+        if 'lock' not in self.data:
+            self.data['lock'] = threading.RLock()
+
+    def _store(self, key, value):
+        with self.data['lock']:
+            self.data[key] = value
+
     @classmethod
     def create_mavlink_rx(cls, mavlink_connection, data):
         rx = cls(mavlink_connection, data)
@@ -117,44 +126,68 @@ class MAVLinkRX:
                 self.expected_num_track_chunks[track_data_transfer_id] = msg.packets
 
     def on_heartbeat(self, msg):
-        armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+        armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
+        ts = time.time_ns()
+        # Decode the human-readable flight-mode name so logs show what mode the FC is
+        # actually in (we depend on a self-levelling/rate mode; verifying it is critical).
+        try:
+            mode_name = self.mavlink_conn.flightmode
+        except Exception:
+            mode_name = None
+        with self.data['lock']:
+            self.data['armed'] = armed
+            self.data['heartbeat_ts'] = ts
+            self.data['flight_mode'] = mode_name
+            self.data['base_mode'] = int(msg.base_mode)
+            self.data['custom_mode'] = int(msg.custom_mode)
 
     def on_timesync(self, msg):
         request_time = msg.ts1
         response_time = msg.tc1
 
     def on_attitude(self, msg):
-        roll = msg.roll
-        pitch = msg.pitch
-        yaw = msg.yaw
-        roll_speed = msg.rollspeed
-        pitch_speed = msg.pitchspeed
-        yaw_speed = msg.yawspeed
-        time_boot_ms = msg.time_boot_ms
+        self._store('attitude', {
+            'roll': msg.roll,
+            'pitch': msg.pitch,
+            'yaw': msg.yaw,
+            'rollspeed': msg.rollspeed,
+            'pitchspeed': msg.pitchspeed,
+            'yawspeed': msg.yawspeed,
+            'time_boot_ms': msg.time_boot_ms,
+            'ts': time.time_ns(),
+        })
 
     def on_local_position_ned(self, msg):
-        pos_x = msg.x
-        pos_y = msg.y
-        pos_z = msg.z
-        vel_x = msg.vx
-        vel_y = msg.vy
-        vel_z = msg.vz
-        time_boot_ms = msg.time_boot_ms
+        self._store('position_ned', {
+            'x': msg.x,
+            'y': msg.y,
+            'z': msg.z,
+            'vx': msg.vx,
+            'vy': msg.vy,
+            'vz': msg.vz,
+            'time_boot_ms': msg.time_boot_ms,
+            'ts': time.time_ns(),
+        })
 
     def on_odometry(self, msg):
-        pos_x, pos_y, pos_z = msg.x, msg.y, msg.z
-        qx, qy, qz, qw = msg.q[1], msg.q[2], msg.q[3], msg.q[0]
-        vel_x, vel_y, vel_z = msg.vx, msg.vy, msg.vz
-        roll_speed = msg.rollspeed
-        pitch_speed = msg.pitchspeed
-        yaw_speed = msg.yawspeed
-        time_boot_us = msg.time_usec
-        reset_count = msg.reset_counter
+        # q is stored [w, x, y, z]; keep that ordering in the record.
+        self._store('odometry', {
+            'pos': (msg.x, msg.y, msg.z),
+            'q': (msg.q[0], msg.q[1], msg.q[2], msg.q[3]),
+            'vel': (msg.vx, msg.vy, msg.vz),
+            'rates': (msg.rollspeed, msg.pitchspeed, msg.yawspeed),
+            'time_usec': msg.time_usec,
+            'reset_counter': msg.reset_counter,
+            'ts': time.time_ns(),
+        })
 
     def on_highres_imu(self, msg):
-        acceleration_x, acceleration_y, acceleration_z = msg.xacc, msg.yacc, msg.zacc
-        gyro_x, gyro_y, gyro_z = msg.xgyro, msg.ygyro, msg.zgyro
-        time_boot_us = msg.time_usec
+        self._store('imu', {
+            'acc': (msg.xacc, msg.yacc, msg.zacc),
+            'gyro': (msg.xgyro, msg.ygyro, msg.zgyro),
+            'time_usec': msg.time_usec,
+            'ts': time.time_ns(),
+        })
 
     def on_encapsulated_data(self, msg):
         if msg:
@@ -176,6 +209,14 @@ class MAVLinkRX:
         # last_gate_race_time - race time in seconds when last gate was passed
         data_type, sim_boot_time_ms, race_start_boot_time_ms, race_finish_time_ns, active_gate_index, last_gate_race_time = struct.unpack_from(
             "<BQqqIq", raw_payload)
+        self._store('race', {
+            'sim_boot_time_ms': sim_boot_time_ms,
+            'race_start_boot_time_ms': race_start_boot_time_ms,
+            'race_finish_time_ns': race_finish_time_ns,
+            'active_gate_index': active_gate_index,
+            'last_gate_race_time': last_gate_race_time,
+            'ts': time.time_ns(),
+        })
 
     def on_track_data_packet(self, msg):
         raw_payload = bytes(msg.data)
@@ -200,6 +241,7 @@ class MAVLinkRX:
         #   num_gates - track gate count
         num_gates, = struct.unpack_from("<H", payload)
         payload = payload[2:]
+        gates = []
         for i in range(num_gates):
             # Gate Info
             #   gate_id - range is 0 - num_gates
@@ -210,6 +252,15 @@ class MAVLinkRX:
             gate_id, position_ned_x, position_ned_y, position_ned_z, orientation_ned_w, orientation_ned_x, orientation_ned_y, orientation_ned_z, width, height = struct.unpack_from(
                 "<Hfffffffff", payload)
             payload = payload[38:]
+            gates.append({
+                'gate_id': gate_id,
+                'pos_ned': (position_ned_x, position_ned_y, position_ned_z),
+                'orient_ned': (orientation_ned_w, orientation_ned_x, orientation_ned_y, orientation_ned_z),
+                'width': width,
+                'height': height,
+            })
+        gates.sort(key=lambda g: g['gate_id'])
+        self._store('gates', gates)
 
     def on_actuator_output_status(self, msg):
         time_boot_us = msg.time_usec
@@ -226,3 +277,9 @@ class MAVLinkRX:
 
         threat_level = msg.threat_level # 1-2 with 2 being higher impact collision
         impact = msg.horizontal_minimum_delta # this is not a delta - it is the impulse magnitude in kg m/s
+        self._store('last_collision', {
+            'collision_id': collision_id,
+            'threat_level': threat_level,
+            'impulse': impact,
+            'ts': time.time_ns(),
+        })
