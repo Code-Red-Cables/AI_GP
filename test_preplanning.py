@@ -227,6 +227,27 @@ def test_gate1_lookdown_bias():
           f"vd(pass)={vd_pass:+.2f}")
 
 
+def test_yaw_does_not_swing_on_faint_offcenter_detection():
+    """A faint off-centre gate-2 detection must NOT re-aim yaw (the side-veer); a
+    confident one at the same bearing does."""
+    faint, strong = 0.12, 0.9        # faint < CONF_MIN <= strong
+    off_center_body = (8.0, 6.0, 0.0)   # ~37deg to the right, 10 m out (> YAW_FREEZE_DIST)
+
+    def yaw_for(conf):
+        d = _base_data(race_idx=1)    # just passed gate 0 -> yaw latched to pass-through (0)
+        _set_pos(d, 0.0, 0.0, -2.0)
+        d['vision'] = {'detected': True, 'confidence': conf, 'gate_body': off_center_body,
+                       'ts': time.time_ns()}
+        _fresh(d)
+        return Planner(d).compute_target()['yaw']
+
+    yaw_faint = yaw_for(faint)
+    yaw_strong = yaw_for(strong)
+    assert abs(yaw_faint) < 0.1, f"faint detection must NOT swing yaw, got {yaw_faint:+.2f} rad"
+    assert yaw_strong > 0.5, f"confident off-centre detection should re-aim yaw, got {yaw_strong:+.2f}"
+    print(f"PASS yaw anti-veer            yaw(faint)={yaw_faint:+.2f}  yaw(strong)={yaw_strong:+.2f}")
+
+
 if __name__ == "__main__":
     test_coursemap_record_and_average()
     test_coursemap_save_load_atomic()
@@ -237,4 +258,5 @@ if __name__ == "__main__":
     test_post_gate_search_commits_forward_and_down()
     test_low_confidence_accepted_only_when_searching()
     test_gate1_lookdown_bias()
+    test_yaw_does_not_swing_on_faint_offcenter_detection()
     print("ALL PREPLANNING TESTS PASSED")
