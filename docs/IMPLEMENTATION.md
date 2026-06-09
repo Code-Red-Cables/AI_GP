@@ -99,6 +99,13 @@ roll/pitch/yaw when ATTITUDE isn't present. Writes `_vision_NN.png` overlays whe
 
 ### `planner.py` — choose the target gate (Task C)
 `Planner.compute_target()` snapshots `shared_data`, then (in priority order):
+1. **Fresh, plausible vision lock:** (Source `vision`) Folds a confident, plausible detection into a stable world waypoint via EMA.
+2. **Gate Memory (Dead-Reckoning):** (Source `gate_memory`) Flies toward the last known world position of the current gate when vision is temporarily lost (e.g. gate leaves the narrow FOV).
+3. **Known Geometry:** (Source `known`) If configured, falls back to the race-provided map.
+4. **Post-Gate Search/Coast:** (Source `post_gate_search` / `post_gate_coast`) After passing a gate, the planner commits to the next gate by cruising forward on its established heading while descending gently, relaxing vision confidence to acquire the next gate sooner.
+5. **Watchdog Hover:** (Source `watchdog_hover`) If telemetry is stale or there's absolutely no target, halts the drone (safety).
+
+**Gate 1 Pass Behavior:** Due to the 20-degree up-tilt of the FPV camera, tracking the first gate strictly by its optical center can result in an overshoot (climbing over it). To counter this, the planner ramps in a vertical descent bias (`GATE1_LOOKDOWN_VD`) specifically on the approach to gate 1, fading out precisely as the drone crosses the threshold.
 1. **Altitude-envelope guard** (overrides everything): if height above arm exceeds `MAX_ALT_M`,
    publishes a controlled descent at `MAX_VSPEED` with `source='alt_guard'` until back below
    the ceiling. **Client-side fail-safe** for vertical-loop runaway.
