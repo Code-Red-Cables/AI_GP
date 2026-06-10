@@ -75,8 +75,8 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
 # recovered) — i.e. the climb caused BOTH the fly-over and the vision loss. Set to the
 # measured hover and roughly double KP_THRUST so altitude-rate error is arrested quickly.
 # Re-tune from the next log: climbs -> lower HOVER_THRUST; sinks -> raise it.
-HOVER_THRUST = 0.27        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
-KP_THRUST = 0.25           # extra thrust per (m/s) of vertical-velocity error (more authority)
+HOVER_THRUST = 0.31        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
+KP_THRUST = 0.30           # extra thrust per (m/s) of vertical-velocity error (more authority)
 THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority while descending
 KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
 MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle

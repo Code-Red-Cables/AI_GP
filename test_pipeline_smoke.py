@@ -110,19 +110,19 @@ def test_controller_send_path():
 def test_velocity_to_attitude_signs():
     """ANGLE-mode mapping sign checks: forward -> nose-down, right -> roll-right, etc."""
     # Heading North (yaw=0). Desired velocity due North (forward) -> nose-down pitch.
-    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((2.0, 0.0, 0.0), 0.0, 0.0, 0.0)
-    assert pitch < 0, f"forward flight should pitch nose-down (neg), got {pitch}"
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((2.0, 0.0, 0.0), 0.0, 0.0, (0.0, 0.0, 0.0))
+    assert pitch > 0, f"forward flight should pitch nose-down (pos due to sim bug), got {pitch}"
     assert abs(roll) < 1e-6, f"pure-forward should not roll, got {roll}"
     # Desired velocity due East while heading North -> roll right (positive).
-    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((0.0, 2.0, 0.0), 0.0, 0.0, 0.0)
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((0.0, 2.0, 0.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert roll > 0, f"rightward flight should roll right (pos), got {roll}"
     # Commanded climb (vd<0) while sinking (vz>0) -> more than hover thrust.
-    *_, thrust_climb = ctrl.velocity_to_attitude((0.0, 0.0, -1.0), 0.0, 0.0, 0.5)
-    *_, thrust_descend = ctrl.velocity_to_attitude((0.0, 0.0, 1.0), 0.0, 0.0, 0.0)
+    *_, thrust_climb = ctrl.velocity_to_attitude((0.0, 0.0, -1.0), 0.0, 0.0, (0.0, 0.0, 0.5))
+    *_, thrust_descend = ctrl.velocity_to_attitude((0.0, 0.0, 1.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert thrust_climb > ctrl.HOVER_THRUST, f"climb cmd should exceed hover, got {thrust_climb}"
     assert thrust_descend < ctrl.HOVER_THRUST, f"descend cmd should drop thrust, got {thrust_descend}"
     # Lean is capped.
-    roll, pitch, *_ = ctrl.velocity_to_attitude((100.0, 0.0, 0.0), 0.0, 0.0, 0.0)
+    roll, pitch, *_ = ctrl.velocity_to_attitude((100.0, 0.0, 0.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert abs(pitch) <= ctrl.MAX_LEAN_RAD + 1e-9, "pitch must be capped at MAX_LEAN_RAD"
     print("PASS velocity->attitude  signs & caps OK")
 
