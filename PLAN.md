@@ -474,3 +474,8 @@ thread's internals — `shared_data` is the only contract.
   mode id 6; prints available mode names for diagnostics). Wired into `main.py`: **prime
   stream → request ANGLE mode → keep stream alive → arm** (skipped in `DRY_RUN=True`).
   Verified: the sim's HUD shows "FLIGHT MODE: ANGLE" after the mode switch succeeds.
+
+### 8.9 Next Steps (TODO Trail)
+
+- **Test Top-Bar Fix on Live Sim:** The bug causing the drone to balloon into the top bar at point-blank range has been fixed. The fix introduces a vertical-trust window (`GATE_VERT_TRUST_MIN_RANGE_M`) and a commit-zone climb clamp (`PASS_CLIMB_CAP`) in `planner.py`. Offline tests pass. Run this on the live sim to verify the drone now threads the opening cleanly without clipping the top bar.
+- **Test Preplanning (Learn-then-Replay):** `course_map.py` has been wired in. Set `learn=True` on a run to record the gate map, and `preplan=True` on subsequent runs to fly toward known gate positions when out of camera FOV. Test this end-to-end on the live sim.

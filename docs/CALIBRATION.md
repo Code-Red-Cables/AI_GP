@@ -149,10 +149,16 @@ flight (`DRY_RUN=False` in `main.py`) and tune against the deterministic course.
 | `KP_POS`            | 3.0     | `speed = KP_POS·distance` (before cap)                           | sluggish approach → raise; oscillates/overshoots → lower                 |
 | `PASS_THROUGH_DIST` | 2.5 m   | within this range, command full speed to commit through the gate | stalling *in* the gate → raise; blowing past misaligned → lower          |
 | `ARRIVE_DIST`       | 0.1 m   | "at waypoint" threshold                                          | rarely needs changing                                                    |
-| `CONF_MIN`          | 0.40    | min vision confidence to trust a detection                       | chasing false gates → raise; ignoring real gates → lower                 |
+| `CONF_MIN`          | 0.25    | min vision confidence to trust a detection                       | chasing false gates → raise; ignoring real gates → lower                 |
 | `VISION_TIMEOUT_NS` | 300 ms  | older vision is "stale" → fall back to known geometry            | jittery switching → raise; acting on stale frames → lower                |
 | `TELEM_TIMEOUT_NS`  | 500 ms  | no pose for this long → hover (watchdog)                         | nuisance hovers → raise; flying blind on dropouts → lower                |
 | `MAX_ALT_M`         | 15.0 m  | altitude ceiling above arm point (safety envelope)               | **rarely tuned** — if hitting it, investigate root cause (see note below) |
+| `GATE_VERT_TRUST_RANGE_M` | 15.0 m | only fold the gate's ELEVATION into the world waypoint when HORIZONTAL (forward) range ≤ this; beyond, the up-tilted camera over-estimates height so the planner approaches flat | rarely tuned |
+| `GATE_VERT_TRUST_MIN_RANGE_M` | 2.5 m | stop folding the gate's ELEVATION when HORIZONTAL range drops below this; at point-blank the detection degrades and the back-projected elevation balloons upward (log 2026-06-12: gate_body z ran −0.52 → −4.72 m in 0.7 s inside ~1.5 m, driving a full-speed climb into the top bar) | reduce if height convergence is still good at close range |
+| `PASS_CLIMB_CAP`    | 0.25 m/s | **defense-in-depth:** inside `PASS_THROUGH_DIST`, the upward (climb) component of vd is clamped to this; descent is uncapped so the drone can still settle DOWN into the opening | lower tightens the guard; 0 forbids all climb in the commit zone |
+| `GATE_AIM_DOWN_M`   | 0.3 m  | constant downward aim bias added to the gate offset (NED +down) to compensate for the centroid reading slightly high (up-tilted camera + bright top-edge bias); too large and the exit angle clips the bottom | adjust if systematically hitting top or bottom bar |
+| `GATE1_LOOKDOWN_RANGE_M` | 12.0 m | on approach to gate 1 only, the extra descent bias (`GATE1_LOOKDOWN_VD`) is active within this range; ramps to zero at `PASS_THROUGH_DIST` | widen if gate 2 isn't entering frame during approach |
+| `GATE1_LOOKDOWN_VD` | 0.50 m/s | peak extra descent speed added on approach to gate 1 (ramps to zero at `PASS_THROUGH_DIST`) to tilt the nose down and bring gate 2 into view sooner | raise if gate 2 still not visible after gate 1; lower if clipping gate 1's bottom |
 
 Workflow: change one constant, re-run, watch the `[DRY]`/`[FLY]` console line and the
 JSONL log, compare against the previous run (the sim is deterministic, so runs are

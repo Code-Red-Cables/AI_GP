@@ -19,7 +19,7 @@ SIM_SERVER_UDP_PORT = 14550
 #                 OFF for compliant timed runs; no human interaction is allowed there).
 # --------------------------------------------------------------------------------------
 DRY_RUN = False
-DEBUG_VISION = False
+DEBUG_VISION = True
 LOGGING = True
 
 # time since sim started ms
@@ -31,6 +31,8 @@ shared_data = {
     'dry_run': DRY_RUN,
     'debug_vision': DEBUG_VISION,
     'logging': LOGGING,
+    'preplan': True,
+    'learn': True,
 }
 
 # setup components
@@ -47,6 +49,9 @@ logger = components.get('logger')
 # ANGLE mode, then arm; the control loop then flies it with attitude+thrust commands.
 # Order: stream holds -> set mode -> arm. (DRY_RUN skips this — nothing is sent.)
 if not DRY_RUN:
+    print("Resetting simulator...", flush=True)
+    controller.send_sim_reset_command()
+    time.sleep(1.0)
     print("Priming attitude-hold stream...", flush=True)
     controller.prime_setpoint_stream(seconds=1.0)
     mode = controller.request_offboard_mode()
@@ -70,5 +75,9 @@ for component in (ts_loop, mavlink_rx, vision_rx, logger):
     thread = component.get_thread_for_join()
     if thread is not None:
         thread.join(timeout=1.0)
+
+if shared_data.get('course_map'):
+    print("Saving learned course map...", flush=True)
+    shared_data['course_map'].save()
 
 print("Client exited!", flush=True)

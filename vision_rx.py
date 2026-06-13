@@ -198,7 +198,9 @@ class VisionRX:
 
         if debug:
             try:
-                cv2.imwrite(f"_vision_{frame_id % 20:02d}.png",
+                import os
+                os.makedirs('frames', exist_ok=True)
+                cv2.imwrite(f"frames/f_{frame_id:05d}.jpg",
                             draw_detection(img, det))
             except Exception:
                 pass

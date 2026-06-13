@@ -105,7 +105,17 @@ roll/pitch/yaw when ATTITUDE isn't present. Writes `_vision_NN.png` overlays whe
 4. **Post-Gate Search/Coast:** (Source `post_gate_search` / `post_gate_coast`) After passing a gate, the planner commits to the next gate by cruising forward on its established heading while descending gently, relaxing vision confidence to acquire the next gate sooner.
 5. **Watchdog Hover:** (Source `watchdog_hover`) If telemetry is stale or there's absolutely no target, halts the drone (safety).
 
-**Gate 1 Pass Behavior:** Due to the 20-degree up-tilt of the FPV camera, tracking the first gate strictly by its optical center can result in an overshoot (climbing over it). To counter this, the planner ramps in a vertical descent bias (`GATE1_LOOKDOWN_VD`) specifically on the approach to gate 1, fading out precisely as the drone crosses the threshold.
+**Gate 1 pass behavior — vertical guidance:** The up-tilted (~20°) FPV camera creates two failure modes on the final approach:
+
+1. **Far-range height over-estimation:** at >15 m the camera back-projects the gate elevation 10–14 m above the drone. The planner only folds the gate's measured ELEVATION into the world waypoint when the HORIZONTAL (forward) range is within `GATE_VERT_TRUST_RANGE_M` (15 m); beyond that it holds the waypoint level with the drone so we approach flat and converge onto the true height mid-approach.
+
+2. **Point-blank elevation balloon (new, fixed 2026-06-12):** inside ~1.5 m the gate fills the tilted camera and the square detection degrades, causing the back-projected elevation to balloon upward — log run_1781320355.jsonl shows `gate_body z` running −0.52 → −0.84 → −2.07 → −4.72 m in 0.7 s. Folding this garbage into the EMA waypoint pulled its height up and drove a full `MAX_VSPEED` climb right as the drone crossed the gate plane (altitude 1.06 → 1.76 m in 0.8 s), lifting it into the top bar (collision logged immediately after gate-index advance). **Fix:** the vertical-trust window is now a two-sided gate on HORIZONTAL (forward) range: `GATE_VERT_TRUST_MIN_RANGE_M` (2.5 m) `≤ horiz_rng ≤ GATE_VERT_TRUST_RANGE_M` (15 m). Below 2.5 m forward range the planner holds the height it converged to during the trustworthy mid-approach. Importantly the gate is on HORIZONTAL range, not 3D range — when the elevation balloons it also inflates the 3D range (norm(1.1, 0, −4.72) ≈ 4.9 m would re-slip inside a 3D window and re-admit the garbage).
+
+3. **Commit-zone climb clamp (defense-in-depth):** once inside `PASS_THROUGH_DIST` (2.5 m), the upward (climb) component of `vd` is clamped to `PASS_CLIMB_CAP` (0.25 m/s). Descent is left uncapped (still bounded by `MAX_VSPEED`) so the drone can settle DOWN into the opening; only the climb rate is hard-limited.
+
+4. **Gate 1 look-down bias (approach to first gate only):** To counter this, the planner ramps in a vertical descent bias (`GATE1_LOOKDOWN_VD`, 0.50 m/s) on approach to gate 1 (active within `GATE1_LOOKDOWN_RANGE_M` = 12 m), fading to zero by `PASS_THROUGH_DIST` so the drone threads the opening on the normal centre-tracking trajectory without sinking into the bottom bar.
+
+A constant downward aim offset (`GATE_AIM_DOWN_M` = 0.3 m, NED +down) is applied to the gate offset to compensate for the centroid reading slightly high due to the tilted camera and the bright top-edge biasing the detected centroid upward.
 1. **Altitude-envelope guard** (overrides everything): if height above arm exceeds `MAX_ALT_M`,
    publishes a controlled descent at `MAX_VSPEED` with `source='alt_guard'` until back below
    the ceiling. **Client-side fail-safe** for vertical-loop runaway.
@@ -218,8 +228,7 @@ Guarded by `shared_data['lock']` (an `RLock` created in `main.py`). Flags:
 | `vision` | `{ts, detected, confidence, center_px, corners_px, area_px, range_m, bearing:(az,el), gate_body, gate_ned, normal_body, method, frame_id, sim_time_ns}` |
 | `target` | `{mode:'velocity', vel_ned:(n,e,d), yaw, range_m, source, ts}` |
 
-`target['source']` ∈ `{vision, vision_level, known, hover, watchdog_hover, alt_guard}` — a quick
-read on what the planner is doing. `alt_guard` appears when altitude exceeds the safety ceiling.
+`target['source']` ∈ `{vision, gate_memory, known, post_gate_coast, hover, watchdog_hover, alt_guard}` — a quick read on what the planner is doing. `gate_memory` = flying toward the last known gate NED position while vision is temporarily absent; `post_gate_coast` = searching/coasting after a gate advance; `alt_guard` appears when altitude exceeds the safety ceiling.
 
 ---
 

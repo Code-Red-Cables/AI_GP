@@ -127,12 +127,29 @@ GATE_MEMORY_TIMEOUT_NS = 6_000_000_000   # forget a remembered gate after 6s uns
 # onto the true gate height as we close in.
 GATE_WORLD_JUMP_M = 6.0            # reject a detection whose HORIZONTAL pos jumps this far
 GATE_WORLD_EMA = 0.30             # blend weight for accepted detections (low = stable)
-GATE_VERT_TRUST_RANGE_M = 15.0    # only believe the gate's ELEVATION within this range
+GATE_VERT_TRUST_RANGE_M = 15.0    # only believe the gate's ELEVATION below this HORIZ range
+# Lower bound on vertical trust (HORIZONTAL/forward range). At point-blank the gate fills the
+# up-tilted camera and the square detection degrades, so the back-projected ELEVATION
+# balloons UP: log 2026-06-12 (run_1781320355) shows gate_body z running
+# -0.52 -> -0.84 -> -2.07 -> -4.72 m in 0.7s inside ~1.5m. Folding that into the waypoint
+# pulled its height up and drove a full MAX_VSPEED CLIMB across the gate plane
+# (alt 1.06 -> 1.76m in 0.8s), clipping the TOP bar (collision logged right after the
+# gate-index advance). So we only fold the vertical estimate while the gate is FAR enough
+# (in the FORWARD direction) to measure cleanly; below this we hold the height we already
+# converged to during the trustworthy mid-approach (~the true gate centre).
+GATE_VERT_TRUST_MIN_RANGE_M = 2.5  # ignore the gate's ELEVATION when its FORWARD range < this
 # Vertical aim bias: aim this far BELOW the estimated gate centre (metres, NED +down).
 # The estimated centre reads a bit high (up-tilted camera + the gate ring's bright top edge
 # biasing the centroid up), so a small downward bias recentres us in the opening. But too
 # much drops us so low on exit that the NEXT gate sits above the frame — keep it modest.
 GATE_AIM_DOWN_M = 0.3
+# Defense-in-depth against clipping the TOP bar: once COMMITTED to the pass (within
+# PASS_THROUGH_DIST), refuse anything more than a gentle CLIMB. Even with the vertical-trust
+# window above, any residual close-range upward bias must not be able to balloon into a hard
+# climb across the gate plane — that is exactly what lifted us into the top edge (log
+# 2026-06-12). DESCENT is left uncapped here (still bounded by MAX_VSPEED) so we can settle
+# DOWN onto the opening; only the upward (climb) rate is limited.
+PASS_CLIMB_CAP = 0.25      # m/s: max climb (i.e. most-negative vd) inside PASS_THROUGH_DIST
 # Re-seed guard: if the belief is wrong (e.g. a bad seed) the good detections all fail the
 # jump gate forever. So when consecutive frames AGREE with each other but DISAGREE with the
 # belief, treat the belief as stale and jump to the new cluster. A lone corrupt frame never
@@ -194,6 +211,16 @@ class Planner:
         self._yaw_lock = None
         # Post-gate coast (see POST_GATE_COAST_*): keep flying forward to find the next gate.
         self._coast_until_ns = 0
+
+        # ---- Preplanning (learn-then-replay the DETERMINISTIC course; spec 3.5) --------
+        self._course_map = self.data.get('course_map')
+        self._preplan = bool(self.data.get('preplan', False))
+        self._learn = bool(self.data.get('learn', False))
+        self._cur_idx = 0
+        self._gate_world_vis = False
+        self._recorded = set()
+        self._auto_idx = 0
+        self._armed_pass = False
 
     @staticmethod
     def _wrap(a):
@@ -300,9 +327,15 @@ class Planner:
             if self._vision_plausible(rng, now):
                 self._last_range, self._last_range_ts = rng, now
                 meas_world = np.asarray(position, float) + cm.body_to_ned(gate_body, *rpy)
-                # Only believe the gate's HEIGHT once we are close enough to judge it; far
-                # out the up-tilted camera over-estimates the elevation badly.
-                trust_z = rng <= GATE_VERT_TRUST_RANGE_M
+                # Only believe the gate's HEIGHT inside a trust WINDOW: far out the
+                # up-tilted camera over-estimates the elevation, and at point-blank the
+                # estimate balloons upward (see GATE_VERT_TRUST_MIN_RANGE_M). The window is
+                # gated on the HORIZONTAL (forward) range, NOT the 3D range: when the
+                # elevation balloons it inflates the 3D range too (norm(1.1,0,-4.72)~=4.9m),
+                # which would slip back inside the window and re-admit the garbage. The
+                # forward distance to the gate plane stays honest, so gate on it.
+                horiz_rng = float(np.hypot(gate_body[0], gate_body[1]))
+                trust_z = GATE_VERT_TRUST_MIN_RANGE_M <= horiz_rng <= GATE_VERT_TRUST_RANGE_M
                 stale = (self._gate_world is None
                          or (now - self._gate_world_ts) > GATE_MEMORY_TIMEOUT_NS)
                 if stale:
@@ -351,10 +384,24 @@ class Planner:
         # view). This is a fixed point, so steering to it is stable.
         if (self._gate_world is not None and position is not None
                 and (now - self._gate_world_ts) <= GATE_MEMORY_TIMEOUT_NS):
+            if updated and self._learn and self._course_map:
+                # Debug: only print if it's the first time we see this gate this run
+                if self._last_gate_idx not in self._recorded:
+                    print(f"DEBUG: First vision lock on Gate {self._last_gate_idx} at {self._gate_world}, drone at {position}", flush=True)
+                    self._recorded.add(self._last_gate_idx)
+                self._course_map.record(self._last_gate_idx, self._gate_world)
             return (self._gate_world - np.asarray(position, float),
                     'vision' if updated else 'gate_memory')
 
-        # 3) Known track geometry indexed by active_gate_index (unused: sim sends none).
+        # 3) Learned course map: if we know where the next gate is but can't see it,
+        # fly toward the known position rather than coasting blind.
+        if self._preplan and self._course_map and position is not None:
+            gate_pos = self._course_map.get(self._last_gate_idx)
+            if gate_pos:
+                return (np.asarray(gate_pos, float) - np.asarray(position, float),
+                        'course_map')
+
+        # 4) Known track geometry indexed by active_gate_index (unused: sim sends none).
         gates, race = s['gates'], s['race']
         if gates and position is not None:
             idx = int(race['active_gate_index']) if race and race.get('active_gate_index', -1) >= 0 else 0
@@ -382,7 +429,7 @@ class Planner:
         # next gate's memory is seeded as soon as vision picks it up.
         race = s.get('race')
         gidx = int(race['active_gate_index']) if race and race.get('active_gate_index', -1) >= 0 else 0
-        if gidx != self._last_gate_idx:
+        if gidx > self._last_gate_idx:
             self._gate_world = None
             self._reseed_buf = []
             # Keep flying the heading we passed through on (don't snap to whatever garbage
@@ -457,11 +504,18 @@ class Planner:
             # First fix: aim at wherever the gate is.
             self._yaw_lock = self._wrap(yaw_hold + az) if az is not None \
                 else math.atan2(float(offset[1]), float(offset[0]))
-        elif dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD:
-            # Gate is genuinely off-centre AND we're not yet committed to the pass ->
-            # deliberate re-aim onto it. Inside YAW_FREEZE_DIST we hold the lock and punch
-            # straight through (point-blank azimuth is garbage; see YAW_FREEZE_DIST).
-            self._yaw_lock = self._wrap(yaw_hold + az)
+        elif az is not None:
+            if dist > YAW_FREEZE_DIST and abs(az) > YAW_DEADBAND_RAD:
+                # Gate is genuinely off-centre AND we're not yet committed to the pass ->
+                # deliberate re-aim onto it. Inside YAW_FREEZE_DIST we hold the lock and punch
+                # straight through (point-blank azimuth is garbage; see YAW_FREEZE_DIST).
+                self._yaw_lock = self._wrap(yaw_hold + az)
+        elif source == 'course_map' or source == 'known':
+            # Vision is lost but we have a map/telemetry target. Re-aim based on world pos.
+            map_az = self._wrap(math.atan2(float(offset[1]), float(offset[0])) - yaw_hold)
+            if abs(map_az) > YAW_DEADBAND_RAD:
+                self._yaw_lock = self._wrap(yaw_hold + map_az)
+        
         yaw = self._yaw_lock
 
         # HORIZONTAL velocity points along the CURRENT heading (fly where we look), so the
@@ -486,6 +540,12 @@ class Planner:
         if self._last_gate_idx == 0 and PASS_THROUGH_DIST < dist <= GATE1_LOOKDOWN_RANGE_M:
             frac = (dist - PASS_THROUGH_DIST) / (GATE1_LOOKDOWN_RANGE_M - PASS_THROUGH_DIST)
             vd = min(MAX_VSPEED, vd + GATE1_LOOKDOWN_VD * frac)
+
+        # Commit-zone climb clamp (see PASS_CLIMB_CAP): inside the pass we refuse a hard
+        # climb so a residual close-range vertical-estimate balloon can't lift us into the
+        # top bar. Descent is untouched (still MAX_VSPEED-bounded).
+        if dist <= PASS_THROUGH_DIST:
+            vd = max(vd, -PASS_CLIMB_CAP)
 
         return self._publish({'mode': 'velocity',
                               'vel_ned': (float(vn), float(ve), float(vd)),
