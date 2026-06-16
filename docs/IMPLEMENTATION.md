@@ -6,9 +6,11 @@ For running against the sim see [`../reference/VERIFY.md`](../reference/VERIFY.m
 for tuning see [`CALIBRATION.md`](CALIBRATION.md); for tests see [`TESTING.md`](TESTING.md).
 
 Status: **Days 1–7 of PLAN.md §8 implemented and verified offline.** Control strategy
-reworked to use attitude+thrust (the sim is Betaflight-style FPV racer with no velocity loop);
-new attitude-layer functions (`velocity_to_attitude`, `send_attitude_target`, `_euler_to_quat`)
-and controller gains (`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, etc.) all added and offline-tested.
+reworked to **body-rate + thrust** (the sim is a Betaflight-style FPV racer with no velocity
+loop and no held-attitude — it honours only body rates); functions `velocity_to_attitude`
+(world velocity error → lean angles, rotated by **−yaw** for the sim's left-handed yaw) and
+`send_rate_target` (body rates + thrust), plus the outer attitude→rate loop and gains
+(`HOVER_THRUST`, `KP_THRUST`, `KP_LEAN`, `KP_ATT`, `RATE_SIGN_*`, …) all offline-tested.
 The only work that requires the live sim (and a human) is HSV calibration and on-sim flight tuning,
 especially `HOVER_THRUST` for stable altitude hold — see Calibration. **CAUTION:** `main.py` currently
 ships with `DRY_RUN=False` (the drone will attempt to fly on startup); set it to `True` for safe
@@ -39,9 +41,10 @@ perception-only validation (commands computed but not sent).
                                                 reads  │
                                             ┌──────────▼─────────────────┐
                                             │    Controller              │ main loop, 60 Hz
-                                            │ (attitude layer)           │
-                                            │ velocity_to_attitude()  ──▶│ SET_ATTITUDE_TARGET
-                                            │ ─▶ roll/pitch/yaw/thrust   │ (gated by DRY_RUN)
+                                            │ (body-rate layer)          │
+                                            │ velocity_to_attitude()     │ SET_ATTITUDE_TARGET
+                                            │  → attitude→rate loop   ──▶│ (rates+thrust,
+                                            │  → body rates + thrust     │  attitude ignored; DRY_RUN)
                                             └────────────────────────────┘
 ```
 
@@ -97,45 +100,43 @@ Reassembles chunked JPEG (unchanged) then `process_frame()` runs `detect_gate` �
 roll/pitch/yaw when ATTITUDE isn't present. Writes `_vision_NN.png` overlays when
 `shared_data['debug_vision']` is set.
 
-### `planner.py` — choose the target gate (Task C)
+### `planner.py` — follow the preplanned waypoint mission (preplanning branch)
+> On the `preplanning` branch there is **no vision** — `planner.py` follows the fixed
+> waypoint mission in `shared_data['mission']` (`mission.py`). (On `modified-starter` this
+> module instead selects the target gate from vision/known geometry.)
+
 `Planner.compute_target()` snapshots `shared_data`, then (in priority order):
-1. **Altitude-envelope guard** (overrides everything): if height above arm exceeds `MAX_ALT_M`,
-   publishes a controlled descent at `MAX_VSPEED` with `source='alt_guard'` until back below
-   the ceiling. **Client-side fail-safe** for vertical-loop runaway.
-2. **Vision** if fresh (`< VISION_TIMEOUT_NS`) and `confidence ≥ CONF_MIN`: rotate
-   `gate_body` into NED with current attitude.
-3. else **known geometry**: `gates[active_gate_index].pos_ned − drone_pos`. The sim
-   increments `active_gate_index`, so it doubles as the gate-passed signal.
-4. else / stale telemetry → **hover** (watchdog).
-Produces a NED velocity (`speed = min(MAX_SPEED, KP_POS·dist)`, full speed within
-`PASS_THROUGH_DIST` to commit through the gate; vertical component clamped to
-`±MAX_VSPEED` to prevent aggressive climbs from the tilted camera bias) and a yaw that
-points the nose (camera) at the gate. Writes `shared_data['target']`. Tunables at the top of the file.
+1. **Telemetry watchdog**: no fresh pose (`> TELEM_TIMEOUT_NS`) → **hover** (`source='watchdog_hover'`).
+2. **Altitude-envelope guard**: height above arm > `MAX_ALT_M` → controlled descent at `MAX_VSPEED` (`source='alt_guard'`). Client-side fail-safe for vertical-loop runaway.
+3. **Horizontal-envelope guard**: distance to the active waypoint > `MAX_WP_DIST_M` (25 m) → **hover** (`source='dist_guard'`); commanding zero velocity makes the body-frame velocity loop lean *backward* and brake the drone back toward the course. Fail-safe for horizontal runaway.
+4. **Waypoint follow**: steer toward `mission.waypoints[idx]` — a NED velocity (`speed = min(MAX_SPEED, KP_POS·dist)`, vertical clamped to `±MAX_VSPEED`) toward the target position, plus the waypoint's yaw (or **hold the current heading** when the waypoint's `yaw=None`). Advance to the next waypoint once within `arrive_radius` **and** `yaw_tol` (heading not checked for `yaw=None`), held for `dwell_s`. At the last waypoint: hold a hover, or restart if `mission.loop`.
 
-### `controller.py` — outbound control (Task D + attitude+thrust flight + mode-entry handshake)
+Writes `shared_data['target']` (`{mode:'velocity', vel_ned, yaw, range_m, source, wp_index, ts}`). Tunables at the top of the file (`MAX_SPEED`, `MAX_VSPEED`, `KP_POS`, `MAX_ALT_M`, `MAX_WP_DIST_M`); per-waypoint tolerances default from `mission.py` (`DEFAULT_ARRIVE_RADIUS_M`, `DEFAULT_YAW_TOL_RAD`, `DEFAULT_DWELL_S`).
 
-**Attitude+thrust control (flight layer):** The DCL sim is a Betaflight-style FPV racer
-(boots in ACRO, runs in ANGLE self-levelling mode) with **no velocity loop**. Flight control
-uses `SET_ATTITUDE_TARGET` (attitude quaternion + collective thrust), not velocity setpoints.
-New functions and constants:
-- `_euler_to_quat(roll, pitch, yaw) -> [w,x,y,z]` — aerospace ZYX euler → quaternion.
-- `send_attitude_target(conn, system_boot_ms, roll, pitch, yaw, thrust)` — sends `SET_ATTITUDE_TARGET` with a mask that uses the quaternion + thrust and ignores body-rate fields.
-- `velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vz_now) -> (roll, pitch, yaw, thrust)` — maps the planner's desired NED velocity and yaw into body-frame lean angles and thrust that tracks desired vertical velocity. Signs: forward→nose-down pitch (negative), rightward→right roll (positive), climb command→thrust > HOVER, descend→thrust < HOVER. Lean angles capped at `±MAX_LEAN_RAD`.
-- **Tunable gains (must be calibrated on live sim):** `HOVER_THRUST=0.35` (collective thrust that holds altitude; TUNE FIRST), `KP_THRUST=0.15` (extra thrust per m/s vertical error), `KP_LEAN=0.15` (rad lean per m/s horizontal velocity), `MAX_LEAN_RAD=radians(20.0)`, `THRUST_MIN=0.05, THRUST_MAX=0.9`.
-- Old `send_velocity_ned()` function **retained but unused** (kept for reference + offline test).
+### `controller.py` — outbound control (Task D + body-rate flight + mode-entry handshake)
 
-**Mode-entry sequence (required):** The sim boots in ACRO mode and must switch to ANGLE before
-armed commands are accepted. The mode switch is rejected unless a setpoint stream is already
-flowing (Betaflight semantics). Three methods establish the handshake:
-- `hold()` — send one attitude-hold `SET_ATTITUDE_TARGET` (level, HOVER_THRUST) to prime/maintain the stream.
+**Body-rate + thrust control (flight layer):** The DCL sim is a Betaflight-style FPV racer
+with **no velocity loop**, and it does **not** hold a commanded attitude (commanding level
+left it pinned at ~75° pitch) — it only honours **body RATES**. So flight control sends
+`SET_ATTITUDE_TARGET` with the attitude quaternion **ignored** (rates + collective thrust)
+and closes the attitude loop client-side. Functions and constants:
+- `send_rate_target(conn, system_boot_ms, roll_rate, pitch_rate, yaw_rate, thrust)` — sends `SET_ATTITUDE_TARGET` with mask `ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE` (body rates + thrust; identity quaternion sent but ignored).
+- `velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now) -> (roll, pitch, yaw, thrust)` — maps the planner's desired NED velocity + yaw into **desired** body-frame lean angles + thrust. The world velocity ERROR (desired − measured) is rotated into the body frame by **−yaw** — the sim's reported yaw is *left-handed* vs NED (physical forward = `(cos y, −sin y)`) — then split into a forward (pitch) and lateral (roll) component. Signs: forward error → `LEAN_SIGN_FWD·pitch` (`+1`; `pitch+ → body-forward`, verified clean at yaw 0 and ±180), lateral → `LEAN_SIGN_LAT·roll` (`+1` textbook, *pending live confirm*); climb cmd (vd<0 while sinking) → thrust > HOVER, descend → thrust < HOVER. Lean angles capped at `±MAX_LEAN_RAD`.
+- **Outer attitude→rate loop** (in `Controller.update`): the desired lean angles are low-passed (`LEAN_LPF_ALPHA`), then `rate = RATE_SIGN_axis · KP_ATT · (angle_des − angle_meas)` (yaw uses `KP_YAW` toward the target heading), each clamped (`RATE_MAX`, `YAW_RATE_MAX`). Per-axis `RATE_SIGN_*` correct this sim's non-uniform rate-axis conventions: `ROLL=+1, PITCH=−1, YAW=−1`.
+- **Tunable gains (calibrate on live sim):** `HOVER_THRUST=0.27` (collective thrust that holds altitude; TUNE FIRST), `KP_THRUST=0.25` (extra thrust per m/s vertical error), `KP_LEAN=0.3` (rad lean per m/s of velocity error), `MAX_LEAN_RAD=radians(20)`, `THRUST_MIN=0.2, THRUST_MAX=0.9`, `KP_ATT=3.0`, `KP_YAW=2.0`, `RATE_MAX=radians(220)`, `YAW_RATE_MAX=radians(70)`, `LEAN_LPF_ALPHA=0.35`.
+- `send_velocity_ned()` (the old velocity path) is **retained but unused** (reference + offline test).
+
+**Mode-entry sequence (required):** The sim boots in ACRO mode and the mode switch is rejected
+unless a setpoint stream is already flowing (Betaflight semantics). Three methods establish the
+handshake:
+- `hold()` — send one zero-rate, HOVER_THRUST `send_rate_target` to prime/maintain the stream (inert pre-arm).
 - `prime_setpoint_stream(seconds=1.0, hz=50.0)` — stream holds at ~50 Hz for the given duration (respects < 100 Hz spec cap).
-- `request_offboard_mode()` — query the autopilot's mode map (`mode_mapping()`), try to request ANGLE, STABILIZE, STABILIZED, ALTCTL, GUIDED by name, fall back to PX4 custom mode id 6 via `MAV_CMD_DO_SET_MODE`. Prints the available sim mode names and the one requested (diagnostic).
+- `request_offboard_mode()` — query the autopilot's mode map (`mode_mapping()`), try ANGLE, STABILIZE, STABILIZED, ALTCTL, GUIDED by name, fall back to PX4 custom mode id 6 via `MAV_CMD_DO_SET_MODE`. Prints the available sim mode names and the one requested (diagnostic).
 
 **Control loop:** `Controller.update()` (called every main-loop tick at 60 Hz): reads
-`planner.compute_target()` (desired velocity + yaw) → calls `velocity_to_attitude()` to
-map to (roll, pitch, yaw, thrust) → sends `send_attitude_target()` via `SET_ATTITUDE_TARGET`.
-Gated by `shared_data['dry_run']`; throttled status log at ~2 Hz. Keeps `arm()` and
-`send_sim_reset_command()`.
+`planner.compute_target()` (desired velocity + yaw) → `velocity_to_attitude()` →
+outer attitude→rate loop → `send_rate_target()`. Gated by `shared_data['dry_run']`;
+throttled status log at ~2 Hz. Keeps `arm()` and `send_sim_reset_command()`.
 
 ### `logger.py` — run logging (Task E)
 `Logger.create_logger()` spawns a thread that snapshots `shared_data` to
@@ -209,10 +210,12 @@ Guarded by `shared_data['lock']` (an `RLock` created in `main.py`). Flags:
 | `gates` | `list[{gate_id, pos_ned:(x,y,z), orient_ned:(w,x,y,z), width, height}]` (sorted by id) |
 | `last_collision` | `{collision_id, threat_level, impulse, ts}` |
 | `vision` | `{ts, detected, confidence, center_px, corners_px, area_px, range_m, bearing:(az,el), gate_body, gate_ned, normal_body, method, frame_id, sim_time_ns}` |
-| `target` | `{mode:'velocity', vel_ned:(n,e,d), yaw, range_m, source, ts}` |
+| `target` | `{mode:'velocity', vel_ned:(n,e,d), yaw, range_m, source, wp_index, ts}` |
 
-`target['source']` ∈ `{vision, vision_level, known, hover, watchdog_hover, alt_guard}` — a quick
-read on what the planner is doing. `alt_guard` appears when altitude exceeds the safety ceiling.
+`target['source']` — a quick read on what the planner is doing. On the **preplanning** branch it
+is the active waypoint's name (e.g. `takeoff`, `legN->B`, `turnB`) or a guard/watchdog tag
+`{watchdog_hover, alt_guard, dist_guard, no_mission}`; `wp_index` is the active waypoint index.
+(On `modified-starter` it is instead `{vision, vision_level, known, hover, watchdog_hover, alt_guard}`.)
 
 ---
 

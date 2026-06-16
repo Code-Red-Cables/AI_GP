@@ -35,8 +35,8 @@ _LEGEND = {
     "t": "seconds since run start",
     "armed": "drone armed flag (from HEARTBEAT)",
     "dry_run": "True => commands computed+logged but NOT sent",
-    "src": "planner target source: vision|vision_level|known|hover|alt_guard|watchdog_hover",
-    "gate_idx": "race.active_gate_index (increments as gates are passed)",
+    "src": "planner target source: waypoint name (e.g. takeoff, cornerB)|alt_guard|watchdog_hover|no_mission",
+    "gate_idx": "race.active_gate_index (sim-reported; unused by the preplanned planner)",
     "range_m": "planner's distance to the active gate (m)",
     "alt": "height above arm point (m) = -pos_z",
     "pos": "measured position NED [x,y,z] (m)",
@@ -83,9 +83,13 @@ def _gains_snapshot():
             "MAX_SPEED": p.MAX_SPEED,
             "MAX_VSPEED": p.MAX_VSPEED,
             "KP_POS": p.KP_POS,
-            "PASS_THROUGH_DIST": p.PASS_THROUGH_DIST,
-            "CONF_MIN": p.CONF_MIN,
             "MAX_ALT_M": p.MAX_ALT_M,
+        })
+        import mission as m
+        g.update({
+            "ARRIVE_RADIUS_M": m.DEFAULT_ARRIVE_RADIUS_M,
+            "YAW_TOL_DEG": round(math.degrees(m.DEFAULT_YAW_TOL_RAD), 1),
+            "DWELL_S": m.DEFAULT_DWELL_S,
         })
     except Exception as e:  # pragma: no cover
         g["planner_import_error"] = str(e)

@@ -1,286 +1,90 @@
-"""Planning: pick the active gate and emit a velocity setpoint (see PLAN.md 8.4 / Task C).
+"""Planning: follow a fixed, preplanned waypoint mission (vision-free).
 
-The planner reads the shared blackboard each control tick and decides where to go:
+This branch flies a DETERMINISTIC path instead of reacting to camera detections. The
+planner reads only the drone's measured NED position + heading from the shared blackboard
+and drives it through an ordered list of Waypoints (see ``mission.py``):
 
-1. If a **fresh, confident vision detection** exists, steer toward the gate it sees
-   (body-relative vector rotated into NED with the current attitude — needs no
-   absolute position fix).
-2. Otherwise fall back to the **preplanned course map**: the learned world position of
-   the gate indexed by ``active_gate_index`` (the course is deterministic — spec 3.5 —
-   so a map recorded on a prior run is replayable). This is what carries us toward a gate
-   that is not yet in the narrow FOV instead of hovering. Inert unless preplanning is on.
-3. Otherwise fall back to the **sim-broadcast track geometry** — absent on this sim
-   (spec 4.3 defines no track-data message), kept only for forward-compat.
-4. If telemetry is stale (we'd be flying blind) or nothing is targetable, command a
-   **hover** (zero velocity) rather than guessing — a safety watchdog.
+1. For the current waypoint, command a velocity TOWARD its position (P control on the
+   position error, capped) and command its target YAW.
+2. Once the drone is within the waypoint's position radius AND heading tolerance, and has
+   dwelt there briefly (so it settles / completes an in-place turn), advance to the next
+   waypoint.
+3. At the final waypoint, hold a hover (or, if the mission loops, restart it).
 
-Output is written to ``shared_data['target']`` as a NED velocity command + desired
-yaw; `controller.py` maps it to attitude+thrust (roll/pitch/yaw/thrust) via SET_ATTITUDE_TARGET.
+There is NO vision, gate map or track geometry here -- purely the preplanned mission plus
+telemetry. Output is written to ``shared_data['target']`` as
+``{'mode':'velocity', 'vel_ned':(vn,ve,vd), 'yaw':rad, ...}`` exactly as ``controller.py``
+expects; the controller maps it to attitude+thrust (roll/pitch/yaw + collective thrust).
+
+Safety watchdogs are retained: stale telemetry -> hover; an altitude-envelope guard
+catches a vertical-loop runaway and descends.
 """
 
 import math
+import os
+import threading
 import time
 
 import numpy as np
 
-import camera_model as cm
+from mission import DEFAULT_ARRIVE_RADIUS_M, DEFAULT_YAW_TOL_RAD, DEFAULT_DWELL_S
 
 # --------------------------------------------------------------------------------------
-# Guidance tuning (start conservative; tune against the deterministic course).
+# Guidance tuning. The commanded speed is proportional to the distance remaining (so the
+# drone decelerates into each waypoint), capped at MAX_SPEED, with the vertical component
+# capped separately. Raised from the 1.5 / 1.0 m/s first-flight values to fly the same path
+# faster; override per run with the MAX_SPEED_MPS / MAX_VSPEED_MPS env vars (no code edit),
+# e.g. `MAX_SPEED_MPS=4 python main.py`. If the drone can't actually reach the commanded
+# speed it has saturated its lean cap -- raise controller.MAX_LEAN_RAD / KP_LEAN.
 # --------------------------------------------------------------------------------------
-MAX_SPEED = 2.0            # m/s cap on commanded velocity magnitude
-MAX_VSPEED = 1.0           # m/s cap on the *vertical* component (climb or descend).
-                           # The FPV camera is tilted up 20deg, so a gate seen near
-                           # image-centre is estimated well above the drone, and a single
-                           # size-based range is noisy; without a separate vertical limit
-                           # the guidance commands an aggressive climb that the vehicle's
-                           # vertical loop overshoots. Keep this < MAX_SPEED.
-KP_POS = 3              # proportional gain: speed = KP_POS * distance, capped
-PASS_THROUGH_DIST = 2.5    # m: within this range, punch through at full speed
-YAW_FREEZE_DIST = 4.0      # m: within this range, FREEZE the yaw lock and fly straight
-                           # through. At point-blank the gate fills the frame and its
-                           # detected bearing whipsaws (log 2026-06-06: gb_az swung
-                           # -10->+43->-47->+37 deg in 0.5s while passing gate 1), which
-                           # would otherwise re-aim the lock and veer us off the exit.
-ARRIVE_DIST = 0.1          # m: closer than this we consider ourselves at the waypoint
+MAX_SPEED = float(os.environ.get('MAX_SPEED_MPS', '3.0'))    # m/s cap on commanded velocity magnitude
+MAX_VSPEED = float(os.environ.get('MAX_VSPEED_MPS', '1.5'))  # m/s cap on the vertical (climb/descend) component
+KP_POS = 0.8               # commanded speed = KP_POS * distance-to-waypoint (then capped)
 
-# After passing a gate, the next gate is usually further down-course and NOT yet in the
-# narrow FOV. If we drop to a hover the instant the gate index advances, two bad things
-# happen (log 2026-06-06): (1) the hard brake pitches the airframe ~19deg ("look up then
-# down") which swings the camera, and (2) we park just past the gate and the next one never
-# enters frame, so vision never re-acquires and we sit forever. Instead we COMMIT to the
-# next gate: creep straight ahead on the heading we passed through on (steady camera) and
-# descend toward it, and we DO NOT give up to a hover — we keep going until the next gate
-# is acquired or passed. The course ahead scrolls into view as we advance.
-POST_GATE_COAST_NS = 6_000_000_000   # (legacy) yaw-freeze window after a gate advance
-POST_GATE_COAST_SPEED = 1.5          # m/s forward during the search (< MAX_SPEED). Carrying
-                                     # more forward speed also pitches the nose down more,
-                                     # which tilts the up-20deg camera toward the lower gate.
-# The NEXT gate sits BELOW the line we flew through gate 1 on, and the up-tilted (~20deg)
-# FPV camera can't see anything that low from here (log 2026-06-06: 0 detections in 4s of
-# level forward coast). So while searching we also DESCEND to bring the lower gate up into
-# the camera's view, down to a safety floor.
-POST_GATE_DESCEND_SPEED = 0.8        # m/s descent during the post-gate search (<= MAX_VSPEED)
-POST_GATE_MIN_ALT_M = 0.4            # don't descend below this height (NED -z) while searching
-# While searching for the next gate we ACCEPT fainter detections than normal so a
-# low-confidence, edge-of-frame next gate still steers us ("always go toward gate 2, even
-# if confidence is low"). The range / world-jump plausibility gates below still reject
-# garbage, so relaxing confidence alone cannot cause a runaway.
-POST_GATE_SEARCH_CONF = 0.10         # min confidence to ACQUIRE the next gate while searching
+# --------------------------------------------------------------------------------------
+# Safety guards (kept from the reactive planner -- pure client-side fail-safes).
+# --------------------------------------------------------------------------------------
+TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without a pose -> hover (we'd be flying blind)
+MAX_ALT_M = 15.0                   # height (m above the arm point) beyond which we recover
+# Distance to the ACTIVE waypoint beyond which the horizontal loop has clearly run away
+# (log run_1781506925 flew 180 m off a 5 m square) -> stop commanding translation and
+# hover so the velocity loop brakes back. Sized for the default ~5 m course; raise it for
+# missions with legs longer than this.
+MAX_WP_DIST_M = 25.0
 
-# Look DOWN on the APPROACH to the FIRST gate. Gate 2 sits a little lower and the camera
-# is tilted up 20deg, so on the way in we bias a gentle descent to drop toward gate 2 and
-# bring it into view sooner. CRITICAL: this is RAMPED to zero as we commit to the pass
-# (within PASS_THROUGH_DIST) so we thread gate 1 on the normal centre-tracking trajectory
-# and do NOT sink into its lower edge — a raw descent through the opening clipped the
-# bottom. Most of the camera "look down" comes from the forward-speed nose-down anyway.
-GATE1_LOOKDOWN_RANGE_M = 9.0         # look down within this range of gate 1 (full at range)
-GATE1_LOOKDOWN_VD = 0.35             # m/s peak extra descent on approach (ramps to 0 at the gate)
+# Legacy aliases kept so the run logger's gains snapshot stays populated.
+PASS_THROUGH_DIST = DEFAULT_ARRIVE_RADIUS_M
+CONF_MIN = 0.0
 
-CONF_MIN = 0.25            # min vision confidence to trust a detection. Loosened 0.40 ->
-                           # 0.25 so a partially-visible / edge-clipped gate (low squareness,
-                           # so low confidence) is accepted sooner — e.g. the lower next-gate
-                           # as it first edges into the up-tilted frame during the descent.
-VISION_TIMEOUT_NS = 300_000_000    # 300 ms: older vision is "stale"
-TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without pose -> hover (watchdog)
 
-# Vision plausibility gate. The gate is a fixed object, so its estimated range cannot
-# teleport between frames. A burst of garbage detections (range jumping 13m -> 38 -> 64m
-# and the bearing swinging ~80deg in 0.4s) once hijacked guidance: the planner chased the
-# phantom, commanded a 104 deg/s yaw that swept the REAL gate out of the camera FOV, and
-# tracking died for the remaining 11s of the run (log 2026-06-05). Reject any detection
-# beyond MAX_GATE_RANGE_M, or that jumps more than RANGE_JUMP_MAX_M from the last accepted
-# range while that reference is still recent, so a single bad frame can't whip us around.
-MAX_GATE_RANGE_M = 35.0            # gates on this course sit within ~25m; beyond = garbage
-RANGE_JUMP_MAX_M = 12.0            # max believable range change vs. the last good detection
-RANGE_MEMORY_NS = 700_000_000      # how long the last accepted range stays a reference
-
-# Gate memory. The camera FOV is narrow, so the gate leaves view ~1s into the approach
-# and detection stops; with no track geometry from the sim, the planner had nothing to
-# track and froze in place ~2-3m off the start every run (logs 2026-06-05/06). Instead,
-# remember the gate's ABSOLUTE NED position and keep dead-reckoning toward it (via
-# odometry) while vision is unavailable, so the drone flies in, closes the distance, and
-# re-acquires the gate rather than parking.
-GATE_MEMORY_TIMEOUT_NS = 6_000_000_000   # forget a remembered gate after 6s unseen
-
-# Filtered WORLD waypoint. The per-frame gate BEARING is unreliable while the drone
-# maneuvers: log 2026-06-06 shows yaw_tgt swinging -179deg -> -82deg with the drone
-# nearly stationary and the gate dead-ahead at a steady ~21m — i.e. the single-frame
-# bearing is corrupt, and caching the LAST frame's world position (old gate-memory)
-# locked onto a point ~16m off to the side, sending the drone curving away. A gate is a
-# FIXED object, so its world position cannot teleport: seed the waypoint from the first
-# clean detection, REJECT frames whose implied world position jumps more than
-# GATE_WORLD_JUMP_M from the current belief, and EMA-refine with the rest. The drone then
-# always flies to a stable world point instead of chasing per-frame bearing noise.
-#
-# HEIGHT is handled separately from the HORIZONTAL bearing. The up-tilted (20deg) camera
-# sees a gate near image-centre at long range, which back-projects as ~8m UP in body
-# frame -> the estimated gate HEIGHT is 10-14m at >18m range, but converges to the true
-# ~2m once inside ~15m (log+reconstruction 2026-06-06). A waypoint seeded with the bad
-# far height froze (every good near-frame was >6m away in 3D, so the jump gate rejected
-# it) and the drone climbed to 5.8m and parked above the gate. Fix: gate the JUMP test on
-# the HORIZONTAL distance only (bearing IS reliable far out), and only fold a frame's
-# vertical estimate into the waypoint once the gate is within GATE_VERT_TRUST_RANGE_M;
-# beyond that, keep the waypoint level with the drone so we approach flat, then settle
-# onto the true gate height as we close in.
-GATE_WORLD_JUMP_M = 6.0            # reject a detection whose HORIZONTAL pos jumps this far
-GATE_WORLD_EMA = 0.30             # blend weight for accepted detections (low = stable)
-GATE_VERT_TRUST_RANGE_M = 15.0    # only believe the gate's ELEVATION within this range
-# Vertical aim bias: aim this far BELOW the estimated gate centre (metres, NED +down).
-# The estimated centre reads a bit high (up-tilted camera + the gate ring's bright top edge
-# biasing the centroid up), so a small downward bias recentres us in the opening. But too
-# much drops us so low on exit that the NEXT gate sits above the frame — keep it modest.
-GATE_AIM_DOWN_M = 0.3
-# Re-seed guard: if the belief is wrong (e.g. a bad seed) the good detections all fail the
-# jump gate forever. So when consecutive frames AGREE with each other but DISAGREE with the
-# belief, treat the belief as stale and jump to the new cluster. A lone corrupt frame never
-# forms a cluster, so this re-acquires a moved/mis-seeded gate without chasing noise.
-GATE_RESEED_COUNT = 3             # consecutive consistent off-belief frames to re-seed
-GATE_RESEED_SPREAD_M = 4.0        # cluster must be at least this tight to count
-GATE_RESEED_WINDOW_NS = 1_500_000_000  # discard candidate frames older than this
-
-# Steer yaw off the LIVE detection bearing, fly FORWARD along the nose. The per-frame
-# world reconstruction is unreliable while the airframe pitches/rolls: log 2026-06-06
-# shows a FIXED gate's reconstructed world bearing swinging -178deg -> -85deg in 1.6s
-# (independent of roll-sign), while the drone barely moved. Chasing that reconstructed
-# lateral offset made the planner yaw away, banked the quad to strafe, slid the real gate
-# out of the narrow FOV, and spun into a runaway. Instead: yaw to centre the measured gate
-# azimuth (atan2(body_y, body_x), which reads ~1deg when we fly straight) and command the
-# horizontal velocity purely along the current heading. The controller then needs only
-# PITCH (forward) and ~no ROLL, so the camera stays steady and the gate stays centred.
-ROLL_TRUST_MAX = math.radians(8.0)   # skip folding vision into the waypoint above this roll
-
-# Yaw heading-LATCH with a deadband. The per-frame vision azimuth is only trustworthy
-# while we fly straight: log 2026-06-06 shows az pinned at ~1deg for 1.4s of stable
-# straight flight, then the instant the yaw loop engaged, az and yaw ran away TOGETHER
-# (az 1->45deg, yaw -180->-127) — positive feedback. Geometry check: at the runaway the
-# gate was ~35deg to the LEFT but vision reported +33deg RIGHT, because yawing swept the
-# nose across the tunnel of OTHER gates and the bearing inverted. So we do NOT chase every
-# per-frame degree. We LATCH a heading and only re-aim when the gate is CONSISTENTLY and
-# significantly off-centre (|az| > YAW_DEADBAND). Inside the band we hold heading, which
-# keeps us in the stable straight-flight regime — and the first gate is dead ahead, so
-# holding heading flies us straight through it.
-YAW_DEADBAND_RAD = math.radians(9.0)   # within this azimuth, hold heading (no re-aim)
-
-# Altitude-envelope safety guard. NED z is negative-up with the origin at the arm
-# point on the ground; race gates sit only a few metres up. If we ever climb past
-# MAX_ALT_M the vertical loop has run away (observed: a 586 m climb in
-# logs/run_1780515186.jsonl), so we abandon the gate target and descend at MAX_VSPEED
-# until back below the ceiling. A pure client-side fail-safe.
-MAX_ALT_M = 15.0           # m above the arm point we ever allow before recovering
+def _quat_yaw(q):
+    """Yaw (rad, NED) from a quaternion ``(w, x, y, z)`` -- the planner's only fallback
+    heading source when no ATTITUDE message is available (odometry only)."""
+    w, x, y, z = q
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class Planner:
-    """Decides the current target setpoint from the shared blackboard."""
+    """Follows the preplanned waypoint mission on ``shared_data['mission']``."""
 
     def __init__(self, data):
         self.data = data
         if 'lock' not in self.data:
-            import threading
             self.data['lock'] = threading.RLock()
-        # Vision plausibility-gate memory (see MAX_GATE_RANGE_M / RANGE_JUMP_MAX_M).
-        self._last_range = None
-        self._last_range_ts = 0
-        # Gate memory (see GATE_MEMORY_TIMEOUT_NS): last seen gate absolute NED position.
-        self._gate_world = None
-        self._gate_world_ts = 0
-        self._last_gate_idx = 0
-        # Re-seed candidate cluster (see GATE_RESEED_*): off-belief measurements + ts.
-        self._reseed_buf = []
-        # Latched yaw heading (see YAW_DEADBAND_RAD): only re-aimed when the gate is
-        # consistently off-centre; held otherwise to stay in stable straight flight.
-        self._yaw_lock = None
-        # Post-gate coast (see POST_GATE_COAST_*): keep flying forward to find the next gate.
-        self._coast_until_ns = 0
-
-        # ---- Preplanning (learn-then-replay the DETERMINISTIC course; spec 3.5) --------
-        # The sim broadcasts no track geometry (spec 4.3), so we build our own gate map:
-        # record each gate's world position when we pass it, persist it, and on later runs
-        # fly to the KNOWN next-gate position when vision can't yet see it (fixes the
-        # gate-2 hover). ALL of this is inert unless a course_map is injected AND the
-        # preplan/learn flags are set, so a default run is identical to the reactive planner.
-        self._course_map = self.data.get('course_map')
-        self._preplan = bool(self.data.get('preplan', False))
-        self._learn = bool(self.data.get('learn', False))
-        # The index the planner currently believes is the active gate (race-provided when
-        # available, else self-detected). Read by _target_offset_ned for the map lookup.
-        self._cur_idx = 0
-        # True once the CURRENT gate belief (_gate_world) has been confirmed by a vision
-        # detection. Only vision-confirmed beliefs are recorded into the map, so a
-        # preplan-seeded waypoint never feeds back on itself and drifts. Reset on advance.
-        self._gate_world_vis = False
-        self._recorded = set()   # gate indices already written this run (record once)
-        # Self gate-pass detector — used ONLY when the sim provides no active_gate_index.
-        # active_gate_index (race) is authoritative when present; this is the fallback so
-        # learning/replay still advance gate-to-gate without it.
-        self._auto_idx = 0
-        self._armed_pass = False
+        self.mission = self.data.get('mission')
+        self._idx = 0                # index of the waypoint we are currently flying to
+        self._reached_since = None   # time_ns the current waypoint was first satisfied
+        self._complete = False       # True once a non-looping mission's last wp is reached
 
     @staticmethod
     def _wrap(a):
         """Wrap an angle to (-pi, pi]."""
         return math.atan2(math.sin(a), math.cos(a))
 
-    def _conf_floor(self, now):
-        """Minimum vision confidence to ACCEPT a detection into the world waypoint.
-
-        After passing a gate (``self._cur_idx > 0``) and before the next is locked, relax
-        the floor to POST_GATE_SEARCH_CONF so a faint, edge-of-frame next gate is acquired
-        and remembered ("always go toward gate 2, even if confidence is low"). Once a fresh
-        ``_gate_world`` belief exists (locked), or before the first gate, use the normal
-        CONF_MIN. The range / world-jump plausibility gates still apply, so a weak detection
-        that is also implausible is still rejected.
-
-        NOTE: this governs only the world-seed / forward intent. YAW re-aim uses the strict
-        CONF_MIN (see _fresh_gate_azimuth) so a weak bearing never swings us off course.
-        """
-        searching = (self._cur_idx > 0 and
-                     (self._gate_world is None
-                      or (now - self._gate_world_ts) > GATE_MEMORY_TIMEOUT_NS))
-        return POST_GATE_SEARCH_CONF if searching else CONF_MIN
-
-    def _fresh_gate_azimuth(self, s, now):
-        """Body-frame azimuth (rad, +=gate to the right) of a fresh, confident detection.
-
-        This is the DIRECT measurement of where the gate sits relative to the nose; it is
-        far more reliable for steering than the attitude-sensitive world reconstruction,
-        and it is what we drive to zero to keep the gate centred. Returns None when there
-        is no usable detection (caller then falls back to the world-waypoint bearing).
-
-        YAW deliberately requires the STRICT CONF_MIN (not the relaxed search floor): the
-        bearing of a faint, edge-of-frame detection is unreliable, and re-aiming the nose
-        onto it swings the narrow camera and flies us off to the side (the gate-2 veer).
-        We still ADVANCE toward gate 2 at low confidence via the forward+down search and
-        the relaxed world-seed in _target_offset_ned — we just don't STEER off a weak one.
-        """
-        vis = s['vision']
-        if not (vis and vis.get('detected') and vis.get('confidence', 0) >= CONF_MIN
-                and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
-                and vis.get('gate_body')):
-            return None
-        gb = np.asarray(vis['gate_body'], float)
-        rng = float(np.linalg.norm(gb))
-        if not (0.0 < rng <= MAX_GATE_RANGE_M):
-            return None
-        return math.atan2(float(gb[1]), float(gb[0]))
-
-    def _vision_plausible(self, rng, now):
-        """Reject teleporting/garbage gate detections that would hijack guidance."""
-        if not (0.0 < rng <= MAX_GATE_RANGE_M):
-            return False
-        if (self._last_range is not None
-                and (now - self._last_range_ts) <= RANGE_MEMORY_NS
-                and abs(rng - self._last_range) > RANGE_JUMP_MAX_M):
-            return False
-        return True
-
     def _snapshot(self):
-        """Atomically read the bits of shared_data we need."""
+        """Atomically read the telemetry the planner needs."""
         with self.data['lock']:
             return {
-                'vision': self.data.get('vision'),
-                'gates': self.data.get('gates'),
-                'race': self.data.get('race'),
                 'attitude': self.data.get('attitude'),
                 'odometry': self.data.get('odometry'),
                 'position_ned': self.data.get('position_ned'),
@@ -288,280 +92,136 @@ class Planner:
 
     @staticmethod
     def _pose(s):
-        """Return (position_ned tuple|None, (roll,pitch,yaw)|None) from telemetry."""
-        odo, pos, att = s['odometry'], s['position_ned'], s['attitude']
-        position = None
-        if odo is not None:
-            position = odo['pos']
-        elif pos is not None:
-            position = (pos['x'], pos['y'], pos['z'])
+        """Return ``(position_ned tuple|None, yaw rad|None, telem_ts ns|None)``.
 
-        rpy = None
-        if att is not None:
-            rpy = (att['roll'], att['pitch'], att['yaw'])
-        elif odo is not None:
-            from vision_rx import _quat_to_rpy
-            d = _quat_to_rpy(odo['q'])
-            rpy = (d['roll'], d['pitch'], d['yaw'])
-        return position, rpy
-
-    def _target_offset_ned(self, s, now):
-        """Vector from the drone to the target gate, in world NED axes.
-
-        Returns (offset_ned, source) or (None, reason) when not targetable.
+        Prefer LOCAL_POSITION_NED for the absolute position; fall back to ODOMETRY.
+        Prefer the ATTITUDE Euler yaw; fall back to the odometry quaternion.
         """
-        position, rpy = self._pose(s)
+        pos = s['position_ned']
+        odo = s['odometry']
+        att = s['attitude']
 
-        updated = False
+        position = ts = None
+        if pos is not None:
+            position = (pos['x'], pos['y'], pos['z'])
+            ts = pos.get('ts')
+        elif odo is not None:
+            position = tuple(odo['pos'])
+            ts = odo.get('ts')
 
-        # 1) Fresh, confident, PLAUSIBLE vision detection -> fold it into the filtered
-        # WORLD waypoint (outlier-reject + EMA). We do NOT steer off a single frame's
-        # bearing: that bearing swings wildly while maneuvering (log 2026-06-06).
-        vis = s['vision']
-        if (vis and vis.get('detected') and vis.get('confidence', 0) >= self._conf_floor(now)
-                and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
-                and rpy is not None and position is not None
-                and abs(rpy[0]) <= ROLL_TRUST_MAX):
-            gate_body = np.asarray(vis['gate_body'], float)
-            rng = float(np.linalg.norm(gate_body))
-            if self._vision_plausible(rng, now):
-                self._last_range, self._last_range_ts = rng, now
-                meas_world = np.asarray(position, float) + cm.body_to_ned(gate_body, *rpy)
-                # Only believe the gate's HEIGHT once we are close enough to judge it; far
-                # out the up-tilted camera over-estimates the elevation badly.
-                trust_z = rng <= GATE_VERT_TRUST_RANGE_M
-                stale = (self._gate_world is None
-                         or (now - self._gate_world_ts) > GATE_MEMORY_TIMEOUT_NS)
-                if stale:
-                    # First lock: trust the bearing; only adopt the measured height if
-                    # close, else stay level with the drone (approach flat, settle later).
-                    seed = meas_world.copy()
-                    if not trust_z:
-                        seed[2] = float(position[2])
-                    self._gate_world = seed
-                    self._gate_world_ts = now
-                    self._reseed_buf = []
-                    updated = True
-                elif np.linalg.norm(meas_world[:2] - self._gate_world[:2]) <= GATE_WORLD_JUMP_M:
-                    # HORIZONTAL position agrees with the belief (bearing is reliable even
-                    # at range): refine N/E slowly. Fold in the height ONLY when close.
-                    new = self._gate_world.copy()
-                    new[0] = (1.0 - GATE_WORLD_EMA) * new[0] + GATE_WORLD_EMA * meas_world[0]
-                    new[1] = (1.0 - GATE_WORLD_EMA) * new[1] + GATE_WORLD_EMA * meas_world[1]
-                    if trust_z:
-                        new[2] = (1.0 - GATE_WORLD_EMA) * new[2] + GATE_WORLD_EMA * meas_world[2]
-                    self._gate_world = new
-                    self._gate_world_ts = now
-                    self._reseed_buf = []
-                    updated = True
-                else:
-                    # Horizontal position disagrees with the belief. Could be a lone corrupt
-                    # frame (drop it) OR the belief is wrong (e.g. a bad far seed) -> if a
-                    # tight cluster of consecutive off-belief frames forms, re-seed to it.
-                    self._reseed_buf = [(m, t) for (m, t) in self._reseed_buf
-                                        if (now - t) <= GATE_RESEED_WINDOW_NS]
-                    self._reseed_buf.append((meas_world, now))
-                    pts = np.asarray([m[:2] for (m, _) in self._reseed_buf])
-                    if (len(self._reseed_buf) >= GATE_RESEED_COUNT
-                            and float(np.linalg.norm(pts - pts.mean(axis=0), axis=1).max())
-                                <= GATE_RESEED_SPREAD_M):
-                        seed = meas_world.copy()
-                        if not trust_z:
-                            seed[2] = float(position[2])
-                        self._gate_world = seed
-                        self._gate_world_ts = now
-                        self._reseed_buf = []
-                        updated = True
+        yaw = None
+        if att is not None:
+            yaw = att['yaw']
+            ts = att.get('ts', ts)
+        elif odo is not None:
+            yaw = _quat_yaw(odo['q'])
+        return position, yaw, ts
 
-        # Record whether vision CONFIRMED the current world belief this tick (used to
-        # decide what is safe to learn into the course map — preplan-only seeds are not).
-        if updated:
-            self._gate_world_vis = True
+    def _current_wp(self):
+        if not self.mission or not self.mission.waypoints:
+            return None
+        i = min(self._idx, len(self.mission.waypoints) - 1)
+        return self.mission.waypoints[i]
 
-        # 2) Fly to the filtered world waypoint (whether or not vision updated it this
-        # tick — dead-reckoning via odometry keeps us closing the gap when it's out of
-        # view). This is a fixed point, so steering to it is stable.
-        if (self._gate_world is not None and position is not None
-                and (now - self._gate_world_ts) <= GATE_MEMORY_TIMEOUT_NS):
-            return (self._gate_world - np.asarray(position, float),
-                    'vision' if updated else 'gate_memory')
+    def _advance(self):
+        """Step to the next waypoint, wrapping or completing at the end."""
+        n = len(self.mission.waypoints)
+        if self._idx < n - 1:
+            self._idx += 1
+        elif self.mission.loop:
+            self._idx = 0
+        else:
+            self._complete = True   # stay on the last waypoint and hold
+        self._reached_since = None
 
-        # 3) Preplanned course map (learned from prior DETERMINISTIC runs). When vision
-        # has no fresh lock, fly to the KNOWN world position of the current gate so it
-        # scrolls into the narrow up-tilted FOV — instead of coasting blind and parking
-        # just past the previous gate (the gate-2 hover failure). Seeding _gate_world here
-        # lets the existing yaw-lock / vertical-trust / pass-through machinery apply, and
-        # lets a later vision lock EMA-refine from a good prior instead of acquiring cold.
-        if self._preplan and self._course_map is not None and position is not None:
-            wp = self._course_map.get(self._cur_idx)
-            if wp is not None:
-                wp = np.asarray(wp, float)
-                if self._gate_world is None:
-                    self._gate_world = wp.copy()
-                    self._gate_world_ts = now
-                    self._gate_world_vis = False   # a seed, NOT a vision confirmation
-                return wp - np.asarray(position, float), 'preplan'
-
-        # 4) Known track geometry from the sim broadcast (absent on this sim — kept for
-        # forward-compat in case a future sim issue starts sending it).
-        gates, race = s['gates'], s['race']
-        if gates and position is not None:
-            idx = int(race['active_gate_index']) if race and race.get('active_gate_index', -1) >= 0 else 0
-            idx = max(0, min(idx, len(gates) - 1))
-            gate_pos = np.asarray(gates[idx]['pos_ned'], float)
-            return gate_pos - np.asarray(position, float), 'known'
-
-        return None, 'no_target'
+    def _hover(self, yaw, source, now):
+        return {'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                'yaw': float(yaw), 'source': source, 'ts': now}
 
     def _publish(self, target):
-        """Store the target on the blackboard and return it."""
         with self.data['lock']:
             self.data['target'] = target
         return target
 
     def compute_target(self):
-        """Compute and publish the current velocity setpoint. Returns the target dict."""
+        """Compute and publish the velocity setpoint for this tick. Returns the target."""
         now = time.time_ns()
         s = self._snapshot()
-        position, rpy = self._pose(s)
-        yaw_hold = rpy[2] if rpy else 0.0
-
-        # When the sim advances the active gate, the remembered position belongs to the
-        # gate we just passed -> drop it so we don't dead-reckon backward into it. The
-        # next gate's memory is seeded as soon as vision picks it up.
-        race = s.get('race')
-        if race and race.get('active_gate_index', -1) >= 0:
-            gidx = int(race['active_gate_index'])   # authoritative when the sim sends it
-        else:
-            gidx = self._auto_idx                   # self-detected fallback (see below)
-        self._cur_idx = gidx
-        if gidx != self._last_gate_idx:
-            # LEARN: record the gate we just passed into the course map BEFORE dropping
-            # the belief. Only vision-confirmed beliefs are stored, so preplan seeds never
-            # feed back on themselves. Persist incrementally so a crash still keeps the map.
-            if (self._learn and self._course_map is not None and self._gate_world is not None
-                    and self._gate_world_vis and self._last_gate_idx not in self._recorded):
-                self._course_map.record(self._last_gate_idx,
-                                        tuple(float(v) for v in self._gate_world))
-                self._course_map.save()
-                self._recorded.add(self._last_gate_idx)
-            self._gate_world = None
-            self._gate_world_vis = False
-            self._reseed_buf = []
-            # Keep flying the heading we passed through on (don't snap to whatever garbage
-            # bearing the just-passed gate gives at point-blank). The lock re-aims itself
-            # once the NEXT gate is acquired off-centre at a sane range.
-            self._yaw_lock = yaw_hold
-            # Coast forward to bring the next gate into frame instead of braking to a hover.
-            self._coast_until_ns = now + POST_GATE_COAST_NS
-            self._last_gate_idx = gidx
+        position, yaw, telem_ts = self._pose(s)
+        yaw_hold = yaw if yaw is not None else 0.0
 
         # Watchdog: no recent pose at all -> hover (we'd otherwise be flying blind).
-        att_ts = s['attitude']['ts'] if s['attitude'] else (s['odometry']['ts'] if s['odometry'] else None)
-        telem_stale = att_ts is None or (now - att_ts) > TELEM_TIMEOUT_NS
-        if telem_stale:
-            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
-                                  'yaw': yaw_hold, 'source': 'watchdog_hover', 'ts': now})
+        if position is None or telem_ts is None or (now - telem_ts) > TELEM_TIMEOUT_NS:
+            return self._publish(self._hover(yaw_hold, 'watchdog_hover', now))
 
-        # Altitude-envelope safety guard (overrides the gate target). NED z is
-        # negative-up, so height above the arm point is -z. Past the ceiling the
-        # vertical loop has run away -> abandon the gate and descend back down.
-        if position is not None:
-            altitude = -float(position[2])
-            if altitude > MAX_ALT_M:
-                return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, MAX_VSPEED),
-                                      'yaw': yaw_hold, 'range_m': altitude,
-                                      'source': 'alt_guard', 'ts': now})
+        # Altitude-envelope fail-safe: NED z is negative-up; past the ceiling the vertical
+        # loop has run away -> abandon the waypoint and descend until back below it.
+        altitude = -float(position[2])
+        if altitude > MAX_ALT_M:
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, MAX_VSPEED),
+                                  'yaw': yaw_hold, 'range_m': altitude,
+                                  'source': 'alt_guard', 'ts': now})
 
-        offset, source = self._target_offset_ned(s, now)
-        if offset is None:
-            # No gate target yet. Once we have passed at least one gate, COMMIT to reaching
-            # the next one: keep creeping forward on the pass-through heading and descending
-            # toward the (lower) next gate until we acquire or pass it — never give up to a
-            # hover, which is what left us parked just past gate 1. Before the first gate is
-            # acquired, hold position rather than wandering blindly.
-            if self._cur_idx > 0:
-                vn = POST_GATE_COAST_SPEED * math.cos(yaw_hold)
-                ve = POST_GATE_COAST_SPEED * math.sin(yaw_hold)
-                # Descend to bring the lower next gate into the up-tilted camera, with a floor.
-                vd = POST_GATE_DESCEND_SPEED
-                if position is not None and (-float(position[2])) <= POST_GATE_MIN_ALT_M:
-                    vd = 0.0
-                return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
-                                      'yaw': yaw_hold, 'source': 'post_gate_search', 'ts': now})
-            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
-                                  'yaw': yaw_hold, 'source': 'hover', 'ts': now})
+        wp = self._current_wp()
+        if wp is None:
+            return self._publish(self._hover(yaw_hold, 'no_mission', now))
 
-        # Aim a touch BELOW the estimated gate centre so we don't clip the top edge
-        # (NED +z is down). See GATE_AIM_DOWN_M.
-        offset = offset.copy()
-        offset[2] += GATE_AIM_DOWN_M
-
+        # Arrival test against the (possibly per-waypoint) tolerances.
+        p = np.asarray(position, float)
+        offset = np.asarray(wp.pos, float) - p
         dist = float(np.linalg.norm(offset))
-        horiz = float(np.linalg.norm(offset[:2]))
 
-        # Self gate-pass detection: advance our own gate counter when we close to within
-        # the pass radius and then move clearly past it. Used ONLY when the sim provides
-        # no active_gate_index (otherwise race is authoritative and _auto_idx is unused),
-        # so learn/replay can still step gate-to-gate. The advance takes effect next tick
-        # via the same reset/record path as a race-driven advance.
-        if not (race and race.get('active_gate_index', -1) >= 0):
-            if dist < PASS_THROUGH_DIST:
-                self._armed_pass = True
-            elif self._armed_pass and dist > PASS_THROUGH_DIST + 1.5:
-                self._auto_idx += 1
-                self._armed_pass = False
-        if dist <= PASS_THROUGH_DIST:
-            speed = MAX_SPEED  # commit to the pass — don't decelerate inside the gate
+        arrive_r = wp.arrive_radius if wp.arrive_radius is not None else DEFAULT_ARRIVE_RADIUS_M
+        yaw_tol = wp.yaw_tol if wp.yaw_tol is not None else DEFAULT_YAW_TOL_RAD
+        dwell = wp.dwell_s if wp.dwell_s is not None else DEFAULT_DWELL_S
+
+        # Horizontal-envelope fail-safe: if we are this far from the waypoint we are
+        # supposed to be flying TO, the horizontal loop has run away -> stop commanding
+        # translation and hover. The velocity loop then leans backward to brake us back
+        # toward the course (vs. the alt guard, which only catches vertical runaway).
+        if dist > MAX_WP_DIST_M:
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'range_m': dist,
+                                  'source': 'dist_guard', 'wp_index': self._idx, 'ts': now})
+
+        # A waypoint with yaw=None holds the current heading (no commanded turn) and does
+        # not gate arrival on heading -- used for a straight-up takeoff / pure translation.
+        if wp.yaw is None:
+            yaw_ok = True
         else:
+            yaw_ok = abs(self._wrap(wp.yaw - yaw_hold)) <= yaw_tol
+
+        reached = dist <= arrive_r and yaw_ok
+        if reached:
+            if self._reached_since is None:
+                self._reached_since = now
+            if (now - self._reached_since) >= int(dwell * 1e9):
+                self._advance()
+                # Recompute against the waypoint we just stepped to so there is no stutter.
+                wp = self._current_wp()
+                offset = np.asarray(wp.pos, float) - p
+                dist = float(np.linalg.norm(offset))
+        else:
+            self._reached_since = None
+
+        # Heading to command: the (possibly new) waypoint's yaw, or HOLD the current
+        # heading when its yaw is None.
+        yaw_cmd = wp.yaw if wp.yaw is not None else yaw_hold
+
+        # P-control velocity toward the (current) waypoint: speed scales with the distance
+        # remaining and is capped, so the drone decelerates into the point and settles.
+        if dist > 1e-6:
             speed = min(MAX_SPEED, KP_POS * dist)
-
-        # YAW: heading LATCH with a deadband (see YAW_DEADBAND_RAD). The per-frame vision
-        # azimuth is only trustworthy in straight flight; chasing it degree-by-degree spins
-        # us out (az and yaw ran away together in log 2026-06-06). So we hold a latched
-        # heading and only re-aim when a FRESH detection puts the gate consistently beyond
-        # the deadband. Inside the band (or with no fresh detection) we hold the lock, which
-        # keeps us flying straight — and the first gate is dead ahead, so that flies us
-        # through it. The lock self-corrects near a gate: a small heading error grows past
-        # the deadband as range shrinks, triggering a gentle re-aim.
-        az = self._fresh_gate_azimuth(s, now)
-        if self._yaw_lock is None:
-            # First fix: aim at wherever the gate is.
-            self._yaw_lock = self._wrap(yaw_hold + az) if az is not None \
-                else math.atan2(float(offset[1]), float(offset[0]))
-        elif dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD:
-            # Gate is genuinely off-centre AND we're not yet committed to the pass ->
-            # deliberate re-aim onto it. Inside YAW_FREEZE_DIST we hold the lock and punch
-            # straight through (point-blank azimuth is garbage; see YAW_FREEZE_DIST).
-            self._yaw_lock = self._wrap(yaw_hold + az)
-        yaw = self._yaw_lock
-
-        # HORIZONTAL velocity points along the CURRENT heading (fly where we look), so the
-        # controller only needs PITCH (forward) and ~no ROLL. As yaw centres the gate, the
-        # nose — and thus this velocity — aligns with it; the drone curves onto the gate
-        # without ever strafing/banking.
-        h = speed * (horiz / dist) if dist > 1e-9 else 0.0
-        vn = h * math.cos(yaw_hold)
-        ve = h * math.sin(yaw_hold)
-
-        # VERTICAL: close the height gap toward the (close-range-trusted) gate height,
-        # capped separately — a noisy big climb/descent is what overshot before.
-        vd = 0.0
-        if dist > 1e-9:
-            vd = max(-MAX_VSPEED, min(MAX_VSPEED, speed * float(offset[2]) / dist))
-
-        # Look DOWN on the APPROACH to gate 1 only, RAMPED to zero as we commit to the
-        # pass: full bias far out, fading to nothing by PASS_THROUGH_DIST so we thread the
-        # opening on the normal centre-tracking trajectory and do NOT sink into the gate's
-        # lower edge (a raw descent through the gate clipped the bottom). The base vertical
-        # loop then re-centres us on the gate before we cross the plane.
-        if self._cur_idx == 0 and PASS_THROUGH_DIST < dist <= GATE1_LOOKDOWN_RANGE_M:
-            frac = (dist - PASS_THROUGH_DIST) / (GATE1_LOOKDOWN_RANGE_M - PASS_THROUGH_DIST)
-            vd = min(MAX_VSPEED, vd + GATE1_LOOKDOWN_VD * frac)
+            vel = offset * (speed / dist)
+        else:
+            vel = np.zeros(3)
+        vn, ve, vd = float(vel[0]), float(vel[1]), float(vel[2])
+        vd = max(-MAX_VSPEED, min(MAX_VSPEED, vd))   # cap vertical separately
 
         return self._publish({'mode': 'velocity',
-                              'vel_ned': (float(vn), float(ve), float(vd)),
-                              'yaw': float(yaw),
+                              'vel_ned': (vn, ve, vd),
+                              'yaw': float(yaw_cmd),
                               'range_m': dist,
-                              'source': source,
+                              'source': wp.name or f'wp{self._idx}',
+                              'wp_index': self._idx,
                               'ts': now})

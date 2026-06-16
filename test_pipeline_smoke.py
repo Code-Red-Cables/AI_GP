@@ -43,37 +43,24 @@ def test_detect_and_estimate():
     return est
 
 
-def test_planner_vision(est):
+def test_planner_goto_waypoint():
+    """The preplanned planner steers toward its current waypoint's NED position."""
+    from mission import Mission, Waypoint
     data = {"lock": threading.RLock()}
-    data["vision"] = est
-    data["attitude"] = {"roll": 0, "pitch": 0, "yaw": 0, "ts": time.time_ns()}
-    data["odometry"] = {"pos": (0.0, 0.0, -2.0), "q": (1, 0, 0, 0),
-                        "vel": (0, 0, 0), "rates": (0, 0, 0), "ts": time.time_ns()}
-    planner = Planner(data)
-    target = planner.compute_target()
-    assert target["mode"] == "velocity"
-    assert target["source"] in ("vision", "vision_level"), target["source"]
-    vn, ve, vd = target["vel_ned"]
-    assert vn > 0, f"should fly forward (North+), got {target['vel_ned']}"
-    speed = math.sqrt(vn * vn + ve * ve + vd * vd)
-    assert speed <= __import__("planner").MAX_SPEED + 1e-6
-    print(f"PASS planner(vision)  source={target['source']} "
-          f"vel_ned=({vn:+.2f},{ve:+.2f},{vd:+.2f}) yaw={target['yaw']:+.2f}")
-
-
-def test_planner_known_geometry():
-    data = {"lock": threading.RLock()}
+    # One waypoint 10 m North + 4 m up from the drone, facing North.
+    data["mission"] = Mission([Waypoint(10.0, 0.0, -6.0, 0.0, name="wpN")])
     data["attitude"] = {"roll": 0, "pitch": 0, "yaw": 0, "ts": time.time_ns()}
     data["position_ned"] = {"x": 0.0, "y": 0.0, "z": -2.0, "vx": 0, "vy": 0, "vz": 0, "ts": time.time_ns()}
-    data["gates"] = [{"gate_id": 0, "pos_ned": (10.0, 0.0, -2.0),
-                      "orient_ned": (1, 0, 0, 0), "width": 1.5, "height": 1.5}]
-    data["race"] = {"active_gate_index": 0, "ts": time.time_ns()}
-    planner = Planner(data)
-    target = planner.compute_target()
-    assert target["source"] == "known", target["source"]
+    target = Planner(data).compute_target()
+    assert target["mode"] == "velocity"
+    assert target["source"] == "wpN", target["source"]
     vn, ve, vd = target["vel_ned"]
-    assert vn > 0 and abs(ve) < 1e-6, f"should head straight North to gate, got {target['vel_ned']}"
-    print(f"PASS planner(known)   source={target['source']} vel_ned=({vn:+.2f},{ve:+.2f},{vd:+.2f})")
+    assert vn > 0 and abs(ve) < 1e-6, f"should head straight North, got {target['vel_ned']}"
+    assert vd < 0, f"waypoint is higher (z<-2) so should climb (vd<0), got {vd}"
+    speed = math.sqrt(vn * vn + ve * ve + vd * vd)
+    assert speed <= __import__("planner").MAX_SPEED + 1e-6
+    print(f"PASS planner(goto)    source={target['source']} "
+          f"vel_ned=({vn:+.2f},{ve:+.2f},{vd:+.2f}) yaw={target['yaw']:+.2f}")
 
 
 def test_planner_watchdog():
@@ -108,29 +95,37 @@ def test_controller_send_path():
 
 
 def test_velocity_to_attitude_signs():
-    """ANGLE-mode mapping sign checks: forward -> nose-down, right -> roll-right, etc."""
-    # Heading North (yaw=0). Desired velocity due North (forward) -> nose-down pitch.
-    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((2.0, 0.0, 0.0), 0.0, 0.0, 0.0)
-    assert pitch < 0, f"forward flight should pitch nose-down (neg), got {pitch}"
+    """Body-frame mapping with the sim's LEFT-HANDED yaw (rotate error by -yaw).
+
+    velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now); vel_now is the measured NED
+    velocity (vn, ve, vz). Forward error -> pitch (LEAN_SIGN_FWD), lateral -> roll
+    (LEAN_SIGN_LAT); checks follow the sign constants so this survives a live sign flip.
+    """
+    sign = lambda x: math.copysign(1.0, x)
+    # Heading North (yaw=0): pure-North desired -> pure forward -> pitch only.
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((2.0, 0.0, 0.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert abs(roll) < 1e-6, f"pure-forward should not roll, got {roll}"
-    # Desired velocity due East while heading North -> roll right (positive).
-    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((0.0, 2.0, 0.0), 0.0, 0.0, 0.0)
-    assert roll > 0, f"rightward flight should roll right (pos), got {roll}"
+    assert sign(pitch) == sign(ctrl.LEAN_SIGN_FWD), f"forward error must pitch with LEAN_SIGN_FWD, got {pitch}"
+    # Left-handed yaw: facing WEST is yaw=-90; physical forward there is EAST, so a desired
+    # velocity due EAST (+e) is body-FORWARD -> pitch only (no roll). This is the case the
+    # old +yaw rotation got backwards.
+    roll, pitch, yaw, thrust = ctrl.velocity_to_attitude((0.0, 2.0, 0.0), 0.0, math.radians(-90), (0.0, 0.0, 0.0))
+    assert abs(roll) < 1e-6, f"East-while-yaw=-90 is pure forward, should not roll, got {roll}"
+    assert sign(pitch) == sign(ctrl.LEAN_SIGN_FWD), f"forward (East@yaw=-90) must pitch with LEAN_SIGN_FWD, got {pitch}"
     # Commanded climb (vd<0) while sinking (vz>0) -> more than hover thrust.
-    *_, thrust_climb = ctrl.velocity_to_attitude((0.0, 0.0, -1.0), 0.0, 0.0, 0.5)
-    *_, thrust_descend = ctrl.velocity_to_attitude((0.0, 0.0, 1.0), 0.0, 0.0, 0.0)
+    *_, thrust_climb = ctrl.velocity_to_attitude((0.0, 0.0, -1.0), 0.0, 0.0, (0.0, 0.0, 0.5))
+    *_, thrust_descend = ctrl.velocity_to_attitude((0.0, 0.0, 1.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert thrust_climb > ctrl.HOVER_THRUST, f"climb cmd should exceed hover, got {thrust_climb}"
     assert thrust_descend < ctrl.HOVER_THRUST, f"descend cmd should drop thrust, got {thrust_descend}"
     # Lean is capped.
-    roll, pitch, *_ = ctrl.velocity_to_attitude((100.0, 0.0, 0.0), 0.0, 0.0, 0.0)
+    roll, pitch, *_ = ctrl.velocity_to_attitude((100.0, 0.0, 0.0), 0.0, 0.0, (0.0, 0.0, 0.0))
     assert abs(pitch) <= ctrl.MAX_LEAN_RAD + 1e-9, "pitch must be capped at MAX_LEAN_RAD"
-    print("PASS velocity->attitude  signs & caps OK")
+    print("PASS velocity->attitude  body-frame (-yaw) signs & caps OK")
 
 
 if __name__ == "__main__":
-    est = test_detect_and_estimate()
-    test_planner_vision(est)
-    test_planner_known_geometry()
+    test_detect_and_estimate()
+    test_planner_goto_waypoint()
     test_planner_watchdog()
     test_controller_send_path()
     test_velocity_to_attitude_signs()

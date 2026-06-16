@@ -81,6 +81,16 @@ THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority
 KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
 MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
 
+# Per-axis sign mapping the BODY-frame velocity error -> lean (see velocity_to_attitude).
+# Calibrated from logs (2026-06-15): pitch+ drives the drone BODY-FORWARD (verified clean
+# at yaw=0 -> North leg flew, and yaw=-180 -> the drone ran straight South at +20deg pitch
+# with the inner loop tracking exactly). So forward error -> +pitch. The lateral/roll sign
+# is the textbook "roll right to go right" but was never exercised on a clean run (pure
+# fore/aft legs), so CONFIRM it live and flip LEAN_SIGN_LAT if the drone slides the wrong
+# way sideways.
+LEAN_SIGN_FWD = +1.0     # body-forward velocity error -> +pitch (verified yaw=0 and yaw=-180)
+LEAN_SIGN_LAT = +1.0     # body-right velocity error -> +roll  (CONFIRM live; flip if it veers)
+
 # --------------------------------------------------------------------------------------
 # Control is BODY-RATE (ACRO), with our own outer attitude->rate leveling loop.
 #
@@ -147,17 +157,23 @@ def send_rate_target(mavlink_conn, system_boot_ms, roll_rate, pitch_rate, yaw_ra
 
 
 def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
-    """Map a desired NED velocity + yaw into (roll, pitch, yaw, thrust) for ANGLE mode.
+    """Map a desired NED velocity + yaw into (roll, pitch, yaw, thrust).
 
     - thrust tracks the desired vertical velocity ``vd`` (NED, +down): more thrust when
       we are sinking relative to the command.
-    - horizontal control is a VELOCITY loop: lean is proportional to the velocity ERROR
-      (desired - measured), rotated into the heading frame. A fixed lean is a fixed
-      ACCELERATION, so the old open-loop "lean = KP*desired_velocity" never stopped
-      accelerating — log 2026-06-05 shows a 2 m/s command building to ~6 m/s, then
-      coasting through the gate because a zero-lean "hover" does not brake. Closing the
-      loop on the error makes lean fall to zero as we reach target speed and lean
-      BACKWARD to brake when overspeeding or commanded to hover.
+    - horizontal control is a BODY-frame velocity loop: rotate the world-NED velocity
+      ERROR into the drone's heading frame, then pitch on the forward component and roll
+      on the lateral component. Leaning on the ERROR (not the desired velocity) makes the
+      lean fall to zero as we reach target speed and lean BACKWARD to brake.
+
+    CRITICAL -- this sim's reported yaw is LEFT-HANDED vs NED: physical forward is
+    (cos yaw, -sin yaw), so we rotate the error by ``-yaw_now`` (note the sin signs vs a
+    textbook +yaw rotation). With the +yaw rotation the drone flew due-North fine (yaw=0,
+    where sin=0) but on the yaw=-90 leg it accelerated EAST while commanded WEST -- a pure
+    forward-axis mirror -- and ran 180 m off the square (log run_1781506925, 2026-06-15);
+    a world-referenced no-rotation attempt then flew straight off in the boot heading
+    (run_1781509561). Rotating by -yaw is the consistent fix (pitch+ -> body-forward is
+    verified clean at yaw=0 North and yaw=-180 South).
 
     ``vel_now`` is the measured NED velocity (vn, ve, vz).
     """
@@ -167,17 +183,13 @@ def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
     thrust = HOVER_THRUST + KP_THRUST * (vz_now - vd)
     thrust = max(THRUST_MIN, min(THRUST_MAX, thrust))
 
-    # Horizontal velocity error in world NED, then rotate into the body heading frame.
+    # World-NED velocity error rotated into the body frame by -yaw (left-handed sim yaw).
     en, ee = (vn - vn_now), (ve - ve_now)
     c, s = math.cos(yaw_now), math.sin(yaw_now)
-    e_fwd = c * en + s * ee          # body-forward velocity error
-    e_lat = -s * en + c * ee         # body-right velocity error
-    # Pitch sign is INVERTED on this sim (same asymmetry as RATE_SIGN_PITCH=-1 vs
-    # RATE_SIGN_ROLL=+1): the rate loop faithfully holds the commanded pitch angle, but
-    # the textbook "nose-down to go forward" sign drove the quad BACKWARD (verified
-    # 2026-06-05), so forward uses +KP_LEAN. Roll/lateral was already correct.
-    pitch = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_fwd))   # forward translation
-    roll = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_lat))    # roll right to go right
+    e_fwd = c * en - s * ee          # body-forward velocity error
+    e_lat = s * en + c * ee          # body-right velocity error
+    pitch = _clamp(LEAN_SIGN_FWD * KP_LEAN * e_fwd, MAX_LEAN_RAD)   # pitch+ -> forward
+    roll = _clamp(LEAN_SIGN_LAT * KP_LEAN * e_lat, MAX_LEAN_RAD)    # roll+  -> right
     return roll, pitch, yaw_cmd, thrust
 
 

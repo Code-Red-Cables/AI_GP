@@ -1,11 +1,9 @@
 from pymavlink import mavutil
 from timesync import TimeSync
-from vision_rx import VisionRX
 from mavlink_rx import MAVLinkRX
 from controller import Controller
 from planner import Planner
 from logger import Logger
-from course_map import CourseMap
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # -------------------------------
@@ -30,26 +28,17 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     ts_loop = TimeSync.create_timesync(sim_conn, shared_data)
 
     # -------------------------------
-    # Connect Vision receiver
+    # Connect Vision receiver (OFF on this preplanning branch -- the path is flown purely
+    # from the waypoint mission, so we don't bind the camera socket or run detection).
     # -------------------------------
-    vision_rx = VisionRX(shared_data)
+    vision_rx = None
+    if shared_data.get('use_vision', False):
+        from vision_rx import VisionRX
+        vision_rx = VisionRX(shared_data)
 
     # -------------------------------
-    # Preplanning course map (learn-then-replay). The sim broadcasts no track geometry
-    # (spec 4.3), but the course is deterministic (spec 3.5), so we learn each gate's
-    # world position on one run and replay it on the next. Loaded BEFORE the planner so
-    # it can read it in __init__. Only created when preplan/learn is enabled, so a
-    # default run is unaffected.
-    # -------------------------------
-    if shared_data.get('preplan') or shared_data.get('learn'):
-        course_map = CourseMap(shared_data.get('course_map_path', 'course_map.json')).load()
-        shared_data['course_map'] = course_map
-        print(f"Course map loaded: {course_map.indices()} "
-              f"(preplan={shared_data.get('preplan')}, learn={shared_data.get('learn')})",
-              flush=True)
-
-    # -------------------------------
-    # Planner + main control loop
+    # Planner + main control loop. The planner follows shared_data['mission'] (an ordered
+    # list of position+yaw waypoints, see mission.py), already injected by main.py.
     # -------------------------------
     print("Setting up planner...", flush=True)
     planner = Planner(shared_data)
