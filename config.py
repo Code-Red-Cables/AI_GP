@@ -29,7 +29,7 @@ DRY_RUN = False
 DEBUG_VISION = False
 LOGGING = True
 USE_VISION = False
-USE_TELEOP = True
+USE_TELEOP = False
 
 # ======================================================================================
 # Mission / paths (main.py)
