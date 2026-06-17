@@ -48,10 +48,12 @@ TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without a pose -> hover (we'd be fly
 MAX_ALT_M = 15.0                   # height (m above the arm point) beyond which we recover
 # Distance to the ACTIVE waypoint beyond which the horizontal loop has clearly run away
 # (log run_1781506925 flew 180 m off a 5 m square) -> stop commanding translation and
-# hover so the velocity loop brakes back. Default sized for the ~5 m square; a longer
-# mission MUST raise this above its longest leg or the drone hovers instead of flying it.
-# Override per run via the MAX_WP_DIST_M env var, e.g. `MAX_WP_DIST_M=60 python main.py`.
-MAX_WP_DIST_M = float(os.environ.get('MAX_WP_DIST_M', '25.0'))
+# hover so the velocity loop brakes back. MUST exceed the mission's LONGEST leg or the
+# drone hovers at one waypoint instead of flying to the next (the captured course stalled
+# at wp1 with the old 25 m default, since wp1->wp2 is 29 m). Default 60 m clears the
+# captured course (longest leg ~39 m) with margin while still catching a true 100 m+
+# runaway; override per run with the MAX_WP_DIST_M env var.
+MAX_WP_DIST_M = float(os.environ.get('MAX_WP_DIST_M', '60.0'))
 
 # Legacy aliases kept so the run logger's gains snapshot stays populated.
 PASS_THROUGH_DIST = DEFAULT_ARRIVE_RADIUS_M
