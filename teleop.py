@@ -13,7 +13,7 @@ the camera view):
     W / S   forward / backward
     A / D   strafe left / right
     Space   climb (increase altitude)
-    Ctrl    descend (decrease altitude)        [Windows; on POSIX use 'C']
+    C       descend (decrease altitude)
     Q / E   yaw left / right (turn the nose)
     B       capture the drone's current NED pose as a waypoint and append it to the
             capture file (default ``captured_waypoints.json``), rewriting the whole list.
@@ -22,9 +22,8 @@ The planner emits the SAME ``{'mode':'velocity','vel_ned':(vn,ve,vd),'yaw':rad,.
 contract the controller already consumes, so ``controller.py`` is untouched.
 
 Input backends (auto-selected): on Windows the input thread polls true key STATE via
-``GetAsyncKeyState`` (user32) -- keys are read while HELD and modifier keys such as Ctrl
-work. On POSIX (offline testing only) it falls back to non-blocking raw-tty char reads with
-a short hold-timeout; Ctrl cannot be read there, so descend is mapped to 'C'.
+``GetAsyncKeyState`` (user32), so keys are read while HELD. On POSIX (offline testing only)
+it falls back to non-blocking raw-tty char reads with a short hold-timeout.
 
 NOTE on yaw handedness: the sim reports a LEFT-HANDED yaw, so physical nose-forward is
 ``(cos yaw, -sin yaw)`` in NED (see CLAUDE.md / controller.velocity_to_attitude). WASD is
@@ -51,7 +50,7 @@ TELEOP_YAW_SIGN = 1.0     # flip to -1.0 if Q/E turn the nose the wrong way
 
 # Safety: no fresh pose for this long -> hover (we'd be flying blind). The altitude guard
 # from the autonomous planner is intentionally dropped here -- the pilot has direct
-# vertical control (Ctrl) and an auto-descend would fight them.
+# vertical control (Space/C) and an auto-descend would fight them.
 TELEM_TIMEOUT_NS = 500_000_000
 
 
@@ -68,11 +67,11 @@ class _WinKeyState:
     """True key-state polling via Win32 ``GetAsyncKeyState`` (Windows only).
 
     Reads whether each key is currently down regardless of console focus, so movement is
-    continuous while a key is HELD and modifier keys (Ctrl) are readable.
+    continuous while a key is HELD.
     """
 
     VK = {'w': 0x57, 'a': 0x41, 's': 0x53, 'd': 0x44, 'q': 0x51, 'e': 0x45,
-          'b': 0x42, 'space': 0x20, 'ctrl': 0x11}
+          'b': 0x42, 'space': 0x20, 'down': 0x43}   # 'down' = descend, the C key (0x43)
 
     def __init__(self):
         import ctypes
@@ -92,13 +91,12 @@ class _PosixKeyReader:
     """Non-blocking raw-tty char reads with a hold-timeout (POSIX, offline testing).
 
     There is no key-up event on a terminal, so a key counts as "down" while its character
-    keeps arriving (auto-repeat) and for ``HOLD_TIMEOUT`` after the last one. Ctrl can't be
-    read this way, so descend is mapped to 'C'.
+    keeps arriving (auto-repeat) and for ``HOLD_TIMEOUT`` after the last one.
     """
 
     HOLD_TIMEOUT = 0.25
     KEYMAP = {'w': 'w', 'a': 'a', 's': 's', 'd': 'd', 'q': 'q', 'e': 'e',
-              'b': 'b', ' ': 'space', 'c': 'ctrl'}
+              'b': 'b', ' ': 'space', 'c': 'down'}
 
     def __init__(self):
         import termios
@@ -184,7 +182,7 @@ class KeyboardTeleop:
                 d = self._backend.down
                 fwd = (1.0 if d('w') else 0.0) - (1.0 if d('s') else 0.0)
                 right = (1.0 if d('d') else 0.0) - (1.0 if d('a') else 0.0)
-                up = (1.0 if d('space') else 0.0) - (1.0 if d('ctrl') else 0.0)
+                up = (1.0 if d('space') else 0.0) - (1.0 if d('down') else 0.0)
                 turn = (1.0 if d('e') else 0.0) - (1.0 if d('q') else 0.0)
                 self._publish(fwd, right, up, turn)
 
@@ -340,12 +338,11 @@ class TeleopPlanner:
 
 def print_controls(capture_path):
     """Print the control scheme banner at startup."""
-    descend = "Ctrl" if sys.platform.startswith('win') else "C"
     print("\n" + "=" * 62, flush=True)
     print(" MANUAL CONTROL -- fly by keyboard, press B to map waypoints", flush=True)
     print("=" * 62, flush=True)
     print("   W / S : forward / backward      A / D : strafe left / right", flush=True)
-    print(f"   Space : climb                   {descend:<4}  : descend", flush=True)
+    print("   Space : climb                   C     : descend", flush=True)
     print("   Q / E : yaw left / right         B     : capture waypoint", flush=True)
     print(f"   captured waypoints -> {capture_path}", flush=True)
     print("=" * 62 + "\n", flush=True)

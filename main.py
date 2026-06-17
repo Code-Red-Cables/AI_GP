@@ -26,7 +26,7 @@ LOGGING = True
 
 # --------------------------------------------------------------------------------------
 # MANUAL CONTROL (this branch). Vision and the autonomous waypoint planner are OFF; you
-# fly the drone by keyboard (WASD = translate, Space/Ctrl = climb/descend, Q/E = yaw) and
+# fly the drone by keyboard (WASD = translate, Space/C = climb/descend, Q/E = yaw) and
 # press B to capture the drone's current pose as a waypoint. Captures are written to
 # CAPTURE_PATH in the same JSON schema the preplanning branch flies (mission.save_mission),
 # so you can map the whole course by hand and replay it there. See teleop.py.

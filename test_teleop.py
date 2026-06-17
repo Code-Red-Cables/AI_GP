@@ -77,14 +77,14 @@ def test_diagonal_is_capped():
 
 
 def test_vertical_axis():
-    """Space climbs (vd negative, up in NED); Ctrl descends (vd positive)."""
+    """Space climbs (vd negative, up in NED); C descends (vd positive)."""
     data = _data()
     p = teleop.TeleopPlanner(data)
     _set_pose(data, yaw=0.0)
     _set_intent(data, up=1)
     assert _approx(p.compute_target()['vel_ned'][2], -VSPEED), "Space should climb (vd<0)"
     _set_intent(data, up=-1)
-    assert _approx(p.compute_target()['vel_ned'][2], +VSPEED), "Ctrl should descend (vd>0)"
+    assert _approx(p.compute_target()['vel_ned'][2], +VSPEED), "C should descend (vd>0)"
     print("PASSED test_vertical_axis")
 
 
