@@ -37,11 +37,21 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         vision_rx = VisionRX(shared_data)
 
     # -------------------------------
-    # Planner + main control loop. The planner follows shared_data['mission'] (an ordered
-    # list of position+yaw waypoints, see mission.py), already injected by main.py.
+    # Planner + main control loop. Two planners share the controller's velocity contract:
+    #   * autonomous: Planner follows shared_data['mission'] (ordered position+yaw waypoints).
+    #   * manual (use_teleop): TeleopPlanner is driven by a KeyboardTeleop input thread, and
+    #     B captures the live pose to a waypoint file (this branch -- see teleop.py).
     # -------------------------------
-    print("Setting up planner...", flush=True)
-    planner = Planner(shared_data)
+    teleop = None
+    if shared_data.get('use_teleop', False):
+        print("Setting up teleop (manual keyboard control)...", flush=True)
+        from teleop import TeleopPlanner, KeyboardTeleop
+        planner = TeleopPlanner(shared_data)
+        teleop = KeyboardTeleop.create_keyboard_teleop(
+            shared_data, shared_data.get('capture_path', 'captured_waypoints.json'))
+    else:
+        print("Setting up planner...", flush=True)
+        planner = Planner(shared_data)
     controller = Controller(sim_conn, shared_data, system_boot_ms, planner)
 
     # -------------------------------
@@ -58,5 +68,6 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         'sim_conn': sim_conn,
         'controller': controller,
         'planner': planner,
+        'teleop': teleop,
         'logger': logger
     }

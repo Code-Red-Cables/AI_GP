@@ -8,6 +8,7 @@ import time
 
 from setup import setup_components
 from mission import square_mission, load_mission
+from teleop import print_controls
 
 # Modify these properties if you want to run the server remotely for example
 SIM_SERVER_UDP_IP = "127.0.0.1"
@@ -24,23 +25,27 @@ DEBUG_VISION = False
 LOGGING = True
 
 # --------------------------------------------------------------------------------------
-# Preplanned, VISION-FREE flight (this branch). The drone follows a fixed ordered list of
-# position+yaw waypoints (see mission.py) -- no perception. By default it flies a
-# CLOCKWISE SQUARE: take off (straight up, holding the boot heading), then a 90deg right
-# turn at each of the 4 corners, facing along each leg. Set SQUARE_CCW=1 to mirror it into
-# a counter-clockwise (left-turn) square. Drop a mission.json next to main.py (schema =
-# mission.save_mission) to fly a custom path instead. USE_VISION stays False so the camera
-# socket/detector are never started.
+# MANUAL CONTROL (this branch). Vision and the autonomous waypoint planner are OFF; you
+# fly the drone by keyboard (WASD = translate, Space/Ctrl = climb/descend, Q/E = yaw) and
+# press B to capture the drone's current pose as a waypoint. Captures are written to
+# CAPTURE_PATH in the same JSON schema the preplanning branch flies (mission.save_mission),
+# so you can map the whole course by hand and replay it there. See teleop.py.
+#   Set USE_TELEOP=0 to fall back to the autonomous square/mission flight instead.
 # --------------------------------------------------------------------------------------
 USE_VISION = False
+USE_TELEOP = os.environ.get('USE_TELEOP', '1') == '1'   # this branch defaults to manual control
+CAPTURE_PATH = os.environ.get('CAPTURE_PATH', 'captured_waypoints.json')
 MISSION_PATH = os.environ.get('MISSION_PATH', 'mission.json')
 SQUARE_SIDE_M = float(os.environ.get('SQUARE_SIDE_M', '5.0'))
 SQUARE_ALT_M = float(os.environ.get('SQUARE_ALT_M', '2.0'))
 SQUARE_CCW = os.environ.get('SQUARE_CCW', '0') == '1'   # default clockwise (right turns)
 
-# Load a custom mission if a mission.json is present, else build the default square.
-mission = load_mission(MISSION_PATH) or square_mission(
-    SQUARE_SIDE_M, SQUARE_ALT_M, counter_clockwise=SQUARE_CCW)
+# In autonomous mode, load a custom mission.json if present, else build the default square.
+# Manual control needs no mission.
+mission = None
+if not USE_TELEOP:
+    mission = load_mission(MISSION_PATH) or square_mission(
+        SQUARE_SIDE_M, SQUARE_ALT_M, counter_clockwise=SQUARE_CCW)
 
 # time since sim started ms
 system_boot_ms = int(time.time() * 1000)
@@ -52,14 +57,19 @@ shared_data = {
     'debug_vision': DEBUG_VISION,
     'logging': LOGGING,
     'use_vision': USE_VISION,
+    'use_teleop': USE_TELEOP,
+    'capture_path': CAPTURE_PATH,
     'mission': mission,
 }
 
-print(f"Mission '{mission.name}': {len(mission.waypoints)} waypoints, loop={mission.loop}", flush=True)
-for i, wp in enumerate(mission.waypoints):
-    n, e, d = wp.pos
-    yaw_s = f"{wp.yaw_deg:+.0f}deg" if wp.yaw is not None else "hold   "
-    print(f"  [{i}] {wp.name or '?':<10} n={n:+.2f} e={e:+.2f} d={d:+.2f}  yaw={yaw_s}", flush=True)
+if USE_TELEOP:
+    print_controls(CAPTURE_PATH)
+else:
+    print(f"Mission '{mission.name}': {len(mission.waypoints)} waypoints, loop={mission.loop}", flush=True)
+    for i, wp in enumerate(mission.waypoints):
+        n, e, d = wp.pos
+        yaw_s = f"{wp.yaw_deg:+.0f}deg" if wp.yaw is not None else "hold   "
+        print(f"  [{i}] {wp.name or '?':<10} n={n:+.2f} e={e:+.2f} d={d:+.2f}  yaw={yaw_s}", flush=True)
 
 # setup components
 components = setup_components(shared_data, system_boot_ms, SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT)
@@ -67,6 +77,7 @@ controller = components['controller']
 ts_loop = components['ts_loop']
 mavlink_rx = components['mavlink_rx']
 vision_rx = components['vision_rx']
+teleop = components.get('teleop')
 logger = components.get('logger')
 
 # Flight-mode entry. The sim is a Betaflight-style FPV racer that boots in ACRO (raw
@@ -92,7 +103,7 @@ except KeyboardInterrupt:
     print("\nInterrupted — shutting down...", flush=True)
 
 # exit: stop each RX/loop thread and join (guard against threads that never started)
-for component in (ts_loop, mavlink_rx, vision_rx, logger):
+for component in (ts_loop, mavlink_rx, vision_rx, teleop, logger):
     if component is None:
         continue
     thread = component.get_thread_for_join()
