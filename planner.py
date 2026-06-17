@@ -21,39 +21,31 @@ catches a vertical-loop runaway and descends.
 """
 
 import math
-import os
 import threading
 import time
 
 import numpy as np
 
 from mission import DEFAULT_ARRIVE_RADIUS_M, DEFAULT_YAW_TOL_RAD, DEFAULT_DWELL_S
+from config import MAX_SPEED, MAX_VSPEED, MAX_WP_DIST_M
 
 # --------------------------------------------------------------------------------------
 # Guidance tuning. The commanded speed is proportional to the distance remaining (so the
-# drone decelerates into each waypoint), capped at MAX_SPEED, with the vertical component
-# capped separately. Raised from the 1.5 / 1.0 m/s first-flight values to fly the same path
-# faster; override per run with the MAX_SPEED_MPS / MAX_VSPEED_MPS env vars (no code edit),
-# e.g. `MAX_SPEED_MPS=4 python main.py`. If the drone can't actually reach the commanded
-# speed it has saturated its lean cap -- raise controller.MAX_LEAN_RAD / KP_LEAN.
+# drone decelerates into each waypoint), capped at config.MAX_SPEED, with the vertical
+# component capped separately at config.MAX_VSPEED. (Both knobs live in config.py.) If the
+# drone can't reach the commanded speed it has saturated its lean cap -- raise
+# controller.MAX_LEAN_RAD / KP_LEAN.
 # --------------------------------------------------------------------------------------
-MAX_SPEED = float(os.environ.get('MAX_SPEED_MPS', '3.0'))    # m/s cap on commanded velocity magnitude
-MAX_VSPEED = float(os.environ.get('MAX_VSPEED_MPS', '1.5'))  # m/s cap on the vertical (climb/descend) component
 KP_POS = 0.8               # commanded speed = KP_POS * distance-to-waypoint (then capped)
 
 # --------------------------------------------------------------------------------------
 # Safety guards (kept from the reactive planner -- pure client-side fail-safes).
+# config.MAX_WP_DIST_M is the runaway guard: if the drone is farther than that from its
+# ACTIVE waypoint it hovers so the velocity loop brakes back (it MUST exceed the mission's
+# longest leg, or the drone stalls at a waypoint instead of advancing).
 # --------------------------------------------------------------------------------------
 TELEM_TIMEOUT_NS = 500_000_000     # 500 ms without a pose -> hover (we'd be flying blind)
 MAX_ALT_M = 15.0                   # height (m above the arm point) beyond which we recover
-# Distance to the ACTIVE waypoint beyond which the horizontal loop has clearly run away
-# (log run_1781506925 flew 180 m off a 5 m square) -> stop commanding translation and
-# hover so the velocity loop brakes back. MUST exceed the mission's LONGEST leg or the
-# drone hovers at one waypoint instead of flying to the next (the captured course stalled
-# at wp1 with the old 25 m default, since wp1->wp2 is 29 m). Default 60 m clears the
-# captured course (longest leg ~39 m) with margin while still catching a true 100 m+
-# runaway; override per run with the MAX_WP_DIST_M env var.
-MAX_WP_DIST_M = float(os.environ.get('MAX_WP_DIST_M', '60.0'))
 
 # Legacy aliases kept so the run logger's gains snapshot stays populated.
 PASS_THROUGH_DIST = DEFAULT_ARRIVE_RADIUS_M

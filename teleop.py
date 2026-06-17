@@ -32,21 +32,19 @@ opposite way to what you expect, flip ``TELEOP_YAW_SIGN``.
 """
 
 import math
-import os
 import sys
 import threading
 import time
 
 from mission import Mission, Waypoint, save_mission
+from config import TELEOP_SPEED, TELEOP_VSPEED, TELEOP_YAWRATE_DPS, TELEOP_YAW_SIGN
 
 # --------------------------------------------------------------------------------------
-# Teleop tuning. Speeds are the velocity commanded at full stick (one key held); override
-# per run with env vars without editing code, e.g. `TELEOP_SPEED_MPS=4 python main.py`.
+# Teleop tuning lives in config.py: TELEOP_SPEED / TELEOP_VSPEED (full-stick horizontal /
+# vertical speeds), TELEOP_YAWRATE_DPS (deg/s turn rate), TELEOP_YAW_SIGN (flip if Q/E
+# turn the wrong way). Convert the yaw rate to rad/s for the controller here.
 # --------------------------------------------------------------------------------------
-TELEOP_SPEED = float(os.environ.get('TELEOP_SPEED_MPS', '3.0'))    # m/s horizontal at full stick
-TELEOP_VSPEED = float(os.environ.get('TELEOP_VSPEED_MPS', '1.5'))  # m/s climb/descend at full stick
-TELEOP_YAW_RATE = math.radians(float(os.environ.get('TELEOP_YAWRATE_DPS', '60')))  # rad/s turn rate
-TELEOP_YAW_SIGN = 1.0     # flip to -1.0 if Q/E turn the nose the wrong way
+TELEOP_YAW_RATE = math.radians(TELEOP_YAWRATE_DPS)   # rad/s turn rate while Q/E held
 
 # Safety: no fresh pose for this long -> hover (we'd be flying blind). The altitude guard
 # from the autonomous planner is intentionally dropped here -- the pilot has direct

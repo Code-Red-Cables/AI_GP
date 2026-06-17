@@ -2,43 +2,21 @@
 # Sample Python client for the AI GP controller
 #
 
-import os
 import threading
 import time
 
 from setup import setup_components
 from mission import square_mission, load_mission
 from teleop import print_controls
+from config import (
+    SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
+    DRY_RUN, DEBUG_VISION, LOGGING, USE_VISION, USE_TELEOP,
+    CAPTURE_PATH, MISSION_PATH, SQUARE_SIDE_M, SQUARE_ALT_M, SQUARE_CCW,
+)
 
-# Modify these properties if you want to run the server remotely for example
-SIM_SERVER_UDP_IP = "127.0.0.1"
-SIM_SERVER_UDP_PORT = 14550
-
-# --------------------------------------------------------------------------------------
-# Safety / debug flags.
-#   DRY_RUN:  compute & log guidance but DO NOT send flight setpoints. Set True for a
-#             safe ground check (the planner runs but nothing is sent); False to fly.
-#   LOGGING:  write per-run JSONL telemetry/command logs under logs/ for offline tuning.
-# --------------------------------------------------------------------------------------
-DRY_RUN = False
-DEBUG_VISION = False
-LOGGING = True
-
-# --------------------------------------------------------------------------------------
-# MANUAL CONTROL (this branch). Vision and the autonomous waypoint planner are OFF; you
-# fly the drone by keyboard (WASD = translate, Space/C = climb/descend, Q/E = yaw) and
-# press B to capture the drone's current pose as a waypoint. Captures are written to
-# CAPTURE_PATH in the same JSON schema the preplanning branch flies (mission.save_mission),
-# so you can map the whole course by hand and replay it there. See teleop.py.
-#   Set USE_TELEOP=0 to fall back to the autonomous square/mission flight instead.
-# --------------------------------------------------------------------------------------
-USE_VISION = False
-USE_TELEOP = os.environ.get('USE_TELEOP', '1') == '1'   # this branch defaults to manual control
-CAPTURE_PATH = os.environ.get('CAPTURE_PATH', 'captured_waypoints.json')
-MISSION_PATH = os.environ.get('MISSION_PATH', 'mission.json')
-SQUARE_SIDE_M = float(os.environ.get('SQUARE_SIDE_M', '5.0'))
-SQUARE_ALT_M = float(os.environ.get('SQUARE_ALT_M', '2.0'))
-SQUARE_CCW = os.environ.get('SQUARE_CCW', '0') == '1'   # default clockwise (right turns)
+# All run settings -- connection, DRY_RUN, USE_TELEOP (manual vs autonomous), mission
+# paths, square params -- live in config.py. Edit that file to configure a run; this
+# branch defaults to manual keyboard control (USE_TELEOP=True), with vision off.
 
 # In autonomous mode, load a custom mission.json if present, else build the default square.
 # Manual control needs no mission.
