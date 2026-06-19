@@ -18,8 +18,12 @@ Run everything from the repo root (`C:\Users\rocky\docs\AI_GP\AI_GP`).
 ```powershell
 & $PY test_camera_model.py        # geometry sign-checks
 & $PY test_pipeline_smoke.py      # detector -> estimator -> planner -> control-send
+& $PY test_waypoint_mission.py    # preplanning: planner flies the square (stop-at-each)
+& $PY test_spline_mission.py      # spline-path: SplinePlanner flies through continuously
 ```
-Both must end with `ALL ... PASSED`. Combined they take < 2 s.
+Each must end with `ALL ... PASSED`. Combined they take < 2 s. (The vision tests are no-ops
+of behavior on the vision-off branches but still validate the geometry/contract; the
+mission tests are the relevant ones for the autonomous-flight branches.)
 
 ### `test_camera_model.py` — geometry (8 checks)
 Validates the frame math in isolation (numpy only). Each asserts a *physical*
@@ -55,6 +59,17 @@ Runs the whole chain on a synthetic gate frame, no sim:
 6. **velocity→attitude sign checks** — `velocity_to_attitude()` correctly maps: forward velocity →
    nose-down pitch, rightward velocity → right roll, climb command → thrust > HOVER_THRUST, and caps
    lean angles at `MAX_LEAN_RAD`.
+
+### `test_waypoint_mission.py` — preplanning planner (5 checks)
+Runs the real `Planner` against a kinematic drone (integrate the commanded velocity; slew yaw at the controller's cap). Asserts the square mission is built correctly (CCW corners, all `yaw=None`), flown end-to-end it visits every waypoint in order on-position+heading, the commanded velocity never exceeds the speed caps, the clockwise mirror works, and a mission survives a JSON save/load round-trip.
+
+### `test_spline_mission.py` — spline-path planner (4 checks)
+Runs the real `SplinePlanner` against the same kinematic drone:
+
+1. **spline interpolates** — `build_spline_path()` passes through every control point; arc length is monotone.
+2. **flight visits waypoints** — flown end-to-end the drone passes within `LOOKAHEAD_M` of every intermediate waypoint and settles on the last; the mission completes.
+3. **continuous cruise** — across the cruise region (excluding the intended final-approach taper) the commanded horizontal speed stays ≥ 0.9·`CRUISE_SPEED` — i.e. it flies *through* the waypoints instead of stalling at each one (the distinguishing property vs. `Planner`).
+4. **speed caps** — commanded velocity never exceeds `MAX_SPEED` / `MAX_VSPEED`.
 
 ## 2. Import / compile check (catches wiring breakage)
 

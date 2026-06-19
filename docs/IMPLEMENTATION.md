@@ -113,6 +113,19 @@ roll/pitch/yaw when ATTITUDE isn't present. Writes `_vision_NN.png` overlays whe
 
 Writes `shared_data['target']` (`{mode:'velocity', vel_ned, yaw, range_m, source, wp_index, ts}`). Tunables at the top of the file (`MAX_SPEED`, `MAX_VSPEED`, `KP_POS`, `MAX_ALT_M`, `MAX_WP_DIST_M`); per-waypoint tolerances default from `mission.py` (`DEFAULT_ARRIVE_RADIUS_M`, `DEFAULT_YAW_TOL_RAD`, `DEFAULT_DWELL_S`).
 
+### `spline_planner.py` — follow the waypoints CONTINUOUSLY (spline-path branch)
+> On the `spline-path` branch `SplinePlanner` replaces `Planner` (selected by
+> `config.USE_SPLINE` in `setup.py`). It flies the **same** `shared_data['mission']`
+> waypoints, but in one continuous pass instead of decelerating into each one. Same
+> velocity contract, so `controller.py` is untouched.
+
+Where `Planner` commands `speed = KP_POS·dist` (→ 0 at every waypoint), `SplinePlanner` follows a fitted curve at constant speed:
+- **Init (once):** `build_spline_path()` samples a **centripetal Catmull-Rom** spline (`_catmull_rom_segment`, `alpha=0.5` — avoids the cusps/self-intersections uniform Catmull-Rom makes on unevenly spaced points) through the waypoint positions into a dense polyline (`SAMPLES_PER_SEG` per leg), with phantom reflected endpoints, and tabulates cumulative arc length. The polyline is *interpolating* — it passes through every waypoint. Consecutive coincident waypoints are dropped (a zero-length leg breaks the knot spacing); each surviving waypoint's yaw is kept aligned for heading interpolation.
+- **Per tick (`compute_target`)**, in priority order: (1) telemetry watchdog → hover; (2) altitude-envelope guard → descend; (3) **project** the drone onto the path (`_project` — closest sample searched in a window `[−BACK_WINDOW, +FWD_WINDOW]` of the last index, so progress is monotone and never snaps back), giving along-track arc length + **cross-track distance**; (4) cross-track-envelope guard: off the path by > `MAX_WP_DIST_M` → hover (`source='dist_guard'`); (5) **carrot**: a point `LOOKAHEAD_M` further along the path (`_point_at_s`, arc-length-interpolated; wraps when looping), commanded at constant `CRUISE_SPEED` toward it — tapering to `min(CRUISE_SPEED, KP_POS_END·remaining-arc-length)` on the final approach so it settles on the last waypoint (a looping mission never tapers). Vertical clamped to `±MAX_VSPEED`. Yaw from `_yaw_at_s` — linearly interpolated between the bracketing waypoint headings (shortest-path), or **hold the current heading** when either bracket waypoint is `yaw=None`.
+- **Completion:** within `DEFAULT_ARRIVE_RADIUS_M` of the path end (non-looping) → settle on the final heading and hover (`source='spline_done'`); looping → reset progress to the start.
+
+Writes `shared_data['target']` (`{mode:'velocity', vel_ned, yaw, range_m(=remaining arc length), source('spline:wpN'|guard), wp_index, xte_m, s_m, ts}`). Run knobs in `config.py` (`CRUISE_SPEED`, `LOOKAHEAD_M`); curve/loop tunables at the top of the file (`KP_POS_END`, `SAMPLES_PER_SEG`, `FWD_WINDOW`, `BACK_WINDOW`, `MAX_ALT_M`). Verified offline (`test_spline_mission.py`) and on the captured ~162 m course: completes, ~3 m/s throughout, every gate within ~1 m — **gains pending live-sim tuning**.
+
 ### `controller.py` — outbound control (Task D + body-rate flight + mode-entry handshake)
 
 **Body-rate + thrust control (flight layer):** The DCL sim is a Betaflight-style FPV racer
@@ -153,8 +166,9 @@ names and the one requested; HUD should show "FLIGHT MODE: ANGLE"), (3) `control
 keeps the stream alive across the mode change, then (4) `controller.arm()` and run the control
 loop at 60 Hz. In `DRY_RUN=True` this entire mode-entry block is skipped. Runs the control
 loop under `try/except KeyboardInterrupt`, and joins all threads on exit (None-guarded —
-fixes the original crash). `setup.py` builds the MAVLink connection and every component
-(now incl. `Planner` and `Logger`) and returns them.
+fixes the original crash). `setup.py` builds the MAVLink connection and every component and
+returns them; it selects the planner three ways — `TeleopPlanner` (`use_teleop`),
+`SplinePlanner` (`use_spline`), else `Planner` — all sharing the controller's velocity contract.
 
 ### `tools/` — calibration utilities (never in a timed run)
 `capture_frames.py` saves reassembled FPV frames; `hsv_tuner.py` is a trackbar UI
@@ -210,12 +224,14 @@ Guarded by `shared_data['lock']` (an `RLock` created in `main.py`). Flags:
 | `gates` | `list[{gate_id, pos_ned:(x,y,z), orient_ned:(w,x,y,z), width, height}]` (sorted by id) |
 | `last_collision` | `{collision_id, threat_level, impulse, ts}` |
 | `vision` | `{ts, detected, confidence, center_px, corners_px, area_px, range_m, bearing:(az,el), gate_body, gate_ned, normal_body, method, frame_id, sim_time_ns}` |
-| `target` | `{mode:'velocity', vel_ned:(n,e,d), yaw, range_m, source, wp_index, ts}` |
+| `target` | `{mode:'velocity', vel_ned:(n,e,d), yaw, range_m, source, wp_index, ts}` (spline-path adds `xte_m`, `s_m`) |
 
 `target['source']` — a quick read on what the planner is doing. On the **preplanning** branch it
 is the active waypoint's name (e.g. `takeoff`, `legN->B`, `turnB`) or a guard/watchdog tag
 `{watchdog_hover, alt_guard, dist_guard, no_mission}`; `wp_index` is the active waypoint index.
-(On `modified-starter` it is instead `{vision, vision_level, known, hover, watchdog_hover, alt_guard}`.)
+(On the **spline-path** branch it is `spline:wpN` (N = the upcoming waypoint), `spline_done`,
+or a guard tag `{watchdog_hover, alt_guard, dist_guard, no_mission}`. On `modified-starter` it
+is instead `{vision, vision_level, known, hover, watchdog_hover, alt_guard}`.)
 
 ---
 
