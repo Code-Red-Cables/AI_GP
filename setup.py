@@ -37,10 +37,12 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         vision_rx = VisionRX(shared_data)
 
     # -------------------------------
-    # Planner + main control loop. Two planners share the controller's velocity contract:
-    #   * autonomous: Planner follows shared_data['mission'] (ordered position+yaw waypoints).
+    # Planner + main control loop. Three planners share the controller's velocity contract:
     #   * manual (use_teleop): TeleopPlanner is driven by a KeyboardTeleop input thread, and
-    #     B captures the live pose to a waypoint file (this branch -- see teleop.py).
+    #     B captures the live pose to a waypoint file (see teleop.py).
+    #   * autonomous + use_spline (default): SplinePlanner flies a smooth Catmull-Rom spline
+    #     through shared_data['mission'] at constant cruise speed (continuous flight).
+    #   * autonomous, no spline: Planner stops at each shared_data['mission'] waypoint.
     # -------------------------------
     teleop = None
     if shared_data.get('use_teleop', False):
@@ -49,6 +51,10 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         planner = TeleopPlanner(shared_data)
         teleop = KeyboardTeleop.create_keyboard_teleop(
             shared_data, shared_data.get('capture_path', 'captured_waypoints.json'))
+    elif shared_data.get('use_spline', False):
+        print("Setting up spline planner (continuous waypoint following)...", flush=True)
+        from spline_planner import SplinePlanner
+        planner = SplinePlanner(shared_data)
     else:
         print("Setting up planner...", flush=True)
         planner = Planner(shared_data)

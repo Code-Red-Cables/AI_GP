@@ -22,14 +22,19 @@ SIM_SERVER_UDP_PORT = 14550
 #   DEBUG_VISION: write detection overlays (no effect here -- vision is off).
 #   LOGGING     : write per-run JSONL logs under logs/ for offline tuning.
 #   USE_VISION  : run the camera/detector pipeline (off on this branch).
-#   USE_TELEOP  : True  = manual keyboard control (teleop, this branch's default).
-#                 False = autonomous waypoint mission (loads MISSION_PATH below).
+#   USE_TELEOP  : True  = manual keyboard control (teleop).
+#                 False = autonomous flight (the spline / waypoint planner below).
+#   USE_SPLINE  : autonomous mode only. True  = follow a smooth Catmull-Rom SPLINE through
+#                 the mission waypoints at constant cruise speed (continuous flight, this
+#                 branch's default -- see spline_planner.py). False = the stop-at-each
+#                 waypoint planner (planner.py).
 # ======================================================================================
 DRY_RUN = False
 DEBUG_VISION = False
 LOGGING = True
 USE_VISION = False
 USE_TELEOP = False
+USE_SPLINE = True
 
 # ======================================================================================
 # Mission / paths (main.py)
@@ -60,6 +65,19 @@ SQUARE_CCW = False
 MAX_SPEED = 3.0
 MAX_VSPEED = 1.5
 MAX_WP_DIST_M = 60.0
+
+# ======================================================================================
+# Spline planner (spline_planner.py) -- continuous flight through the waypoints.
+#   CRUISE_SPEED: m/s flown along the path (constant; tapers only on the final approach).
+#                 Must be <= MAX_SPEED (the velocity magnitude is still capped there).
+#   LOOKAHEAD_M : pure-pursuit carrot distance ahead on the path. Larger = smoother but
+#                 cuts corners more; smaller = tracks tighter but can wobble. ~3-5 m suits
+#                 the captured course's leg lengths.
+# When MAX_WP_DIST_M is used here it bounds CROSS-TRACK error off the path (not distance to
+# a single waypoint): farther off the path than this -> hover and brake back toward it.
+# ======================================================================================
+CRUISE_SPEED = 3.0
+LOOKAHEAD_M = 4.0
 
 # ======================================================================================
 # Manual teleop (teleop.py)

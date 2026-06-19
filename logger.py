@@ -93,6 +93,18 @@ def _gains_snapshot():
         })
     except Exception as e:  # pragma: no cover
         g["planner_import_error"] = str(e)
+    try:
+        import config as cfg
+        if getattr(cfg, "USE_SPLINE", False):
+            import spline_planner as sp
+            g.update({
+                "CRUISE_SPEED": cfg.CRUISE_SPEED,
+                "LOOKAHEAD_M": cfg.LOOKAHEAD_M,
+                "KP_POS_END": sp.KP_POS_END,
+                "SAMPLES_PER_SEG": sp.SAMPLES_PER_SEG,
+            })
+    except Exception as e:  # pragma: no cover
+        g["spline_import_error"] = str(e)
     return g
 
 

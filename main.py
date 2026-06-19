@@ -10,7 +10,7 @@ from mission import square_mission, load_mission
 from teleop import print_controls
 from config import (
     SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
-    DRY_RUN, DEBUG_VISION, LOGGING, USE_VISION, USE_TELEOP,
+    DRY_RUN, DEBUG_VISION, LOGGING, USE_VISION, USE_TELEOP, USE_SPLINE,
     CAPTURE_PATH, MISSION_PATH, SQUARE_SIDE_M, SQUARE_ALT_M, SQUARE_CCW,
 )
 
@@ -36,6 +36,7 @@ shared_data = {
     'logging': LOGGING,
     'use_vision': USE_VISION,
     'use_teleop': USE_TELEOP,
+    'use_spline': USE_SPLINE,
     'capture_path': CAPTURE_PATH,
     'mission': mission,
 }
@@ -43,6 +44,8 @@ shared_data = {
 if USE_TELEOP:
     print_controls(CAPTURE_PATH)
 else:
+    mode = "SPLINE (continuous)" if USE_SPLINE else "waypoint (stop-at-each)"
+    print(f"Autonomous mode: {mode}", flush=True)
     print(f"Mission '{mission.name}': {len(mission.waypoints)} waypoints, loop={mission.loop}", flush=True)
     for i, wp in enumerate(mission.waypoints):
         n, e, d = wp.pos
