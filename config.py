@@ -62,8 +62,8 @@ SQUARE_CCW = False
 #                  longest leg is ~39 m, so 60 clears it while still catching a 100 m+
 #                  flyaway).
 # ======================================================================================
-MAX_SPEED = 3.0
-MAX_VSPEED = 1.5
+MAX_SPEED = 20.0
+MAX_VSPEED = 6.5
 MAX_WP_DIST_M = 60.0
 
 # ======================================================================================
@@ -76,8 +76,8 @@ MAX_WP_DIST_M = 60.0
 # When MAX_WP_DIST_M is used here it bounds CROSS-TRACK error off the path (not distance to
 # a single waypoint): farther off the path than this -> hover and brake back toward it.
 # ======================================================================================
-CRUISE_SPEED = 3.0
-LOOKAHEAD_M = 4.0
+CRUISE_SPEED = 20.0
+LOOKAHEAD_M = 4.5
 
 # ======================================================================================
 # Manual teleop (teleop.py)
@@ -86,7 +86,7 @@ LOOKAHEAD_M = 4.0
 #   TELEOP_YAWRATE_DPS: deg/s yaw rate while Q/E are held.
 #   TELEOP_YAW_SIGN   : flip to -1.0 if Q/E turn the nose the wrong way.
 # ======================================================================================
-TELEOP_SPEED = 3.0
+TELEOP_SPEED = 10.0
 TELEOP_VSPEED = 1.5
 TELEOP_YAWRATE_DPS = 60.0
 TELEOP_YAW_SIGN = 1.0
