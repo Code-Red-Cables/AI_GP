@@ -78,8 +78,47 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
 HOVER_THRUST = 0.27        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
 KP_THRUST = 0.25           # extra thrust per (m/s) of vertical-velocity error (more authority)
 THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority while descending
-KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
-MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
+KP_LEAN = 0.2           # rad of lean per (m/s) of desired horizontal velocity
+# Lowered 0.5 -> 0.2 to stop the lateral loop SATURATING at speed. At 0.5, roll hit the
+# 45deg cap whenever the lateral velocity error exceeded 0.785/0.5 = 1.57 m/s -- only a
+# ~7.5deg velocity misalignment at 12 m/s -- so the loop ran bang-bang +/-45deg (~0.5 Hz
+# corkscrew, measured roll rate ringing to 400deg/s; log 2026-06-19). 0.2 keeps roll
+# proportional out to ~3.9 m/s of error so it damps instead of slamming the cap.
+# Lean cap raised 20deg -> 45deg so the drone can actually go fast. At a steady lean only
+# the HORIZONTAL thrust component pushes it forward and drag balances it, so the cap sets
+# the top speed: at 20deg we plateaued at ~9 m/s (32 km/h) with pitch PINNED at the cap for
+# ~half the run (log 2026-06-19); the sim itself allows ≥22 m/s (80 km/h forward). Holding
+# altitude, horizontal force ∝ tan(lean) and (quadratic drag) top speed ∝ sqrt(tan(lean)):
+# 20->45deg is ~2.7x the force, so ~1.6x the speed -> expect ~15 m/s (~55 km/h). To approach
+# the airframe's ~22 m/s forward limit, push this toward 55-60deg (but lift falls off and it
+# gets twitchy past ~45-50deg, and you start hitting the sim's own ForwardMaxVelocityMS cap).
+#
+# SPLIT CAP (2026-06-20): the FORWARD (pitch) and LATERAL (roll) limits are now separate.
+# The wobble we tuned out came from the lateral/roll loop slamming the 45deg cap and running
+# bang-bang (the ~0.5 Hz corkscrew). Top speed, though, is set by the FORWARD lean. So we
+# raise pitch only (more straight-line speed + more braking authority into corners) while
+# holding roll at 45deg so the cornering loop stays in the proportional region and doesn't
+# corkscrew. Since top speed ∝ sqrt(tan(lean)): 45->60deg pitch is tan60/tan45 = 1.73x the
+# forward force -> ~1.32x the speed (expect ~18 m/s / ~65 km/h from the ~13.7 m/s at 45deg).
+# Reverse pitch is capped the same, so braking into corners gets stronger too. If the pitch
+# axis gets twitchy at 60, dial MAX_PITCH_RAD back toward 50-55deg.
+MAX_PITCH_RAD = math.radians(60.0)  # cap on commanded FORWARD lean (pitch) -- sets top speed
+# Roll cap raised 45 -> 52deg so the drone can actually CORNER faster: the max lateral accel a
+# leaning quad makes is g*tan(roll), so 45deg capped cornering at 9.8 m/s^2 -- exactly where
+# A_LAT_MAX sat, so the tight bends (incl. the R=8.9m first-segment corner) were stuck at ~9
+# m/s. 52deg lifts that to g*tan52 = ~12.5 m/s^2, letting config.A_LAT_MAX go to 11. This does
+# NOT reintroduce the old corkscrew: that wobble was roll SATURATING at the cap with KP_LEAN=0.5
+# (saturated past 1.57 m/s lateral error); at KP_LEAN=0.2 the proportional range is now
+# radians(52)/0.2 = ~4.5 m/s of error, WIDER than before, so it damps rather than slamming the
+# cap. If it corkscrews anyway, drop this back to 45 AND drop config.A_LAT_MAX back to ~9.
+MAX_LEAN_RAD = math.radians(52.0)   # cap on commanded LATERAL lean (roll); coupled to A_LAT_MAX
+# Tilt compensation: only thrust*cos(tilt) is vertical, so at a steep lean the drone sinks
+# unless the collective is scaled by 1/cos(tilt). cos(tilt)=cos(pitch)*cos(roll), floored
+# here so the division can't blow up. Lowered 0.5 -> 0.35 for the steeper pitch cap: at 60deg
+# pitch alone cos=0.5 (2x boost); pitch 60 + roll 45 gives 0.354, so the 0.35 floor allows the
+# ~2.85x boost needed to hold altitude in a fast corner (still under THRUST_MAX). Without this
+# the drone sank below the gates whenever it leaned hard to accelerate (the "below wp" bug).
+COS_TILT_FLOOR = 0.35
 
 # Per-axis sign mapping the BODY-frame velocity error -> lean (see velocity_to_attitude).
 # Calibrated from logs (2026-06-15): pitch+ drives the drone BODY-FORWARD (verified clean
@@ -159,12 +198,13 @@ def send_rate_target(mavlink_conn, system_boot_ms, roll_rate, pitch_rate, yaw_ra
 def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
     """Map a desired NED velocity + yaw into (roll, pitch, yaw, thrust).
 
-    - thrust tracks the desired vertical velocity ``vd`` (NED, +down): more thrust when
-      we are sinking relative to the command.
     - horizontal control is a BODY-frame velocity loop: rotate the world-NED velocity
       ERROR into the drone's heading frame, then pitch on the forward component and roll
       on the lateral component. Leaning on the ERROR (not the desired velocity) makes the
       lean fall to zero as we reach target speed and lean BACKWARD to brake.
+    - thrust tracks the desired vertical velocity ``vd`` (NED, +down) — more thrust when
+      we are sinking relative to the command — then is TILT-COMPENSATED (divided by
+      cos(tilt)) so altitude holds even at a steep lean (only thrust*cos(tilt) is vertical).
 
     CRITICAL -- this sim's reported yaw is LEFT-HANDED vs NED: physical forward is
     (cos yaw, -sin yaw), so we rotate the error by ``-yaw_now`` (note the sin signs vs a
@@ -180,16 +220,19 @@ def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
     vn, ve, vd = vel_ned
     vn_now, ve_now, vz_now = vel_now
 
-    thrust = HOVER_THRUST + KP_THRUST * (vz_now - vd)
-    thrust = max(THRUST_MIN, min(THRUST_MAX, thrust))
-
     # World-NED velocity error rotated into the body frame by -yaw (left-handed sim yaw).
     en, ee = (vn - vn_now), (ve - ve_now)
     c, s = math.cos(yaw_now), math.sin(yaw_now)
     e_fwd = c * en - s * ee          # body-forward velocity error
     e_lat = s * en + c * ee          # body-right velocity error
-    pitch = _clamp(LEAN_SIGN_FWD * KP_LEAN * e_fwd, MAX_LEAN_RAD)   # pitch+ -> forward
-    roll = _clamp(LEAN_SIGN_LAT * KP_LEAN * e_lat, MAX_LEAN_RAD)    # roll+  -> right
+    pitch = _clamp(LEAN_SIGN_FWD * KP_LEAN * e_fwd, MAX_PITCH_RAD)  # pitch+ -> forward (top speed)
+    roll = _clamp(LEAN_SIGN_LAT * KP_LEAN * e_lat, MAX_LEAN_RAD)    # roll+  -> right   (lateral)
+
+    # Vertical-velocity thrust, then tilt-compensated (1/cos(tilt)) so leaning hard to fly
+    # fast doesn't bleed altitude. Computed AFTER the lean so it knows the commanded tilt.
+    thrust = HOVER_THRUST + KP_THRUST * (vz_now - vd)
+    thrust /= max(math.cos(pitch) * math.cos(roll), COS_TILT_FLOOR)
+    thrust = max(THRUST_MIN, min(THRUST_MAX, thrust))
     return roll, pitch, yaw_cmd, thrust
 
 
@@ -345,8 +388,21 @@ class Controller:
     # logs/run_1780516557.jsonl.)
     # -------------------------------
     def hold(self):
-        """Send one zero-rate, hover-thrust command (primes the stream; inert pre-arm)."""
-        send_rate_target(self.sim_conn, self.system_boot_ms, 0.0, 0.0, 0.0, HOVER_THRUST)
+        """Send one zero-rate, hover-thrust command (primes the stream; inert pre-arm).
+
+        TILT-COMPENSATED: the drone sits at a nonzero BOOT pitch (~18deg) during the pre-arm
+        priming, so raw HOVER_THRUST has only cos(tilt) of its lift acting vertically and the
+        quad SINKS ~0.3 m before the spline loop takes over (it then starts the run ~1 m below
+        the first gate -> clips the bottom). Scale by 1/cos(tilt) using the measured boot
+        attitude, exactly as velocity_to_attitude does in flight, so priming holds altitude.
+        """
+        thrust = HOVER_THRUST
+        with self.data['lock']:
+            att = self.data.get('attitude')
+        if att:
+            c = math.cos(att.get('pitch', 0.0)) * math.cos(att.get('roll', 0.0))
+            thrust = min(THRUST_MAX, HOVER_THRUST / max(c, COS_TILT_FLOOR))
+        send_rate_target(self.sim_conn, self.system_boot_ms, 0.0, 0.0, 0.0, thrust)
 
     def prime_setpoint_stream(self, seconds=1.0, hz=50.0):
         """Stream level-attitude holds so the sim will accept the mode switch."""

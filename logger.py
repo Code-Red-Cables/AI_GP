@@ -68,6 +68,7 @@ def _gains_snapshot():
             "THRUST_MIN": c.THRUST_MIN,
             "THRUST_MAX": c.THRUST_MAX,
             "KP_LEAN": c.KP_LEAN,
+            "MAX_PITCH_DEG": round(math.degrees(c.MAX_PITCH_RAD), 2),
             "MAX_LEAN_DEG": round(math.degrees(c.MAX_LEAN_RAD), 2),
         })
         g["KP_YAW"] = c.KP_YAW
@@ -99,8 +100,13 @@ def _gains_snapshot():
             import spline_planner as sp
             g.update({
                 "CRUISE_SPEED": cfg.CRUISE_SPEED,
+                "KP_VERT_PATH": cfg.KP_VERT_PATH,
                 "LOOKAHEAD_M": cfg.LOOKAHEAD_M,
-                "KP_POS_END": sp.KP_POS_END,
+                "LOOKAHEAD_TIME": cfg.LOOKAHEAD_TIME,
+                "LOOKAHEAD_MAX": cfg.LOOKAHEAD_MAX,
+                "A_LAT_MAX": cfg.A_LAT_MAX,
+                "A_LON_MAX": cfg.A_LON_MAX,
+                "FINISH_SPEED": cfg.FINISH_SPEED,
                 "SAMPLES_PER_SEG": sp.SAMPLES_PER_SEG,
             })
     except Exception as e:  # pragma: no cover
