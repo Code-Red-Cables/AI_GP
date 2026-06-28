@@ -125,7 +125,9 @@ def _r(x, n=4):
 class Logger:
 
     LOG_KEYS = ('armed', 'flight_mode', 'attitude', 'position_ned', 'odometry', 'race',
-                'vision', 'target', 'control', 'last_collision')
+                'vision', 'target', 'control', 'last_collision',
+                # VQ2 estimator diagnosis: raw IMU + (training-only) ground truth.
+                'imu', 'attitude_truth', 'position_ned_truth')
 
     LATEST_PATH = os.path.join('logs', 'latest.jsonl')
 
@@ -180,6 +182,9 @@ class Logger:
         ctrl = snap.get('control') or {}
         cmd = ctrl.get('cmd') or {}
         col = snap.get('last_collision') or {}
+        imu = snap.get('imu') or {}
+        truth = snap.get('attitude_truth') or {}
+        ptruth = snap.get('position_ned_truth') or {}
 
         # Position/velocity: prefer LOCAL_POSITION_NED, fall back to ODOMETRY.
         if pos:
@@ -239,6 +244,17 @@ class Logger:
             "gb_az": _r(math.degrees(math.atan2(vis['gate_body'][1], vis['gate_body'][0])), 1)
                      if vis and vis.get('gate_body') else None,
             "col": collision,
+            # VQ2 diagnosis: raw IMU as the sim sends it + (training) ground-truth attitude,
+            # so an estimate-vs-truth diff reads off the AHRS sign corrections directly.
+            "imu_acc": [_r(c, 3) for c in imu.get('acc')] if imu.get('acc') else None,
+            "imu_gyro": [_r(c, 3) for c in imu.get('gyro')] if imu.get('gyro') else None,
+            "imu_mag": [_r(c, 3) for c in imu.get('mag')] if imu.get('mag') else None,
+            "imu_palt": _r(imu.get('pressure_alt'), 2),
+            "imu_absp": _r(imu.get('abs_pressure'), 4),     # raw pressure (hPa) -- baro fallback?
+            "imu_fields": imu.get('fields_updated'),        # HIGHRES_IMU validity bitmask
+            "att_truth": [_r(truth.get('roll')), _r(truth.get('pitch')), _r(truth.get('yaw'))]
+                         if truth else None,
+            "alt_truth": _r(-ptruth['z'], 2) if ptruth.get('z') is not None else None,
         }
 
     def _log_loop(self):

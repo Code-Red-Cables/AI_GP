@@ -145,8 +145,15 @@ class MAVLinkRX:
         request_time = msg.ts1
         response_time = msg.tc1
 
+    # VQ2: when our own state estimator owns 'attitude'/'position_ned' (use_state_estimator),
+    # the sim's real messages -- if a TRAINING flight still sends them -- must NOT overwrite
+    # the estimate (they raced it 400x/s and tumbled the drone). Route them to *_truth keys
+    # instead: harmless if absent, and a free GROUND-TRUTH reference to calibrate the estimator.
+    def _est_active(self):
+        return bool(self.data.get('use_state_estimator'))
+
     def on_attitude(self, msg):
-        self._store('attitude', {
+        self._store('attitude_truth' if self._est_active() else 'attitude', {
             'roll': msg.roll,
             'pitch': msg.pitch,
             'yaw': msg.yaw,
@@ -158,7 +165,7 @@ class MAVLinkRX:
         })
 
     def on_local_position_ned(self, msg):
-        self._store('position_ned', {
+        self._store('position_ned_truth' if self._est_active() else 'position_ned', {
             'x': msg.x,
             'y': msg.y,
             'z': msg.z,
@@ -171,7 +178,7 @@ class MAVLinkRX:
 
     def on_odometry(self, msg):
         # q is stored [w, x, y, z]; keep that ordering in the record.
-        self._store('odometry', {
+        self._store('odometry_truth' if self._est_active() else 'odometry', {
             'pos': (msg.x, msg.y, msg.z),
             'q': (msg.q[0], msg.q[1], msg.q[2], msg.q[3]),
             'vel': (msg.vx, msg.vy, msg.vz),
@@ -182,9 +189,20 @@ class MAVLinkRX:
         })
 
     def on_highres_imu(self, msg):
+        # VQ2: ATTITUDE / LOCAL_POSITION_NED / ODOMETRY are gone, so HIGHRES_IMU is our ONLY
+        # raw state source. Capture everything it carries so the state estimator can rebuild
+        # attitude (gyro+accel+mag) and altitude (baro): acc/gyro in BODY frame (X fwd, Y right,
+        # Z down), mag in gauss, pressure_alt in metres (drift-free vertical reference).
+        # `fields_updated` is the bitmask of which fields the sim actually populated -- mag in
+        # particular may be absent; the estimator must cope (gyro-only yaw) if so.
         self._store('imu', {
             'acc': (msg.xacc, msg.yacc, msg.zacc),
             'gyro': (msg.xgyro, msg.ygyro, msg.zgyro),
+            'mag': (msg.xmag, msg.ymag, msg.zmag),
+            'abs_pressure': msg.abs_pressure,
+            'pressure_alt': msg.pressure_alt,
+            'temperature': msg.temperature,
+            'fields_updated': getattr(msg, 'fields_updated', None),
             'time_usec': msg.time_usec,
             'ts': time.time_ns(),
         })

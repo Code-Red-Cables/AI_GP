@@ -102,7 +102,8 @@ KP_LEAN = 0.2           # rad of lean per (m/s) of desired horizontal velocity
 # forward force -> ~1.32x the speed (expect ~18 m/s / ~65 km/h from the ~13.7 m/s at 45deg).
 # Reverse pitch is capped the same, so braking into corners gets stronger too. If the pitch
 # axis gets twitchy at 60, dial MAX_PITCH_RAD back toward 50-55deg.
-MAX_PITCH_RAD = math.radians(60.0)  # cap on commanded FORWARD lean (pitch) -- sets top speed
+MAX_PITCH_RAD = math.radians(25.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forward lean while
+#                                     validating the IMU/vision state estimator at low speed.
 # Roll cap raised 45 -> 52deg so the drone can actually CORNER faster: the max lateral accel a
 # leaning quad makes is g*tan(roll), so 45deg capped cornering at 9.8 m/s^2 -- exactly where
 # A_LAT_MAX sat, so the tight bends (incl. the R=8.9m first-segment corner) were stuck at ~9
@@ -111,7 +112,7 @@ MAX_PITCH_RAD = math.radians(60.0)  # cap on commanded FORWARD lean (pitch) -- s
 # (saturated past 1.57 m/s lateral error); at KP_LEAN=0.2 the proportional range is now
 # radians(52)/0.2 = ~4.5 m/s of error, WIDER than before, so it damps rather than slamming the
 # cap. If it corkscrews anyway, drop this back to 45 AND drop config.A_LAT_MAX back to ~9.
-MAX_LEAN_RAD = math.radians(52.0)   # cap on commanded LATERAL lean (roll); coupled to A_LAT_MAX
+MAX_LEAN_RAD = math.radians(25.0)   # VQ2 SAFE BASELINE (was 52) -- gentle roll; coupled to A_LAT_MAX
 # Tilt compensation: only thrust*cos(tilt) is vertical, so at a steep lean the drone sinks
 # unless the collective is scaled by 1/cos(tilt). cos(tilt)=cos(pitch)*cos(roll), floored
 # here so the division can't blow up. Lowered 0.5 -> 0.35 for the steeper pitch cap: at 60deg
@@ -330,8 +331,16 @@ class Controller:
             pitch_rate = RATE_SIGN_PITCH * _clamp(KP_ATT * self._wrap(pitch_des - pitch_now), RATE_MAX)
             yaw_rate = RATE_SIGN_YAW * self._yaw_rate_cmd(yaw_target, yaw_now)
             if not dry_run:
-                send_rate_target(self.sim_conn, self.system_boot_ms,
-                                 roll_rate, pitch_rate, yaw_rate, thrust)
+                # SAFETY NET: never send a non-finite command. Under VQ2 the attitude/velocity
+                # come from our own estimator; a single NaN (e.g. an unpopulated IMU field) would
+                # otherwise be commanded straight to the sim and tumble it. Fall back to a level
+                # hover (zero rates, hover thrust) on any non-finite value.
+                if all(math.isfinite(v) for v in (roll_rate, pitch_rate, yaw_rate, thrust)):
+                    send_rate_target(self.sim_conn, self.system_boot_ms,
+                                     roll_rate, pitch_rate, yaw_rate, thrust)
+                else:
+                    send_rate_target(self.sim_conn, self.system_boot_ms,
+                                     0.0, 0.0, 0.0, HOVER_THRUST)
             self._publish_control(
                 target, (roll_des, pitch_des, yaw_target, thrust),
                 (roll_rate, pitch_rate, yaw_rate),

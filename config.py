@@ -29,12 +29,20 @@ SIM_SERVER_UDP_PORT = 14550
 #                 branch's default -- see spline_planner.py). False = the stop-at-each
 #                 waypoint planner (planner.py).
 # ======================================================================================
-DRY_RUN = False
+DRY_RUN = True       # checking whether ANY barometer field is populated (abs_pressure / bitmask)
 DEBUG_VISION = False
 LOGGING = True
 USE_VISION = False
 USE_TELEOP = False
 USE_SPLINE = True
+
+# USE_STATE_ESTIMATOR: VQ2 mode. True = rebuild attitude+altitude from HIGHRES_IMU ourselves
+# (ATTITUDE/LOCAL_POSITION_NED/ODOMETRY are blocked in VQ2 -- spec 9.3), publishing into
+# shared_data with the old schema so the controller is unchanged (see state_estimator.py).
+# When True, setup.py starts the StateEstimator thread. Leave the navigation planner choice
+# above alone for now -- horizontal position isn't recovered yet, so the only flight that
+# works under VQ2 is a HOVER (Phase-0 milestone); the reactive gate-chaser is Phase 1.
+USE_STATE_ESTIMATOR = True
 
 # ======================================================================================
 # Mission / paths (main.py)
@@ -62,8 +70,12 @@ SQUARE_CCW = False
 #                  longest leg is ~39 m, so 60 clears it while still catching a 100 m+
 #                  flyaway).
 # ======================================================================================
-MAX_SPEED = 60.0
-MAX_VSPEED = 25.5
+# VQ2 SAFE BASELINE: speeds dialled way down. Under VQ2 we fly on our OWN state estimate
+# (no LOCAL_POSITION_NED/ATTITUDE), which will be noisier/laggier than ground truth -- slow
+# flight keeps estimation error and control demands small while we validate the pipeline.
+# Ramp these back up only once the estimator + spline are confirmed working in training.
+MAX_SPEED = 6.0
+MAX_VSPEED = 3.0
 MAX_WP_DIST_M = 60.0
 
 # ======================================================================================
@@ -79,7 +91,7 @@ MAX_WP_DIST_M = 60.0
 # When MAX_WP_DIST_M is used here it bounds CROSS-TRACK error off the path (not distance to
 # a single waypoint): farther off the path than this -> hover and brake back toward it.
 # ======================================================================================
-CRUISE_SPEED = 60.0
+CRUISE_SPEED = 3.0     # VQ2 SAFE BASELINE (was 60) -- slow, drift-tolerant while validating
 LOOKAHEAD_M = 2.0      # floor: carrot distance (m) when slow / at the dense early gates
 LOOKAHEAD_TIME = 0.5   # seconds of travel ahead: lookahead grows as 0.5 * current speed
 LOOKAHEAD_MAX = 7.0    # cap: carrot distance (m) at high speed (smooths the fast straights)
@@ -114,8 +126,8 @@ KP_VERT_PATH = 1.2
 # A_LON_MAX is the SAFE speed lever: it doesn't raise any corner speed, just lets the drone
 # accelerate onto the straights and brake later into corners (more time spent at top speed).
 # ======================================================================================
-A_LAT_MAX = 6.0     # m/s^2 max lateral (cornering) accel -- keep <= g*tan(roll cap); see above
-A_LON_MAX = 9.0      # m/s^2 max longitudinal (accel/brake) -- safe to raise; no corner-speed risk
+A_LAT_MAX = 3.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
+A_LON_MAX = 3.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
 
 # FINISH_SPEED: speed (m/s) allowed AT the last waypoint. A race doesn't need to stop -- the
 # timer ends when you cross the final gate -- so braking to a halt there wastes the run.

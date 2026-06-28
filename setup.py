@@ -22,6 +22,18 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     mavlink_rx = MAVLinkRX.create_mavlink_rx(sim_conn, shared_data)
 
     # -------------------------------
+    # VQ2 state estimator. ATTITUDE / LOCAL_POSITION_NED / ODOMETRY are blocked (spec 9.3),
+    # so we rebuild attitude (IMU AHRS) + altitude (baro) ourselves and publish them into
+    # shared_data with the old schema -> the controller is unchanged. Must start BEFORE the
+    # controller so a state estimate exists when the loop begins.
+    # -------------------------------
+    state_estimator = None
+    if shared_data.get('use_state_estimator', False):
+        print("Setting up VQ2 state estimator (IMU/baro)...", flush=True)
+        from state_estimator import StateEstimator
+        state_estimator = StateEstimator.create_state_estimator(shared_data)
+
+    # -------------------------------
     # Timesync request Loop
     # -------------------------------
     print("Setting up Timesync loop...", flush=True)
@@ -45,7 +57,14 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     #   * autonomous, no spline: Planner stops at each shared_data['mission'] waypoint.
     # -------------------------------
     teleop = None
-    if shared_data.get('use_teleop', False):
+    if shared_data.get('use_state_estimator', False):
+        # VQ2 Phase 0: horizontal position isn't recovered yet, so the spline/waypoint
+        # planners (which need it) can't run. Fly a HOVER on pure estimated state to prove
+        # the IMU/baro pipeline. (Phase 1 swaps in the reactive gate-chaser.)
+        print("Setting up VQ2 hover planner (Phase-0 estimator check)...", flush=True)
+        from hover_planner import HoverPlanner
+        planner = HoverPlanner(shared_data)
+    elif shared_data.get('use_teleop', False):
         print("Setting up teleop (manual keyboard control)...", flush=True)
         from teleop import TeleopPlanner, KeyboardTeleop
         planner = TeleopPlanner(shared_data)
@@ -70,6 +89,7 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     return {
         'vision_rx': vision_rx,
         'mavlink_rx': mavlink_rx,
+        'state_estimator': state_estimator,
         'ts_loop': ts_loop,
         'sim_conn': sim_conn,
         'controller': controller,

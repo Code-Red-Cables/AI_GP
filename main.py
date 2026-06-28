@@ -11,6 +11,7 @@ from teleop import print_controls
 from config import (
     SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
     DRY_RUN, DEBUG_VISION, LOGGING, USE_VISION, USE_TELEOP, USE_SPLINE,
+    USE_STATE_ESTIMATOR,
     CAPTURE_PATH, MISSION_PATH, SQUARE_SIDE_M, SQUARE_ALT_M, SQUARE_CCW,
 )
 
@@ -21,7 +22,7 @@ from config import (
 # In autonomous mode, load a custom mission.json if present, else build the default square.
 # Manual control needs no mission.
 mission = None
-if not USE_TELEOP:
+if not USE_TELEOP and not USE_STATE_ESTIMATOR:
     mission = load_mission(MISSION_PATH) or square_mission(
         SQUARE_SIDE_M, SQUARE_ALT_M, counter_clockwise=SQUARE_CCW)
 
@@ -37,11 +38,14 @@ shared_data = {
     'use_vision': USE_VISION,
     'use_teleop': USE_TELEOP,
     'use_spline': USE_SPLINE,
+    'use_state_estimator': USE_STATE_ESTIMATOR,
     'capture_path': CAPTURE_PATH,
     'mission': mission,
 }
 
-if USE_TELEOP:
+if USE_STATE_ESTIMATOR:
+    print("VQ2 mode: state estimator (IMU/baro) + hover planner (Phase-0 check).", flush=True)
+elif USE_TELEOP:
     print_controls(CAPTURE_PATH)
 else:
     mode = "SPLINE (continuous)" if USE_SPLINE else "waypoint (stop-at-each)"
@@ -58,6 +62,7 @@ controller = components['controller']
 ts_loop = components['ts_loop']
 mavlink_rx = components['mavlink_rx']
 vision_rx = components['vision_rx']
+state_estimator = components.get('state_estimator')
 teleop = components.get('teleop')
 logger = components.get('logger')
 
@@ -84,7 +89,7 @@ except KeyboardInterrupt:
     print("\nInterrupted — shutting down...", flush=True)
 
 # exit: stop each RX/loop thread and join (guard against threads that never started)
-for component in (ts_loop, mavlink_rx, vision_rx, teleop, logger):
+for component in (ts_loop, mavlink_rx, state_estimator, vision_rx, teleop, logger):
     if component is None:
         continue
     thread = component.get_thread_for_join()
