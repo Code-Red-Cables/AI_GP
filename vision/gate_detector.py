@@ -35,22 +35,19 @@ DEFAULT_CFG = {
     "lower_hsv2": LOWER_HSV2,
     "upper_hsv2": UPPER_HSV2,
     "kernel_size": 5,        # morphology kernel (odd, small)
-    "min_area": 400.0,       # area floor in px for a candidate contour
-    "min_extent": 0.15,      # contour_area / bbox_area floor (frame is an annulus).
-                             # Loosened 0.30 -> 0.15 so a gate still CLIPPED by the frame
-                             # edge (how the lower next-gate first appears as we descend
-                             # toward it) isn't rejected for being a partial shape.
-    "approx_eps_frac": 0.04, # approxPolyDP epsilon as fraction of perimeter
+    "min_area": 150.0,       # area floor in px for a candidate contour
+    "min_extent": 0.15,      # contour_area / bbox_area floor
+    "approx_eps_frac": 0.06, # approxPolyDP epsilon as fraction of perimeter
 }
 
 
 @dataclass
 class GateDetection:
-    center_px: tuple          # (u, v) float, center of the gate opening
-    corners_px: list | None   # 4 ordered (u,v) points TL,TR,BR,BL of the inner square, or None
-    bbox_px: tuple            # (x, y, w, h)
-    area_px: float            # contour/opening area in pixels
-    confidence: float         # 0..1 heuristic
+    center_px: tuple[float, float]        # (u, v)
+    corners_px: list[tuple[float, float]] | None   # TL, TR, BR, BL or None
+    bbox_px: tuple[float, float, float, float]     # x, y, w, h
+    area_px: float
+    confidence: float                     # 0..1 heuristic
 
 
 def _make_cfg(cfg: Optional[dict]) -> dict:
@@ -106,14 +103,12 @@ def _order_corners(pts: np.ndarray) -> list:
     return [tuple(tl), tuple(tr), tuple(br), tuple(bl)]
 
 
-def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDetection]:
-    """Detect the racing gate in a BGR frame.
-
-    Returns a GateDetection for the best gate candidate, or None if nothing
-    passes the area / squareness / extent filters. Pure: no disk writes.
-    """
+def detect_gates(bgr: np.ndarray, cfg: Optional[dict] = None) -> list[GateDetection]:
+    """All plausible gates in the frame, best first. [] when none.
+    Replaces single-detection detect_gate(); a thin detect_gate() wrapper
+    returning the first element is kept for the old tests."""
     if bgr is None or bgr.size == 0:
-        return None
+        return []
 
     cfg = _make_cfg(cfg)
 
@@ -126,13 +121,13 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
         mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
     )
     if not contours or hierarchy is None:
-        return None
+        return []
     hierarchy = hierarchy[0]  # shape (N, 4): [next, prev, first_child, parent]
 
     min_area = float(cfg["min_area"])
     min_extent = float(cfg["min_extent"])
 
-    best = None  # (score, index)
+    candidates = []
     for i, cnt in enumerate(contours):
         # Only consider outer contours (no parent) as the gate frame body.
         if hierarchy[i][3] != -1:
@@ -152,79 +147,103 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
         if extent < min_extent:
             continue
 
-        # Prefer the NEAREST gate. The course is a tunnel of concentric gates (see the
-        # FPV frame 2026-06-06): several are visible at once, receding to a vanishing
-        # point. We fly the closest one first, and it is the largest in the image. The
-        # old score ranked on squareness*fill ONLY (no size term despite the comment), so
-        # a distant gate viewed dead-on could out-score the nearer one that is bigger but
-        # slightly perspective-skewed/clipped — the detector then flipped between gates
-        # frame to frame, which showed up as the range bouncing ~16m <-> ~21m in the logs.
-        # Make AREA the dominant term (nearest wins) while still requiring squareness/fill.
-        score = area * (0.5 + 0.5 * square) * (0.5 + 0.5 * extent)
-        if best is None or score > best[0]:
-            best = (score, i)
+        candidates.append((area, extent, square, i, x, y, w, h, cnt))
 
-    if best is None:
-        return None
+    detections = []
+    for (area, extent, square_outer, idx, x, y, w, h, outer) in candidates:
+        bbox_px = (float(x), float(y), float(w), float(h))
 
-    _, idx = best
-    outer = contours[idx]
-    x, y, w, h = cv2.boundingRect(outer)
-    bbox_px = (int(x), int(y), int(w), int(h))
+        # Prefer the inner-hole contour (the flyable opening) for center/area/corners.
+        child = hierarchy[idx][2]
+        inner = None
+        inner_area = -1.0
+        j = child
+        while j != -1:
+            a = cv2.contourArea(contours[j])
+            if a > inner_area:
+                inner_area = a
+                inner = contours[j]
+            j = hierarchy[j][0]  # next sibling
 
-    # Prefer the inner-hole contour (the flyable opening) for center/area/corners.
-    child = hierarchy[idx][2]
-    inner = None
-    inner_area = -1.0
-    j = child
-    while j != -1:
-        a = cv2.contourArea(contours[j])
-        if a > inner_area:
-            inner_area = a
-            inner = contours[j]
-        j = hierarchy[j][0]  # next sibling
+        if inner is not None and inner_area >= max(1.0, 0.05 * min_area):
+            center = _centroid(inner)
+            area_px = float(inner_area)
+            opening_contour = inner
+        else:
+            center = _centroid(outer)
+            area_px = float(cv2.contourArea(outer))
+            opening_contour = outer
 
-    if inner is not None and inner_area >= max(1.0, 0.05 * min_area):
-        center = _centroid(inner)
-        area_px = float(inner_area)
-        opening_contour = inner
-    else:
-        center = _centroid(outer)
-        area_px = float(cv2.contourArea(outer))
-        opening_contour = None
+        if center is None:
+            # Degenerate moments; fall back to bbox center.
+            center = (x + w / 2.0, y + h / 2.0)
 
-    if center is None:
-        # Degenerate moments; fall back to bbox center.
-        center = (x + w / 2.0, y + h / 2.0)
+        # Upgrade path: approximate the inner opening to an ordered 4-point quad.
+        corners_px = None
+        if opening_contour is not None:
+            # Try to find a 4-corner approximation by sweeping epsilon
+            best_approx = None
+            peri = cv2.arcLength(opening_contour, True)
+            
+            for eps_frac in [0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]:
+                eps = eps_frac * peri
+                approx = cv2.approxPolyDP(opening_contour, eps, True)
+                if len(approx) == 4:
+                    best_approx = approx
+                    break
+            
+            if best_approx is None:
+                eps = float(cfg.get("approx_eps_frac", 0.06)) * peri
+                best_approx = cv2.approxPolyDP(opening_contour, eps, True)
+                
+            if len(best_approx) == 4:
+                # Sub-pixel corner refinement
+                corners_f32 = best_approx.astype(np.float32)
+                # Find edges by converting the mask to a grayscale image (it's already a mask, but we need single channel)
+                # Actually, we can just use the mask we already computed.
+                criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+                cv2.cornerSubPix(mask, corners_f32, (5, 5), (-1, -1), criteria)
+                corners_px = _order_corners(corners_f32)
 
-    # Upgrade path: approximate the inner opening to an ordered 4-point quad.
-    corners_px = None
-    if opening_contour is not None:
-        peri = cv2.arcLength(opening_contour, True)
-        eps = float(cfg["approx_eps_frac"]) * peri
-        approx = cv2.approxPolyDP(opening_contour, eps, True)
-        if len(approx) == 4:
-            corners_px = _order_corners(approx)
+        # Confidence model: product of factors in [0,1]
+        # - squareness of bbox
+        ow, oh = w, h
+        if opening_contour is not None:
+            _, _, ow, oh = cv2.boundingRect(opening_contour)
+        # Soften squareness penalty: a gate viewed at an angle is thin.
+        square = max(0.5, _squareness(ow, oh))
+        
+        # - mask fill ratio (extent of the outer contour)
+        # Extent is typically 0.5-0.8 for a rotated gate frame. We scale it so 0.5 -> 1.0.
+        fill_ratio = min(1.0, extent / 0.4)
+        
+        # - corner count (1.0 with 4 corners, 0.6 without)
+        corner_score = 1.0 if corners_px is not None else 0.6
+        
+        # - area fraction sanity
+        frame_px = float(bgr.shape[0] * bgr.shape[1])
+        rel_area = area_px / frame_px if frame_px > 0 else 0.0
+        
+        # Penalize blobs smaller than ~400px (rel_area=0.0017) so noise drops below 0.4 conf
+        area_sanity = min(1.0, rel_area / 0.0017)
+        
+        confidence = float(np.clip(square * fill_ratio * corner_score * area_sanity, 0.0, 1.0))
 
-    # Confidence: squareness of the opening's bbox combined with how much of the
-    # frame it fills (relative area), clamped to 0..1.
-    ow, oh = w, h
-    if opening_contour is not None:
-        _, _, ow, oh = cv2.boundingRect(opening_contour)
-    square = _squareness(ow, oh)
-    frame_px = float(bgr.shape[0] * bgr.shape[1])
-    rel_area = area_px / frame_px if frame_px > 0 else 0.0
-    # Saturate the relative-area term; a gate filling ~15% of the frame is plenty.
-    rel_term = min(1.0, rel_area / 0.15)
-    confidence = float(np.clip(0.6 * square + 0.4 * rel_term, 0.0, 1.0))
+        detections.append(GateDetection(
+            center_px=(float(center[0]), float(center[1])),
+            corners_px=corners_px,
+            bbox_px=bbox_px,
+            area_px=area_px,
+            confidence=confidence,
+        ))
 
-    return GateDetection(
-        center_px=(float(center[0]), float(center[1])),
-        corners_px=corners_px,
-        bbox_px=bbox_px,
-        area_px=area_px,
-        confidence=confidence,
-    )
+    # Sort detections: best (nearest/most confident) first
+    detections.sort(key=lambda d: d.area_px * d.confidence, reverse=True)
+    return detections
+
+def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDetection]:
+    dets = detect_gates(bgr, cfg)
+    return dets[0] if dets else None
 
 
 def draw_detection(bgr: np.ndarray, det: Optional[GateDetection]) -> np.ndarray:
@@ -235,7 +254,7 @@ def draw_detection(bgr: np.ndarray, det: Optional[GateDetection]) -> np.ndarray:
                     0.7, (0, 0, 255), 2, cv2.LINE_AA)
         return out
 
-    x, y, w, h = det.bbox_px
+    x, y, w, h = (int(v) for v in det.bbox_px)
     cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
     u, v = int(round(det.center_px[0])), int(round(det.center_px[1]))

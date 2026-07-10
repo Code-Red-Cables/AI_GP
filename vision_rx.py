@@ -7,8 +7,8 @@ import time
 import cv2
 import numpy as np
 
-from vision.gate_detector import detect_gate, draw_detection
-from vision.gate_estimator import estimate_gate
+from vision.gate_detector import detect_gates, draw_detection
+from vision.gate_estimator import estimate_gates
 
 
 def _quat_to_rpy(q):
@@ -154,7 +154,7 @@ class VisionRX:
         the planner can fuse it. Returns None on no detection (still publishes a
         'detected': False record so downstream code can detect staleness).
         """
-        det = detect_gate(img)
+        dets = detect_gates(img)
 
         # Snapshot the latest pose for the camera->NED transform.
         with self.data['lock']:
@@ -176,7 +176,27 @@ class VisionRX:
             position = (pos['x'], pos['y'], pos['z'])
 
         now = time.time_ns()
-        est = estimate_gate(det, attitude=attitude, position_ned=position, ts=now)
+        obs_list = estimate_gates(dets, attitude=attitude, position_ned=position, ts_ns=sim_time_ns or now, frame_id=frame_id)
+
+        # Build legacy dictionary
+        if obs_list:
+            obs = obs_list[0]
+            from vision.gate_estimator import _bearing
+            est = {
+                "ts": now,
+                "detected": True,
+                "confidence": obs.confidence,
+                "center_px": obs.center_px,
+                "range_m": obs.range_m,
+                "bearing": _bearing(obs.gate_body),
+                "gate_body": tuple(float(c) for c in obs.gate_body),
+                "gate_ned": tuple(float(c) for c in obs.gate_ned) if obs.gate_ned is not None else None,
+                "normal_body": tuple(float(c) for c in obs.normal_body) if obs.normal_body is not None else None,
+                "method": obs.method,
+            }
+        else:
+            est = {"ts": now, "detected": False, "confidence": 0.0}
+
         # Temporal outlier-reject + smoothing on gate_body (kills size-method spikes).
         est = self._filter_estimate(est, now)
         # Recompute the absolute NED gate position from the SMOOTHED body vector so
@@ -187,11 +207,14 @@ class VisionRX:
                 np.asarray(est['gate_body'], float),
                 attitude['roll'], attitude['pitch'], attitude['yaw'])
             if position is not None:
-                est['gate_ned'] = tuple(float(a + b) for a, b in zip(position, offset_ned))
+                pos_tuple = (position.get("x", 0.0), position.get("y", 0.0), position.get("z", 0.0)) if isinstance(position, dict) else position
+                est['gate_ned'] = tuple(float(a + b) for a, b in zip(pos_tuple, offset_ned))
             else:
                 est['gate_ned'] = tuple(float(c) for c in offset_ned)
+        
         est['frame_id'] = frame_id
         est['sim_time_ns'] = sim_time_ns
+        est['observations'] = obs_list
 
         with self.data['lock']:
             self.data['vision'] = est

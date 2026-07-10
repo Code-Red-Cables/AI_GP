@@ -17,47 +17,51 @@ filled when both attitude and drone NED position are supplied.
 """
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
-try:  # cv2 only needed for the PnP upgrade; degrade gracefully without it.
+try:
     import cv2
-except Exception:  # pragma: no cover
+except Exception:
     cv2 = None
 
 import camera_model as cm
+from vision.gate_detector import GateDetection
 
-# Object points of the flyable inner square in the gate's own frame (metres),
-# ordered TL, TR, BR, BL to match both gate_detector._order_corners AND the
-# canonical order cv2.SOLVEPNP_IPPE_SQUARE expects: a y-UP planar square
-# [(-s,+s,0),(+s,+s,0),(+s,-s,0),(-s,-s,0)] with +z as the surface normal.
 _S = cm.GATE_INNER_M / 2.0
 _GATE_OBJ_PTS = np.array(
     [[-_S, _S, 0.0], [_S, _S, 0.0], [_S, -_S, 0.0], [-_S, -_S, 0.0]],
     dtype=np.float32,
 )
 
+@dataclass
+class GateObservation:
+    ts_ns: int                    # sim_time_ns of the source frame
+    frame_id: int
+    gate_body: np.ndarray         # (3,) gate center, body NED frame
+    normal_body: np.ndarray       # (3,) unit normal, body frame (sign: toward drone)
+    gate_ned: np.ndarray | None   # (3,) world NED (needs pose at frame time)
+    normal_ned: np.ndarray | None
+    range_m: float
+    method: str                   # 'pnp' | 'size'
+    confidence: float             # carried from detection
+    center_px: tuple[float, float]
 
-def _opening_side_px(det):
-    """Apparent side length (px) of the gate opening, from corners if available."""
+def _opening_side_px(det: GateDetection) -> float:
     if det.corners_px is not None and len(det.corners_px) == 4:
         pts = [np.asarray(c, float) for c in det.corners_px]
         edges = [np.linalg.norm(pts[i] - pts[(i + 1) % 4]) for i in range(4)]
         return float(np.mean(edges))
-    # Fall back to the side of a square with the measured opening area.
     return float(math.sqrt(max(det.area_px, 1.0)))
 
-
-def _bearing(gate_body):
-    """(azimuth, elevation) in radians of a body-frame point (x-fwd, y-right, z-down)."""
-    x, y, z = gate_body
-    az = math.atan2(y, x)                       # +right
-    el = math.atan2(-z, math.hypot(x, y))       # +up (z is down)
+def _bearing(gate_body: np.ndarray) -> tuple[float, float]:
+    x, y, z = gate_body[0], gate_body[1], gate_body[2]
+    az = math.atan2(y, x)
+    el = math.atan2(-z, math.hypot(x, y))
     return float(az), float(el)
 
-
-def _solve_pnp(det):
-    """Return (gate_cam_point, normal_cam) from solvePnP, or None on failure."""
+def _solve_pnp(det: GateDetection):
     if cv2 is None or det.corners_px is None or len(det.corners_px) != 4:
         return None
     img_pts = np.array(det.corners_px, dtype=np.float32)
@@ -68,68 +72,93 @@ def _solve_pnp(det):
         return None
     R, _ = cv2.Rodrigues(rvec)
     gate_cam = tvec.reshape(3)
-    normal_cam = R @ np.array([0.0, 0.0, 1.0])  # gate +z (surface normal) in cam frame
+    normal_cam = R @ np.array([0.0, 0.0, 1.0])
     return gate_cam, normal_cam
 
+def estimate_gates(dets: list[GateDetection],
+                   attitude: dict | None,
+                   position_ned: dict | None,
+                   ts_ns: int = 0,
+                   frame_id: int = 0) -> list[GateObservation]:
+    obs_list = []
+    
+    for det in dets:
+        method = "size"
+        normal_body = None
+
+        pnp = _solve_pnp(det)
+        if pnp is not None:
+            gate_cam, normal_cam = pnp
+            gate_body = cm.cam_to_body(gate_cam)
+            normal_body = cm.cam_to_body(normal_cam)
+            # flip normal if it faces away from the drone (x > 0 means pointing forward, so flip it)
+            # Actually, standard is normal faces towards drone. 
+            # "flip incoming normals to the hemisphere facing the drone's side" is for mapper, 
+            # here we just attach the normal.
+            method = "pnp"
+        else:
+            side_px = _opening_side_px(det)
+            Z = cm.range_from_size(side_px, real_size=cm.GATE_INNER_M, f=cm.FX)
+            u, v = det.center_px
+            gate_cam = cm.deproject(u, v, Z)
+            gate_body = cm.cam_to_body(gate_cam)
+
+        range_m = float(np.linalg.norm(gate_body))
+
+        gate_ned = None
+        normal_ned = None
+        if attitude is not None:
+            r, p, y = attitude["roll"], attitude["pitch"], attitude["yaw"]
+            offset_ned = cm.body_to_ned(gate_body, r, p, y)
+            if normal_body is not None:
+                normal_ned = cm.body_to_ned(normal_body, r, p, y)
+                
+            if position_ned is not None:
+                pos = (position_ned.get("x", 0.0), position_ned.get("y", 0.0), position_ned.get("z", 0.0)) if isinstance(position_ned, dict) else position_ned
+                gate_ned = np.array([a + b for a, b in zip(pos, offset_ned)], dtype=np.float64)
+            else:
+                gate_ned = np.array(offset_ned, dtype=np.float64)
+
+        # Apply confidence penalty for size method (from Phase 1 spec: "size method fallback gets confidence *= 0.7")
+        conf = float(det.confidence)
+        if method == "size":
+            conf *= 0.7
+
+        obs = GateObservation(
+            ts_ns=ts_ns,
+            frame_id=frame_id,
+            gate_body=np.array(gate_body, dtype=np.float64),
+            normal_body=np.array(normal_body, dtype=np.float64) if normal_body is not None else np.zeros(3),
+            gate_ned=gate_ned,
+            normal_ned=np.array(normal_ned, dtype=np.float64) if normal_ned is not None else None,
+            range_m=range_m,
+            method=method,
+            confidence=conf,
+            center_px=det.center_px
+        )
+        obs_list.append(obs)
+        
+    return obs_list
 
 def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
-    """Estimate the detected gate's 3D pose relative to the drone.
-
-    Parameters
-    ----------
-    det : GateDetection           detector output (or None -> returns a "not detected" dict)
-    attitude : dict | None        {'roll','pitch','yaw'} radians; enables NED axes
-    position_ned : tuple | None   drone (x,y,z) in world NED; enables absolute gate_ned
-    use_pnp : bool                try solvePnP when corners are available
-    ts : int | None               timestamp (ns) to stamp the estimate
-
-    Returns a dict (PLAN 8.6 schema). `gate_ned` is None unless attitude (and,
-    for an absolute position, position_ned) are provided.
-    """
+    """Legacy wrapper for old tests."""
     if det is None:
         return {"ts": ts, "detected": False, "confidence": 0.0}
-
-    method = "size"
-    normal_body = None
-
-    pnp = _solve_pnp(det) if use_pnp else None
-    if pnp is not None:
-        gate_cam, normal_cam = pnp
-        gate_body = cm.cam_to_body(gate_cam)
-        normal_body = cm.cam_to_body(normal_cam)
-        method = "pnp"
-    else:
-        side_px = _opening_side_px(det)
-        Z = cm.range_from_size(side_px, real_size=cm.GATE_INNER_M, f=cm.FX)
-        u, v = det.center_px
-        gate_cam = cm.deproject(u, v, Z)
-        gate_body = cm.cam_to_body(gate_cam)
-
-    range_m = float(np.linalg.norm(gate_body))
-    az, el = _bearing(gate_body)
-
-    gate_ned = None
-    if attitude is not None:
-        r, p, y = attitude["roll"], attitude["pitch"], attitude["yaw"]
-        offset_ned = cm.body_to_ned(gate_body, r, p, y)
-        if normal_body is not None:
-            normal_body = tuple(float(c) for c in cm.body_to_ned(normal_body, r, p, y))
-        if position_ned is not None:
-            gate_ned = tuple(float(a + b) for a, b in zip(position_ned, offset_ned))
-        else:
-            gate_ned = tuple(float(c) for c in offset_ned)  # relative, world axes
-
+    obs_list = estimate_gates([det], attitude, position_ned, ts_ns=ts or 0)
+    if not obs_list:
+        return {"ts": ts, "detected": False, "confidence": 0.0}
+    obs = obs_list[0]
     return {
         "ts": ts,
         "detected": True,
-        "confidence": float(det.confidence),
-        "center_px": det.center_px,
+        "confidence": obs.confidence,
+        "center_px": obs.center_px,
         "corners_px": det.corners_px,
         "area_px": det.area_px,
-        "range_m": range_m,
-        "bearing": (az, el),
-        "gate_body": tuple(float(c) for c in gate_body),
-        "gate_ned": gate_ned,
-        "normal_body": normal_body,
-        "method": method,
+        "range_m": obs.range_m,
+        "bearing": _bearing(obs.gate_body),
+        "gate_body": tuple(float(c) for c in obs.gate_body),
+        "gate_ned": tuple(float(c) for c in obs.gate_ned) if obs.gate_ned is not None else None,
+        "normal_body": tuple(float(c) for c in obs.normal_body) if obs.normal_body is not None else None,
+        "method": obs.method,
     }

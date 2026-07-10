@@ -13,34 +13,36 @@ import time
 import numpy as np
 
 import camera_model as cm
-from vision.gate_detector import detect_gate, _synthesize_test_image
-from vision.gate_estimator import estimate_gate
+from vision.gate_detector import detect_gates, _synthesize_test_image
+from vision.gate_estimator import estimate_gates
 from planner import Planner
 import controller as ctrl
 
 
 def test_detect_and_estimate():
     img, cfg = _synthesize_test_image()
-    det = detect_gate(img, cfg)
-    assert det is not None, "detector found no gate in synthetic frame"
+    dets = detect_gates(img, cfg)
+    assert dets, "detector found no gate in synthetic frame"
     # level attitude -> gate should be roughly straight ahead (body +x), centered.
-    est = estimate_gate(det, attitude={"roll": 0, "pitch": 0, "yaw": 0},
-                        position_ned=(0.0, 0.0, -2.0), ts=time.time_ns())
-    assert est["detected"]
-    gx, gy, gz = est["gate_body"]
+    obs_list = estimate_gates(dets, attitude={"roll": 0, "pitch": 0, "yaw": 0},
+                              position_ned={"x": 0.0, "y": 0.0, "z": -2.0}, ts_ns=time.time_ns())
+    assert obs_list
+    obs = obs_list[0]
+    gx, gy, gz = obs.gate_body
     # Gate at image center, but the camera is tilted UP 20deg, so in the BODY frame
     # the gate is forward (x>0), horizontally centered (y~0), and UP (z<0) by ~20deg.
-    assert gx > 0, f"gate should be ahead (x>0), got {est['gate_body']}"
-    assert abs(gy) < 0.5, f"gate should be horizontally centered, got {est['gate_body']}"
+    assert gx > 0, f"gate should be ahead (x>0), got {obs.gate_body}"
+    assert abs(gy) < 0.5, f"gate should be horizontally centered, got {obs.gate_body}"
     assert gz < 0, f"gate at image center should be UP (z<0) under the 20deg tilt, got {gz}"
-    az, el = est["bearing"]
+    from vision.gate_estimator import _bearing
+    az, el = _bearing(obs.gate_body)
     assert abs(az) < math.radians(3), f"azimuth should be ~0, got {math.degrees(az):.1f}deg"
     assert abs(el - math.radians(cm.CAMERA_TILT_UP_DEG)) < math.radians(4), \
         f"elevation should be ~+20deg (camera tilt), got {math.degrees(el):.1f}deg"
-    assert est["range_m"] > 0
-    print(f"PASS detect+estimate  method={est['method']} range={est['range_m']:.2f}m "
+    assert obs.range_m > 0
+    print(f"PASS detect+estimate  method={obs.method} range={obs.range_m:.2f}m "
           f"gate_body=({gx:.2f},{gy:.2f},{gz:.2f}) el={math.degrees(el):.1f}deg")
-    return est
+    return obs
 
 
 def test_planner_goto_waypoint():
