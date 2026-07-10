@@ -506,6 +506,44 @@ Phase 4 (DRY_RUN) / Phase 5 (flight).
 | Left/lateral lean sign (`LEAN_SIGN_LAT`) still unconfirmed live | Phase 5 step 2 starts at scan speeds where a flipped sign is a slow drift, not a crash; verify against log before RACE_MODE |
 | Vision-frame timestamps vs. pose timestamps misaligned during fast yaw → world-projection smear | Mapper's R already inflates with range; if smear shows up in Phase-4 sim, interpolate pose to `sim_time_ns` in `estimate_gates` (both streams carry sim time) |
 
+## 9b. ADDENDUM (2026-07-09): VQ2 platform — this plan now runs on branch `Qualifier2`
+
+The new spec revision (`260624_Technical_Spec_0003.pdf`, VADR-TS-003 00.03,
+extracted to `reference/_specs_vq2_text.txt`) changes the ground rules for
+Round-2 qualification runs. Spec §9.3 **blocks** these simulator interfaces:
+`ATTITUDE`, `LOCAL_POSITION_NED`, `ODOMETRY`, **and `GATE_INFO`**. So on a
+qualification run there is **no pose telemetry and no broadcast gate geometry at
+all** — pure vision stops being a design mandate and becomes a hard requirement,
+and the "VIO-lite" horizontal estimator that §10 deferred is now in scope.
+
+What changes relative to the main plan:
+
+- **Pose source is abstracted, not assumed.** The mapper and planner read
+  `shared_data['attitude']` / `shared_data['position_ned']` as before, but on VQ2
+  those are produced by the on-board estimator (`ahrs.py` complementary filter +
+  `state_estimator.py` baro-z observer, both already implemented and calibrated
+  on this branch), not by `mavlink_rx.py`. Training-mode flights (spec §9.2) can
+  still use real telemetry to validate the pipeline before switching.
+- **New Phase 2b — vision-anchored horizontal position.** IMU+baro cannot
+  observe x/y (the estimator publishes `x = y = None` today). Fix: the origin is
+  exact at arm; the first gate observations are mapped from the origin-anchored
+  pose; thereafter, every observation that associates to a confirmed mapped gate
+  yields a drone-position fix `pos = gate.pos_ned − R_wb·gate_body`, published as
+  `shared_data['pos_fix'] = {'x','y','var','ts'}`. `state_estimator.py` gains a
+  horizontal observer: predict with AHRS-rotated world-frame acceleration
+  (damped), correct with `pos_fix`. Drift is bounded whenever any mapped gate is
+  in view; between gates it dead-reckons for the few seconds of the gap.
+  Circularity is benign: the map and the pose are self-consistent (a shared
+  offset cancels in the control error).
+- **Fact 15 is void on VQ2** (no GATE_INFO): offline tests must take ground
+  truth from training-mode logs or synthetic scenes instead.
+- **§14 caveat**: race status availability under VQ2 is unconfirmed — do not
+  hard-depend on `active_gate_index`; the plane-crossing pass check (§5.5 PASS
+  state) must work standalone.
+- Speeds: config on this branch is already dialed to a VQ2 safe baseline
+  (`CRUISE_SPEED=3`); keep it there until the estimator chain is validated in
+  training mode.
+
 ## 10. Out of scope (explicitly)
 
 - **Qualifier-2 platform** (ATTITUDE/POSITION blocked): needs the `origin/Qualifier2`

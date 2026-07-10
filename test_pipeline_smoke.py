@@ -14,7 +14,7 @@ import numpy as np
 
 import camera_model as cm
 from vision.gate_detector import detect_gate, _synthesize_test_image
-from gate_estimator import estimate_gate
+from vision.gate_estimator import estimate_gate
 from planner import Planner
 import controller as ctrl
 

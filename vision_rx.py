@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from vision.gate_detector import detect_gate, draw_detection
-from gate_estimator import estimate_gate
+from vision.gate_estimator import estimate_gate
 
 
 def _quat_to_rpy(q):
