@@ -57,14 +57,7 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     #   * autonomous, no spline: Planner stops at each shared_data['mission'] waypoint.
     # -------------------------------
     teleop = None
-    if shared_data.get('use_state_estimator', False):
-        # VQ2 Phase 0: horizontal position isn't recovered yet, so the spline/waypoint
-        # planners (which need it) can't run. Fly a HOVER on pure estimated state to prove
-        # the IMU/baro pipeline. (Phase 1 swaps in the reactive gate-chaser.)
-        print("Setting up VQ2 hover planner (Phase-0 estimator check)...", flush=True)
-        from hover_planner import HoverPlanner
-        planner = HoverPlanner(shared_data)
-    elif shared_data.get('use_teleop', False):
+    if shared_data.get('use_teleop', False):
         print("Setting up teleop (manual keyboard control)...", flush=True)
         from teleop import TeleopPlanner, KeyboardTeleop
         planner = TeleopPlanner(shared_data)

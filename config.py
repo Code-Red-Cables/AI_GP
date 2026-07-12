@@ -29,7 +29,7 @@ SIM_SERVER_UDP_PORT = 14550
 #                 branch's default -- see spline_planner.py). False = the stop-at-each
 #                 waypoint planner (planner.py).
 # ======================================================================================
-DRY_RUN = True       # checking whether ANY barometer field is populated (abs_pressure / bitmask)
+DRY_RUN = False      # False = actually fly (send flight setpoints to the sim)
 DEBUG_VISION = False
 LOGGING = True
 USE_VISION = False

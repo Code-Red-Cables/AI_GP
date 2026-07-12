@@ -44,12 +44,30 @@ class StateEstimator:
         if 'lock' not in self.data:
             self.data['lock'] = threading.RLock()
         self.ahrs = AHRS()
+        # Seed the AHRS yaw from the mission heading. Without a magnetometer (VQ2 sends NaN),
+        # the AHRS has no absolute heading reference and defaults to 0 (North). The drone
+        # actually boots facing along the course (toward the first waypoint), so compute the
+        # heading from the arm point (origin) to wp0 and initialize yaw there. Without this,
+        # the 180° yaw error corrupts the body→NED rotation and the drone flies backward.
+        mission = data.get('mission')
+        if mission and mission.waypoints:
+            wp0 = mission.waypoints[0]
+            n, e, _ = wp0.pos
+            self.ahrs.yaw = math.atan2(e, n)  # heading from origin toward wp0
+            self.ahrs._init_yaw = True         # prevent mag-snap overwrite
         self.l_pos, self.l_vel = l_pos, l_vel
         self.hz = hz
         self._last_imu_t = None      # last processed IMU time_usec (dedupe + dt source)
         self._baro_ref = None        # pressure_alt at start -> NED origin is the arm point
         self._z = 0.0                # NED down position (m), +down
         self._vz = 0.0               # NED down velocity (m/s), +down
+        # Dead-reckoned horizontal state (NED North/East). Drifts without an absolute
+        # reference, but gives the spline planner a usable position estimate so it can
+        # navigate the mission instead of falling into watchdog_hover.
+        self._x = 0.0                # NED North position (m)
+        self._y = 0.0                # NED East position (m)
+        self._vx = 0.0               # NED North velocity (m/s)
+        self._vy = 0.0               # NED East velocity (m/s)
         self.thread = None
         self.is_running = False
 
@@ -59,7 +77,7 @@ class StateEstimator:
         se.thread = threading.Thread(target=se._loop, daemon=False)
         se.is_running = True
         se.thread.start()
-        print("State estimator running (IMU->attitude, baro->altitude)", flush=True)
+        print("State estimator running (IMU->attitude, baro->altitude, dead-reckoned horizontal)", flush=True)
         return se
 
     def get_thread_for_join(self):
@@ -96,6 +114,24 @@ class StateEstimator:
         else:                                        # no baro: dead-reckon vertical (drifts)
             self._z += self._vz * dt
             self._vz += a_down * dt
+
+    # -- horizontal dead-reckoning (no absolute reference, drifts over time) ------------
+    def _horizontal(self, accel, roll, pitch, yaw, dt):
+        """Advance (x, y, vx, vy) NED-North/East by integrating gravity-removed accel."""
+        fx, fy, fz = (s * c for s, c in zip(ACC_SIGN, accel))
+        sp, cp = math.sin(pitch), math.cos(pitch)
+        sr, cr = math.sin(roll), math.cos(roll)
+        sy, cy = math.sin(yaw), math.cos(yaw)
+        # Full ZYX body->earth rotation, North and East rows:
+        #   a_north = (cy*cp)*fx + (cy*sp*sr - sy*cr)*fy + (cy*sp*cr + sy*sr)*fz
+        #   a_east  = (sy*cp)*fx + (sy*sp*sr + cy*cr)*fy + (sy*sp*cr - cy*sr)*fz
+        # Gravity only affects the Down component, so no +g term here.
+        a_north = (cy*cp)*fx + (cy*sp*sr - sy*cr)*fy + (cy*sp*cr + sy*sr)*fz
+        a_east  = (sy*cp)*fx + (sy*sp*sr + cy*cr)*fy + (sy*sp*cr - cy*sr)*fz
+        self._vx += a_north * dt
+        self._vy += a_east * dt
+        self._x += self._vx * dt
+        self._y += self._vy * dt
 
     # -- one estimator tick -------------------------------------------------------------
     def step(self):
@@ -138,6 +174,7 @@ class StateEstimator:
         if not (math.isfinite(roll) and math.isfinite(pitch) and math.isfinite(yaw)):
             return                                   # never publish a non-finite attitude
         self._vertical(accel, roll, pitch, palt, dt)
+        self._horizontal(accel, roll, pitch, yaw, dt)
 
         now = time.time_ns()
         with self.data['lock']:
@@ -148,7 +185,8 @@ class StateEstimator:
                 'ts': now, 'estimated': True,
             }
             self.data['position_ned'] = {
-                'x': None, 'y': None, 'z': self._z,    # horizontal unobservable from IMU+baro
-                'vx': 0.0, 'vy': 0.0, 'vz': self._vz,  # 0.0 (not None) so the loop reads vz
+                'x': self._x, 'y': self._y, 'z': self._z,
+                'vx': self._vx, 'vy': self._vy, 'vz': self._vz,
                 'ts': now, 'estimated': True,
             }
+

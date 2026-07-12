@@ -29,7 +29,8 @@ import numpy as np
 
 from mission import Mission, Waypoint, DEFAULT_ARRIVE_RADIUS_M
 import spline_planner as sp
-from spline_planner import SplinePlanner, build_spline_path, path_curvature, speed_profile
+from spline_planner import SplinePlanner
+from guidance.path import build_spline_path, path_curvature, speed_profile
 from config import (MAX_SPEED, MAX_VSPEED, LOOKAHEAD_M, LOOKAHEAD_TIME, LOOKAHEAD_MAX,
                     A_LAT_MAX, A_LON_MAX)
 
@@ -65,8 +66,9 @@ def _fly(mission, *, cruise=TEST_CRUISE, start=(0.0, 0.0, -3.0), start_yaw_deg=0
 
     Returns ``(planner, min_dist_to_each_wp[list], speed_samples[list of (remaining, speed)])``.
     """
-    sp.CRUISE_SPEED = cruise                       # pin before the planner builds its profile
-    sp.FINISH_SPEED = 0.0                          # tests assert the settle-on-last behaviour
+    import config
+    config.CRUISE_SPEED = cruise                       # pin before the planner builds its profile
+    config.FINISH_SPEED = 0.0                          # tests assert the settle-on-last behaviour
     data = {"lock": threading.RLock(), "mission": mission}
     pl = SplinePlanner(data)
 

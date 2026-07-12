@@ -22,7 +22,7 @@ from config import (
 # In autonomous mode, load a custom mission.json if present, else build the default square.
 # Manual control needs no mission.
 mission = None
-if not USE_TELEOP and not USE_STATE_ESTIMATOR:
+if not USE_TELEOP:
     mission = load_mission(MISSION_PATH) or square_mission(
         SQUARE_SIDE_M, SQUARE_ALT_M, counter_clockwise=SQUARE_CCW)
 
@@ -44,10 +44,11 @@ shared_data = {
 }
 
 if USE_STATE_ESTIMATOR:
-    print("VQ2 mode: state estimator (IMU/baro) + hover planner (Phase-0 check).", flush=True)
-elif USE_TELEOP:
+    print("VQ2 mode: state estimator (IMU/baro) + dead-reckoned navigation.", flush=True)
+
+if USE_TELEOP:
     print_controls(CAPTURE_PATH)
-else:
+elif mission:
     mode = "SPLINE (continuous)" if USE_SPLINE else "waypoint (stop-at-each)"
     print(f"Autonomous mode: {mode}", flush=True)
     print(f"Mission '{mission.name}': {len(mission.waypoints)} waypoints, loop={mission.loop}", flush=True)
