@@ -11,7 +11,7 @@ from teleop import print_controls
 from config import (
     SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
     DRY_RUN, DEBUG_VISION, LOGGING, USE_VISION, USE_TELEOP, USE_SPLINE,
-    USE_STATE_ESTIMATOR,
+    USE_STATE_ESTIMATOR, USE_GATE_CHASER,
     CAPTURE_PATH, MISSION_PATH, SQUARE_SIDE_M, SQUARE_ALT_M, SQUARE_CCW,
 )
 
@@ -39,12 +39,14 @@ shared_data = {
     'use_teleop': USE_TELEOP,
     'use_spline': USE_SPLINE,
     'use_state_estimator': USE_STATE_ESTIMATOR,
+    'use_gate_chaser': USE_GATE_CHASER,
     'capture_path': CAPTURE_PATH,
     'mission': mission,
 }
 
 if USE_STATE_ESTIMATOR:
-    print("VQ2 mode: state estimator (IMU/baro) + hover planner (Phase-0 check).", flush=True)
+    nav = "gate chaser (visual servo)" if USE_GATE_CHASER else "hover planner (Phase-0 check)"
+    print(f"VQ2 mode: state estimator (IMU) + {nav}.", flush=True)
 elif USE_TELEOP:
     print_controls(CAPTURE_PATH)
 else:

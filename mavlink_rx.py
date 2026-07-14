@@ -153,7 +153,7 @@ class MAVLinkRX:
         return bool(self.data.get('use_state_estimator'))
 
     def on_attitude(self, msg):
-        self._store('attitude_truth' if self._est_active() else 'attitude', {
+        data = {
             'roll': msg.roll,
             'pitch': msg.pitch,
             'yaw': msg.yaw,
@@ -162,7 +162,19 @@ class MAVLinkRX:
             'yawspeed': msg.yawspeed,
             'time_boot_ms': msg.time_boot_ms,
             'ts': time.time_ns(),
-        })
+        }
+        if self._est_active():
+            self._store('attitude_truth', data)
+            # AHRS has no magnetometer in VQ2, so yaw stays at 0 without this patch.
+            # ATTITUDE messages DO flow in VQ2 (confirmed by logs), so use them for yaw only;
+            # the AHRS handles roll/pitch correctly from accel.
+            with self.data['lock']:
+                att = self.data.get('attitude')
+                if att is not None:
+                    att['yaw'] = msg.yaw
+                    att['yawspeed'] = msg.yawspeed
+        else:
+            self._store('attitude', data)
 
     def on_local_position_ned(self, msg):
         self._store('position_ned_truth' if self._est_active() else 'position_ned', {

@@ -114,10 +114,11 @@ def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
         offset_ned = cm.body_to_ned(gate_body, r, p, y)
         if normal_body is not None:
             normal_body = tuple(float(c) for c in cm.body_to_ned(normal_body, r, p, y))
-        if position_ned is not None:
+        if position_ned is not None and all(c is not None for c in position_ned):
             gate_ned = tuple(float(a + b) for a, b in zip(position_ned, offset_ned))
         else:
             gate_ned = tuple(float(c) for c in offset_ned)  # relative, world axes
+            # (VQ2: horizontal absolute position is unknown -> gate_ned is drone-RELATIVE)
 
     return {
         "ts": ts,

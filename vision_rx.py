@@ -169,10 +169,16 @@ class VisionRX:
         elif odo is not None:
             attitude = _quat_to_rpy(odo['q'])
 
+        # Absolute position is only usable if ALL axes are known. Under VQ2 we have no
+        # LOCAL_POSITION_NED/ODOMETRY, so the estimator publishes horizontal x/y as None
+        # (unobservable from IMU). Pass position only when fully valid; otherwise None, so
+        # the gate pose falls back to the drone-RELATIVE offset (which is all the visual
+        # servo needs -- gate_body/bearing/range are absolute-position-free anyway).
         position = None
-        if odo is not None:
+        if odo is not None and odo.get('pos') is not None and all(c is not None for c in odo['pos']):
             position = odo['pos']
-        elif pos is not None:
+        elif pos is not None and pos.get('x') is not None and pos.get('y') is not None \
+                and pos.get('z') is not None:
             position = (pos['x'], pos['y'], pos['z'])
 
         now = time.time_ns()

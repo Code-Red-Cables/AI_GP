@@ -29,12 +29,12 @@ SIM_SERVER_UDP_PORT = 14550
 #                 branch's default -- see spline_planner.py). False = the stop-at-each
 #                 waypoint planner (planner.py).
 # ======================================================================================
-DRY_RUN = True       # checking whether ANY barometer field is populated (abs_pressure / bitmask)
-DEBUG_VISION = False
+DRY_RUN = False      # gate-chaser dry check passed; cleared to FLY the visual servo
+DEBUG_VISION = True  # write detection overlays so we can SEE what the detector locks onto
 LOGGING = True
-USE_VISION = False
-USE_TELEOP = False
-USE_SPLINE = True
+USE_VISION = False   # teleop mode: vision off
+USE_TELEOP = True
+USE_SPLINE = False
 
 # USE_STATE_ESTIMATOR: VQ2 mode. True = rebuild attitude+altitude from HIGHRES_IMU ourselves
 # (ATTITUDE/LOCAL_POSITION_NED/ODOMETRY are blocked in VQ2 -- spec 9.3), publishing into
@@ -42,7 +42,26 @@ USE_SPLINE = True
 # When True, setup.py starts the StateEstimator thread. Leave the navigation planner choice
 # above alone for now -- horizontal position isn't recovered yet, so the only flight that
 # works under VQ2 is a HOVER (Phase-0 milestone); the reactive gate-chaser is Phase 1.
-USE_STATE_ESTIMATOR = True
+USE_STATE_ESTIMATOR = False  # baro is NaN in this sim -> estimator vz drifts; use open-loop thrust
+
+# USE_GATE_CHASER: VQ2 reactive visual servo (gate_chaser.py). Requires USE_VISION +
+# USE_STATE_ESTIMATOR. True = fly TOWARD the detected gate (the only thing that works under
+# VQ2 -- no map, no absolute position; the camera is the reference). False = HoverPlanner.
+USE_GATE_CHASER = False
+
+# ---- Gate-chaser tuning. Velocities are LOW because the controller's horizontal loop has no
+# velocity feedback under VQ2 (a velocity command maps straight to a lean), so these double as
+# lean intent -- keep them gentle. All position loops close through VISION, frame to frame.
+GATE_APPROACH_SPEED = 1.2    # m/s forward toward the gate (caps the forward lean)
+GATE_KP_FWD = 0.15          # forward m/s per metre of range (ramps down near gate -> brakes in)
+GATE_KP_LAT = 0.40          # strafe m/s per metre of lateral (y) offset -- centre the gate
+GATE_KP_VERT = 0.6          # climb/descend m/s per metre of vertical (z) offset -- match height
+GATE_MAX_STRAFE = 0.65      # m/s cap on strafe
+GATE_ALIGN_FALLOFF = 4.0    # perpendicular offset (m) that cuts forward speed toward MIN_ALIGN
+GATE_MIN_ALIGN = 0.2        # forward speed never drops below this fraction (keeps creeping in)
+GATE_CLOSE_RANGE = 5.0      # m: within this, COMMIT -> drive straight through, stop late steering
+GATE_COAST_S = 0.7          # s: keep flying forward after a close gate leaves frame (pass through)
+GATE_VISION_TIMEOUT_S = 0.4 # s: vision older than this -> gate considered lost
 
 # ======================================================================================
 # Mission / paths (main.py)
@@ -145,7 +164,7 @@ FINISH_SPEED = 8.0
 #   TELEOP_YAWRATE_DPS: deg/s yaw rate while Q/E are held.
 #   TELEOP_YAW_SIGN   : flip to -1.0 if Q/E turn the nose the wrong way.
 # ======================================================================================
-TELEOP_SPEED = 10.0
+TELEOP_SPEED = 2.0
 TELEOP_VSPEED = 1.5
 TELEOP_YAWRATE_DPS = 60.0
 TELEOP_YAW_SIGN = 1.0
