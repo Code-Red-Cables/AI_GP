@@ -78,7 +78,7 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
 HOVER_THRUST = 0.27        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
 KP_THRUST = 0.25           # extra thrust per (m/s) of vertical-velocity error (more authority)
 THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority while descending
-KP_LEAN = 0.2           # rad of lean per (m/s) of desired horizontal velocity
+KP_LEAN = 0.1           # rad of lean per (m/s) of desired horizontal velocity (made more gentle)
 # Lowered 0.5 -> 0.2 to stop the lateral loop SATURATING at speed. At 0.5, roll hit the
 # 45deg cap whenever the lateral velocity error exceeded 0.785/0.5 = 1.57 m/s -- only a
 # ~7.5deg velocity misalignment at 12 m/s -- so the loop ran bang-bang +/-45deg (~0.5 Hz
@@ -102,7 +102,7 @@ KP_LEAN = 0.2           # rad of lean per (m/s) of desired horizontal velocity
 # forward force -> ~1.32x the speed (expect ~18 m/s / ~65 km/h from the ~13.7 m/s at 45deg).
 # Reverse pitch is capped the same, so braking into corners gets stronger too. If the pitch
 # axis gets twitchy at 60, dial MAX_PITCH_RAD back toward 50-55deg.
-MAX_PITCH_RAD = math.radians(25.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forward lean while
+MAX_PITCH_RAD = math.radians(15.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forward lean while
 #                                     validating the IMU/vision state estimator at low speed.
 # Roll cap raised 45 -> 52deg so the drone can actually CORNER faster: the max lateral accel a
 # leaning quad makes is g*tan(roll), so 45deg capped cornering at 9.8 m/s^2 -- exactly where
@@ -112,7 +112,7 @@ MAX_PITCH_RAD = math.radians(25.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forwa
 # (saturated past 1.57 m/s lateral error); at KP_LEAN=0.2 the proportional range is now
 # radians(52)/0.2 = ~4.5 m/s of error, WIDER than before, so it damps rather than slamming the
 # cap. If it corkscrews anyway, drop this back to 45 AND drop config.A_LAT_MAX back to ~9.
-MAX_LEAN_RAD = math.radians(25.0)   # VQ2 SAFE BASELINE (was 52) -- gentle roll; coupled to A_LAT_MAX
+MAX_LEAN_RAD = math.radians(15.0)   # VQ2 SAFE BASELINE (was 52) -- gentle roll; coupled to A_LAT_MAX
 # Tilt compensation: only thrust*cos(tilt) is vertical, so at a steep lean the drone sinks
 # unless the collective is scaled by 1/cos(tilt). cos(tilt)=cos(pitch)*cos(roll), floored
 # here so the division can't blow up. Lowered 0.5 -> 0.35 for the steeper pitch cap: at 60deg
@@ -129,7 +129,7 @@ COS_TILT_FLOOR = 0.35
 # fore/aft legs), so CONFIRM it live and flip LEAN_SIGN_LAT if the drone slides the wrong
 # way sideways.
 LEAN_SIGN_FWD = +1.0     # body-forward velocity error -> +pitch (verified yaw=0 and yaw=-180)
-LEAN_SIGN_LAT = +1.0     # body-right velocity error -> +roll  (CONFIRM live; flip if it veers)
+LEAN_SIGN_LAT = -1.0     # body-right velocity error -> +roll (flipped from +1.0 to fix left veer)
 
 # --------------------------------------------------------------------------------------
 # Control is BODY-RATE (ACRO), with our own outer attitude->rate leveling loop.
@@ -148,9 +148,9 @@ LEAN_SIGN_LAT = +1.0     # body-right velocity error -> +roll  (CONFIRM live; fl
 # all clamped to RATE_MAX. roll_des/pitch_des still come from velocity_to_attitude (lean
 # to translate) and are low-passed first to damp vision jitter.
 # --------------------------------------------------------------------------------------
-KP_ATT = 3.0                        # body roll/pitch rate (rad/s) per rad of angle error
-KP_YAW = 2.0                        # body yaw rate (rad/s) per rad of heading error
-RATE_MAX = math.radians(220.0)      # cap on any commanded body rate
+KP_ATT = 1.5                        # body roll/pitch rate (rad/s) per rad of angle error (gentle)
+KP_YAW = 1.0                        # body yaw rate (rad/s) per rad of heading error (gentle)
+RATE_MAX = math.radians(90.0)      # cap on any commanded body rate (gentle)
 # Yaw-rate cap kept low on purpose: the camera FOV is narrow, so a fast yaw sweeps the
 # gate out of view and kills tracking. A 104 deg/s slew (chasing a garbage detection) did
 # exactly that (log 2026-06-05). 70 deg/s still turns the nose toward gates briskly while

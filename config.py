@@ -126,8 +126,8 @@ KP_VERT_PATH = 1.2
 # A_LON_MAX is the SAFE speed lever: it doesn't raise any corner speed, just lets the drone
 # accelerate onto the straights and brake later into corners (more time spent at top speed).
 # ======================================================================================
-A_LAT_MAX = 3.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
-A_LON_MAX = 3.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
+A_LAT_MAX = 2.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
+A_LON_MAX = 2.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
 
 # FINISH_SPEED: speed (m/s) allowed AT the last waypoint. A race doesn't need to stop -- the
 # timer ends when you cross the final gate -- so braking to a halt there wastes the run.
