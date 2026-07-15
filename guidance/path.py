@@ -174,7 +174,7 @@ class Path:
         dy = _wrap(y1 - y0)
         return _wrap(y0 + frac * dy)
 
-def carrot_velocity(path: Path, pos_ned: np.ndarray, vel_ned: np.ndarray, cfg, last_t: float) -> Tuple[np.ndarray, float, float, float]:
+def carrot_velocity(path: Path, pos_ned: np.ndarray, vel_ned: np.ndarray, cfg, last_t: float, current_yaw: float = 0.0) -> Tuple[np.ndarray, float, float, float]:
     """Pure-pursuit: speed-scaled lookahead carrot.
     Returns (vel_cmd, yaw_cmd, s_proj, lookahead).
     """
@@ -218,6 +218,6 @@ def carrot_velocity(path: Path, pos_ned: np.ndarray, vel_ned: np.ndarray, cfg, l
     vd = max(-max_vspeed, min(max_vspeed, vd))
     
     vel_cmd = np.array([vn, ve, vd])
-    yaw_cmd = path.sample_yaw(s_proj, 0.0)
+    yaw_cmd = path.sample_yaw(s_proj, current_yaw)
     
     return vel_cmd, yaw_cmd, s_proj, lookahead

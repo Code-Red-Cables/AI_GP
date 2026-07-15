@@ -208,7 +208,7 @@ class SplinePlanner:
         else:
             vel_ned = None
             
-        vel_cmd, yaw_cmd, s_proj, lookahead = carrot_velocity(self.path, pos, vel_ned, config, getattr(self, '_last_t', 0.0))
+        vel_cmd, yaw_cmd, s_proj, lookahead = carrot_velocity(self.path, pos, vel_ned, config, getattr(self, '_last_t', 0.0), yaw_hold)
         self._last_t = s_proj
 
         # Cross-track-envelope fail-safe

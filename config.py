@@ -74,8 +74,8 @@ SQUARE_CCW = False
 # (no LOCAL_POSITION_NED/ATTITUDE), which will be noisier/laggier than ground truth -- slow
 # flight keeps estimation error and control demands small while we validate the pipeline.
 # Ramp these back up only once the estimator + spline are confirmed working in training.
-MAX_SPEED = 6.0
-MAX_VSPEED = 3.0
+MAX_SPEED = 1.5
+MAX_VSPEED = 1.5
 MAX_WP_DIST_M = 60.0
 
 # ======================================================================================
@@ -91,8 +91,8 @@ MAX_WP_DIST_M = 60.0
 # When MAX_WP_DIST_M is used here it bounds CROSS-TRACK error off the path (not distance to
 # a single waypoint): farther off the path than this -> hover and brake back toward it.
 # ======================================================================================
-CRUISE_SPEED = 3.0     # VQ2 SAFE BASELINE (was 60) -- slow, drift-tolerant while validating
-LOOKAHEAD_M = 2.0      # floor: carrot distance (m) when slow / at the dense early gates
+CRUISE_SPEED = 0.8     # VQ2 SAFE BASELINE (was 60) -- slow, drift-tolerant while validating
+LOOKAHEAD_M = 1.0      # floor: carrot distance (m) when slow / at the dense early gates
 LOOKAHEAD_TIME = 0.5   # seconds of travel ahead: lookahead grows as 0.5 * current speed
 LOOKAHEAD_MAX = 7.0    # cap: carrot distance (m) at high speed (smooths the fast straights)
 
@@ -103,7 +103,7 @@ LOOKAHEAD_MAX = 7.0    # cap: carrot distance (m) at high speed (smooths the fas
 # shrink with horizontal speed, pulling the drone back onto the path's height. ~1/s means a 1 m
 # altitude error commands ~1 m/s of climb/descend (capped at MAX_VSPEED). 0.0 = old behaviour
 # (carrot-only vertical). Raise if it still flies low through gates; lower if altitude hunts.
-KP_VERT_PATH = 1.2
+KP_VERT_PATH = 2.0
 
 # ======================================================================================
 # Curvature-aware speed (spline_planner.py) -- so the drone SLOWS for corners instead of
@@ -126,8 +126,8 @@ KP_VERT_PATH = 1.2
 # A_LON_MAX is the SAFE speed lever: it doesn't raise any corner speed, just lets the drone
 # accelerate onto the straights and brake later into corners (more time spent at top speed).
 # ======================================================================================
-A_LAT_MAX = 2.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
-A_LON_MAX = 2.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
+A_LAT_MAX = 1.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
+A_LON_MAX = 1.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
 
 # FINISH_SPEED: speed (m/s) allowed AT the last waypoint. A race doesn't need to stop -- the
 # timer ends when you cross the final gate -- so braking to a halt there wastes the run.
@@ -136,7 +136,7 @@ A_LON_MAX = 2.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
 # of decelerating for ~CRUISE^2/(2*A_LON) metres. It will overshoot ~FINISH_SPEED^2/(2*A_LON)
 # m PAST the finish before the completion-hover brakes it, so only raise it toward CRUISE if
 # there is open space beyond the last gate. (Looping missions ignore this -- they never stop.)
-FINISH_SPEED = 8.0
+FINISH_SPEED = 1.0
 
 # ======================================================================================
 # Manual teleop (teleop.py)
