@@ -124,7 +124,13 @@ class _PosixKeyReader:
 def make_key_backend():
     """Return the platform key backend (Win32 state poll, else POSIX raw-tty)."""
     if sys.platform.startswith('win'):
-        return _WinKeyState()
+        try:
+            b = _WinKeyState()
+            print("[TELEOP] keyboard backend: Win32 GetAsyncKeyState", flush=True)
+            return b
+        except Exception as e:
+            print(f"[TELEOP] Win32 backend failed ({e}), falling back to POSIX raw-tty", flush=True)
+    print("[TELEOP] keyboard backend: POSIX raw-tty (type in THIS terminal window)", flush=True)
     return _PosixKeyReader()
 
 
@@ -173,7 +179,12 @@ class KeyboardTeleop:
 
     def _loop(self):
         dt = 1.0 / self.POLL_HZ
-        self._backend = make_key_backend()
+        try:
+            self._backend = make_key_backend()
+        except Exception as e:
+            print(f"[TELEOP] FATAL: could not init keyboard backend: {e}", flush=True)
+            return
+        _diag_t = time.time()
         try:
             while self.is_running:
                 self._backend.poll()
@@ -184,12 +195,22 @@ class KeyboardTeleop:
                 turn = (1.0 if d('e') else 0.0) - (1.0 if d('q') else 0.0)
                 self._publish(fwd, right, up, turn)
 
+                # Periodic diagnostic: print non-zero inputs so we can confirm keys land
+                now = time.time()
+                if fwd or right or up or turn or (now - _diag_t) > 5.0:
+                    print(f"[TELEOP] fwd={fwd:+.0f} right={right:+.0f} "
+                          f"up={up:+.0f} turn={turn:+.0f}", flush=True)
+                    _diag_t = now
+
                 b = d('b')
                 if b and not self._b_was_down:   # rising edge -> one capture per press
                     self._capture_waypoint()
                 self._b_was_down = b
 
                 time.sleep(dt)
+        except Exception as e:
+            print(f"[TELEOP] keyboard thread crashed: {e}", flush=True)
+            import traceback; traceback.print_exc()
         finally:
             try:
                 self._backend.close()
@@ -305,8 +326,12 @@ class TeleopPlanner:
         self._desired_yaw = self._wrap(
             self._desired_yaw + TELEOP_YAW_SIGN * tele['turn'] * TELEOP_YAW_RATE * dt)
 
-        # Watchdog: no recent pose -> hover (and don't drift the heading away).
-        if position is None or telem_ts is None or (now - telem_ts) > TELEM_TIMEOUT_NS:
+        # Watchdog: under VQ2 both ATTITUDE and LOCAL_POSITION_NED are blocked, so
+        # telem_ts will always be None. Don't gate teleop on telemetry -- the pilot is
+        # the outer loop. We still need yaw for the NED transform; fall back to 0.
+        stale = telem_ts is not None and (now - telem_ts) > TELEM_TIMEOUT_NS
+        if stale:
+            print("[TELEOP] watchdog: telemetry stale -- hovering", flush=True)
             self._desired_yaw = yaw_now
             return self._publish(self._hover(yaw_now, 'watchdog_hover', now))
 
@@ -327,6 +352,9 @@ class TeleopPlanner:
         ve = -snn * f_v + c * r_v
         vd = -tele['up'] * TELEOP_VSPEED   # +up stick climbs; NED down is +z
 
+        if f_v or r_v or vd:
+            print(f"[TELEOP] cmd vel_ned=({vn:+.1f},{ve:+.1f},{vd:+.1f}) yaw={yaw_now:+.3f}",
+                  flush=True)
         return self._publish({'mode': 'velocity',
                               'vel_ned': (float(vn), float(ve), float(vd)),
                               'yaw': float(self._desired_yaw),
