@@ -102,7 +102,7 @@ KP_LEAN = 0.1           # rad of lean per (m/s) of desired horizontal velocity (
 # forward force -> ~1.32x the speed (expect ~18 m/s / ~65 km/h from the ~13.7 m/s at 45deg).
 # Reverse pitch is capped the same, so braking into corners gets stronger too. If the pitch
 # axis gets twitchy at 60, dial MAX_PITCH_RAD back toward 50-55deg.
-MAX_PITCH_RAD = math.radians(15.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forward lean while
+MAX_PITCH_RAD = math.radians(6.0)   # VQ2 SAFE BASELINE (was 60) -- gentle forward lean while
 #                                     validating the IMU/vision state estimator at low speed.
 # Roll cap raised 45 -> 52deg so the drone can actually CORNER faster: the max lateral accel a
 # leaning quad makes is g*tan(roll), so 45deg capped cornering at 9.8 m/s^2 -- exactly where
@@ -112,7 +112,7 @@ MAX_PITCH_RAD = math.radians(15.0)  # VQ2 SAFE BASELINE (was 60) -- gentle forwa
 # (saturated past 1.57 m/s lateral error); at KP_LEAN=0.2 the proportional range is now
 # radians(52)/0.2 = ~4.5 m/s of error, WIDER than before, so it damps rather than slamming the
 # cap. If it corkscrews anyway, drop this back to 45 AND drop config.A_LAT_MAX back to ~9.
-MAX_LEAN_RAD = math.radians(15.0)   # VQ2 SAFE BASELINE (was 52) -- gentle roll; coupled to A_LAT_MAX
+MAX_LEAN_RAD = math.radians(6.0)    # VQ2 SAFE BASELINE (was 52) -- gentle roll; coupled to A_LAT_MAX
 # Tilt compensation: only thrust*cos(tilt) is vertical, so at a steep lean the drone sinks
 # unless the collective is scaled by 1/cos(tilt). cos(tilt)=cos(pitch)*cos(roll), floored
 # here so the division can't blow up. Lowered 0.5 -> 0.35 for the steeper pitch cap: at 60deg
