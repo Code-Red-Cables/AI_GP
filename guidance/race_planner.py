@@ -37,7 +37,7 @@ class RacePlanner:
         clamped to bounds. The mapper already maintains insertion order
         matching observation order (i.e. closest gates first).
         """
-        active = self.mapper.get_active_gates()
+        active = self.mapper.course()
         if self.active_gate_idx < len(active):
             return active[self.active_gate_idx], self.active_gate_idx
         return None, None

@@ -5,7 +5,7 @@ import threading
 import time
 import numpy as np
 
-from mapping.gate_mapper import GateMapper, MappedGate
+from mapping.gate_mapper import GateMapper, GateEstimate
 from guidance.race_planner import RacePlanner
 
 class MockCfg:
@@ -52,7 +52,7 @@ def test_fsm():
     assert planner.state == 'SCAN'
     
     # 4. Add a gate -> APPROACH
-    gate1 = MappedGate(id=1, pos=np.array([10.0, 0.0, -3.0]), yaw=0.0, hits=5, active=True)
+    gate1 = GateEstimate(gate_id=1, pos=np.array([10.0, 0.0, -3.0]), normal=np.array([1.0, 0.0, 0.0]), pos_var=np.ones(3), confirmed=True)
     mapper.gates.append(gate1)
     
     target = planner.compute_target()

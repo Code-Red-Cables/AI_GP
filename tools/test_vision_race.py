@@ -18,12 +18,15 @@ import time
 import threading
 import numpy as np
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import config
 from mission import Mission, Waypoint
 import camera_model as cm
 from vision.gate_detector import GateDetection
 from vision.gate_estimator import estimate_gates
-from mapping.gate_mapper import GateMapper, MappedGate
+from mapping.gate_mapper import GateMapper, GateEstimate
 from guidance.race_planner import RacePlanner
 
 def _wrap(a):
@@ -160,7 +163,7 @@ def run_sim(course_wps, mapper, *, verbose=False):
             print(f"  step={step:5d}  state={state:<10s}  "
                   f"pos=({pos[0]:+8.2f},{pos[1]:+7.2f},{pos[2]:+7.2f})  "
                   f"g_idx={planner.active_gate_idx}  "
-                  f"mapper={len(mapper.gates)}/{len(mapper.get_active_gates())}  "
+                  f"mapper={len(mapper.gates)}/{len(mapper.course())}  "
                   f"passed={passed_gates}/{total_gates}")
             last_state = state
 
@@ -208,14 +211,14 @@ def test_vision_race():
     # This is the main performance test. The drone has a map and should fly
     # precisely through every gate center.
     print(f"Race run: {n_gates} gates, pre-loaded map")
-    mapper_race = GateMapper(min_hits_active=1)
+    mapper_race = GateMapper()
     for i, wp in enumerate(course):
-        mapper_race.gates.append(MappedGate(
-            id=i + 1,
+        mapper_race.gates.append(GateEstimate(
+            gate_id=i + 1,
             pos=np.array(wp.pos, dtype=float),
-            yaw=wp.yaw,
-            hits=100,
-            active=True,
+            normal=np.array([math.cos(wp.yaw), math.sin(wp.yaw), 0.0]),
+            pos_var=np.zeros(3),
+            confirmed=True,
         ))
     mapper_race._next_id = n_gates + 1
 
@@ -233,7 +236,7 @@ def test_vision_race():
     # ── SCOUT RUN: no prior map, discovery mode ──
     # The scout builds the map. Gate precision during scouting is relaxed.
     print(f"\nScout run: {n_gates} gates, discovery mode")
-    mapper_scout = GateMapper(min_hits_active=3)
+    mapper_scout = GateMapper()
     passed_s, min_d_s, t_scout = run_sim(course, mapper_scout, verbose=True)
     print(f"  result: {passed_s}/{n_gates} gates in {t_scout:.1f}s")
     assert passed_s == n_gates, f"Scout only passed {passed_s}/{n_gates}"
