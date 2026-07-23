@@ -1,0 +1,93 @@
+"""Sequence-friendly replay buffer.
+
+Stores whole episodes as contiguous numpy arrays (images kept uint8 for compactness) and
+samples fixed-length (B, T) windows for the world model. Deployment observations only —
+privileged reward is already baked into the stored `reward`/`cont`; no privileged field
+is stored in a way the actor could read (the actor only ever sees image+vector).
+"""
+from __future__ import annotations
+
+import random
+import threading
+from collections import deque
+from typing import Optional
+
+import numpy as np
+import torch
+
+
+class EpisodeAccumulator:
+    """Collects per-step transitions for one episode, then hands off a dict of arrays."""
+
+    def __init__(self):
+        self._buf: dict[str, list] = {}
+
+    def add(self, image, vector, action, reward, cont, aux=None) -> None:
+        self._buf.setdefault("image", []).append(np.asarray(image, dtype=np.uint8))
+        self._buf.setdefault("vector", []).append(np.asarray(vector, dtype=np.float32))
+        self._buf.setdefault("action", []).append(np.asarray(action, dtype=np.float32))
+        self._buf.setdefault("reward", []).append(np.float32(reward))
+        self._buf.setdefault("cont", []).append(np.float32(cont))
+        if aux is not None:
+            self._buf.setdefault("aux", []).append(np.asarray(aux, dtype=np.float32))
+
+    def __len__(self) -> int:
+        return len(self._buf.get("image", []))
+
+    def flush(self) -> Optional[dict]:
+        if len(self) == 0:
+            return None
+        ep = {
+            "image": np.stack(self._buf["image"]),
+            "vector": np.stack(self._buf["vector"]),
+            "action": np.stack(self._buf["action"]),
+            "reward": np.asarray(self._buf["reward"], dtype=np.float32)[:, None],
+            "cont": np.asarray(self._buf["cont"], dtype=np.float32)[:, None],
+        }
+        if "aux" in self._buf:
+            ep["aux"] = np.stack(self._buf["aux"])
+        self._buf = {}
+        return ep
+
+
+class SequenceReplay:
+    """Thread-safe: a background collector calls add_episode while the learner samples."""
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self._episodes: deque[dict] = deque()
+        self._transitions = 0
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return self._transitions
+
+    def add_episode(self, episode: dict) -> None:
+        n = episode["image"].shape[0]
+        if n < 2:
+            return
+        with self._lock:
+            self._episodes.append(episode)
+            self._transitions += n
+            while self._transitions > self.capacity and len(self._episodes) > 1:
+                old = self._episodes.popleft()
+                self._transitions -= old["image"].shape[0]
+
+    def can_sample(self, seq_len: int) -> bool:
+        with self._lock:
+            return any(ep["image"].shape[0] >= seq_len for ep in self._episodes)
+
+    def sample(self, batch: int, seq_len: int, device="cpu") -> dict[str, torch.Tensor]:
+        with self._lock:
+            eligible = [ep for ep in self._episodes if ep["image"].shape[0] >= seq_len]
+            if not eligible:
+                raise RuntimeError(f"no episode >= seq_len {seq_len}")
+            out: dict[str, list] = {}
+            for _ in range(batch):
+                ep = random.choice(eligible)
+                n = ep["image"].shape[0]
+                s = random.randint(0, n - seq_len)
+                for k, v in ep.items():
+                    out.setdefault(k, []).append(v[s:s + seq_len])
+        return {k: torch.as_tensor(np.stack(v)).to(device) for k, v in out.items()}

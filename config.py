@@ -1,170 +1,37 @@
-"""Central configuration for the AI-GP client (this branch).
+import math
 
-Every run setting and tunable knob lives here as a plain Python constant -- edit this
-file to configure a run. Nothing is read from OS environment variables anymore; main.py,
-planner.py and teleop.py import what they need from here.
+# ---- Flight controller ----
+HOVER_THRUST    = 0.27      # open-loop hover baseline (no baro in VQ2)
+KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
+KP_LEAN         = 0.10      # body velocity (m/s) → desired lean angle (rad)
+MAX_LEAN_RAD    = math.radians(25.0)
+KP_ATT          = 3.0       # lean error (rad) → body rate command (rad/s)
+RATE_SIGN_PITCH = -1.0      # sim pitch rate axis is inverted
+RATE_SIGN_ROLL  =  1.0
+MAX_THRUST      = 0.90
+MIN_THRUST      = 0.05
+CONTROL_HZ      = 100
 
-(Deep flight-control gains -- hover thrust, lean/rate gains, sign corrections -- still
-live in controller.py, next to the tuning notes that explain them.)
-"""
-
-# ======================================================================================
-# Connection -- the DCL sim's MAVLink UDP endpoint. Change these for a remote sim.
-# ======================================================================================
-SIM_SERVER_UDP_IP = "127.0.0.1"
-SIM_SERVER_UDP_PORT = 14550
-
-# ======================================================================================
-# Run flags (main.py)
-#   DRY_RUN     : True  = compute & log guidance but send NO flight setpoints (safe ground
-#                         check; the planner runs but the drone stays put).
-#                 False = actually fly -- the drone arms on startup. CAUTION.
-#   DEBUG_VISION: write detection overlays (no effect here -- vision is off).
-#   LOGGING     : write per-run JSONL logs under logs/ for offline tuning.
-#   USE_VISION  : run the camera/detector pipeline (off on this branch).
-#   USE_TELEOP  : True  = manual keyboard control (teleop).
-#                 False = autonomous flight (the spline / waypoint planner below).
-#   USE_SPLINE  : autonomous mode only. True  = follow a smooth Catmull-Rom SPLINE through
-#                 the mission waypoints at constant cruise speed (continuous flight, this
-#                 branch's default -- see spline_planner.py). False = the stop-at-each
-#                 waypoint planner (planner.py).
-# ======================================================================================
-DRY_RUN = False      # gate-chaser dry check passed; cleared to FLY the visual servo
-DEBUG_VISION = True  # write detection overlays so we can SEE what the detector locks onto
-LOGGING = True
-USE_VISION = False   # teleop mode: vision off
-USE_TELEOP = True
-USE_SPLINE = False
-
-# USE_STATE_ESTIMATOR: VQ2 mode. True = rebuild attitude+altitude from HIGHRES_IMU ourselves
-# (ATTITUDE/LOCAL_POSITION_NED/ODOMETRY are blocked in VQ2 -- spec 9.3), publishing into
-# shared_data with the old schema so the controller is unchanged (see state_estimator.py).
-# When True, setup.py starts the StateEstimator thread. Leave the navigation planner choice
-# above alone for now -- horizontal position isn't recovered yet, so the only flight that
-# works under VQ2 is a HOVER (Phase-0 milestone); the reactive gate-chaser is Phase 1.
-USE_STATE_ESTIMATOR = False  # baro is NaN in this sim -> estimator vz drifts; use open-loop thrust
-
-# USE_GATE_CHASER: VQ2 reactive visual servo (gate_chaser.py). Requires USE_VISION +
-# USE_STATE_ESTIMATOR. True = fly TOWARD the detected gate (the only thing that works under
-# VQ2 -- no map, no absolute position; the camera is the reference). False = HoverPlanner.
+# ---- Mode selection ----
+USE_TELEOP      = True
 USE_GATE_CHASER = False
 
-# ---- Gate-chaser tuning. Velocities are LOW because the controller's horizontal loop has no
-# velocity feedback under VQ2 (a velocity command maps straight to a lean), so these double as
-# lean intent -- keep them gentle. All position loops close through VISION, frame to frame.
-GATE_APPROACH_SPEED = 1.2    # m/s forward toward the gate (caps the forward lean)
-GATE_KP_FWD = 0.15          # forward m/s per metre of range (ramps down near gate -> brakes in)
-GATE_KP_LAT = 0.40          # strafe m/s per metre of lateral (y) offset -- centre the gate
-GATE_KP_VERT = 0.6          # climb/descend m/s per metre of vertical (z) offset -- match height
-GATE_MAX_STRAFE = 0.65      # m/s cap on strafe
-GATE_ALIGN_FALLOFF = 4.0    # perpendicular offset (m) that cuts forward speed toward MIN_ALIGN
-GATE_MIN_ALIGN = 0.2        # forward speed never drops below this fraction (keeps creeping in)
-GATE_CLOSE_RANGE = 5.0      # m: within this, COMMIT -> drive straight through, stop late steering
-GATE_COAST_S = 0.7          # s: keep flying forward after a close gate leaves frame (pass through)
-GATE_VISION_TIMEOUT_S = 0.4 # s: vision older than this -> gate considered lost
+# ---- Teleop ----
+TELEOP_SPEED        = 2.0   # m/s forward / strafe
+TELEOP_VSPEED       = 1.5   # m/s climb / descend
+TELEOP_YAW_RATE_DPS = 60.0  # deg/s yaw
 
-# ======================================================================================
-# Mission / paths (main.py)
-#   CAPTURE_PATH : where teleop's B key writes captured waypoints.
-#   MISSION_PATH : mission JSON the autonomous planner loads; if the file is missing it
-#                  builds the SQUARE_* mission below instead.
-#   SQUARE_*     : built-in square mission, used only when MISSION_PATH is absent.
-#                  SQUARE_CCW False = clockwise (right turns).
-# ======================================================================================
-CAPTURE_PATH = 'captured_waypoints.json'
-MISSION_PATH = 'mission.json'
-SQUARE_SIDE_M = 5.0
-SQUARE_ALT_M = 2.0
-SQUARE_CCW = False
-#claude --resume 48ec61fe-f15b-4b9c-b0ab-6f8a5368fc07
-# ======================================================================================
-# Autonomous planner (planner.py)
-#   MAX_SPEED    : m/s cap on commanded velocity magnitude (speed scales with distance to
-#                  the waypoint, then is capped here). If the drone can't reach this it has
-#                  saturated its lean cap -- raise controller.MAX_LEAN_RAD / KP_LEAN.
-#   MAX_VSPEED   : m/s cap on the vertical (climb/descend) component.
-#   MAX_WP_DIST_M: runaway guard -- if the drone is farther than this from its ACTIVE
-#                  waypoint it hovers (the velocity loop brakes back). MUST exceed the
-#                  mission's LONGEST leg or it stalls at a waypoint (the captured course's
-#                  longest leg is ~39 m, so 60 clears it while still catching a 100 m+
-#                  flyaway).
-# ======================================================================================
-# VQ2 SAFE BASELINE: speeds dialled way down. Under VQ2 we fly on our OWN state estimate
-# (no LOCAL_POSITION_NED/ATTITUDE), which will be noisier/laggier than ground truth -- slow
-# flight keeps estimation error and control demands small while we validate the pipeline.
-# Ramp these back up only once the estimator + spline are confirmed working in training.
-MAX_SPEED = 6.0
-MAX_VSPEED = 3.0
-MAX_WP_DIST_M = 60.0
+# ---- Gate chaser ----
+GATE_KP_LAT       = 0.40
+GATE_MAX_STRAFE   = 0.65    # m/s clamp
+GATE_KP_VERT      = 0.60
+GATE_MAX_VERT     = 0.65    # m/s clamp
+GATE_APPROACH_SPD = 1.2     # m/s constant forward approach
+GATE_CLOSE_RANGE  = 5.0     # m — switch to commit (blast through) mode
 
-# ======================================================================================
-# Spline planner (spline_planner.py) -- continuous flight through the waypoints.
-#   CRUISE_SPEED: m/s flown along the path (constant; tapers only on the final approach).
-#                 Must be <= MAX_SPEED (the velocity magnitude is still capped there).
-#   LOOKAHEAD_* : pure-pursuit carrot distance, SPEED-SCALED -- lookahead = clamp(
-#                 LOOKAHEAD_TIME * speed, LOOKAHEAD_M, LOOKAHEAD_MAX). Short when slow (dense
-#                 gates / the climb-out off the line -> tight tracking, incl. altitude), long
-#                 when fast (smooth straights, no wobble). A single fixed value can't do both
-#                 when the gate spacing (a few m) is smaller than the carrot needed at speed.
-#                 LOOKAHEAD_M is the FLOOR (slow/dense), LOOKAHEAD_MAX the cap (fast).
-# When MAX_WP_DIST_M is used here it bounds CROSS-TRACK error off the path (not distance to
-# a single waypoint): farther off the path than this -> hover and brake back toward it.
-# ======================================================================================
-CRUISE_SPEED = 3.0     # VQ2 SAFE BASELINE (was 60) -- slow, drift-tolerant while validating
-LOOKAHEAD_M = 2.0      # floor: carrot distance (m) when slow / at the dense early gates
-LOOKAHEAD_TIME = 0.5   # seconds of travel ahead: lookahead grows as 0.5 * current speed
-LOOKAHEAD_MAX = 7.0    # cap: carrot distance (m) at high speed (smooths the fast straights)
-
-# KP_VERT_PATH: vertical PATH-altitude correction gain (1/s). The controller's vertical loop
-# tracks vertical VELOCITY only, and the carrot's vertical pull is diluted at speed (the carrot
-# is mostly horizontal), so on climbs/descents the drone settles BELOW the path and clips gate
-# BOTTOMS. This adds vd += KP_VERT_PATH * (planned_alt_error), a position term that does NOT
-# shrink with horizontal speed, pulling the drone back onto the path's height. ~1/s means a 1 m
-# altitude error commands ~1 m/s of climb/descend (capped at MAX_VSPEED). 0.0 = old behaviour
-# (carrot-only vertical). Raise if it still flies low through gates; lower if altitude hunts.
-KP_VERT_PATH = 1.2
-
-# ======================================================================================
-# Curvature-aware speed (spline_planner.py) -- so the drone SLOWS for corners instead of
-# overshooting them at high CRUISE_SPEED, then re-accelerates on the straights. The planner
-# caps speed at sqrt(A_LAT_MAX / path_curvature) and brakes ahead of corners / the final
-# waypoint at up to A_LON_MAX. These are a no-op when the path is gentle enough to hold
-# cruise everywhere (e.g. at low CRUISE_SPEED), so slow runs are unchanged. Set them to the
-# airframe's real limits: HIGHER = carries more speed through bends but risks overshoot;
-# LOWER = slower, safer racing lines.
-#
-# CRITICAL COUPLING: A_LAT_MAX is the cornering accel the AIRFRAME must actually produce,
-# and a leaning quad can only make g*tan(roll). So A_LAT_MAX must stay <= g*tan(MAX_LEAN_RAD)
-# (the ROLL cap in controller.py) or the planner commands corner speeds the drone physically
-# can't turn at -> it drifts WIDE and clips the gate. With the roll cap now at 52deg the
-# ceiling is g*tan52 = ~12.5 m/s^2, so A_LAT_MAX=11 keeps margin (needs ~48deg roll). If you
-# drop the roll cap back to 45deg, drop A_LAT_MAX back to ~9 (g*tan45 = 9.8) to match.
-# The tightest corner on the captured course (R=8.9m, right at the start / the wp0-wp3
-# climb-out) is what limits the FIRST segment's speed -- raising A_LAT_MAX speeds that bend
-# too (that's why the drone only mildly pitches there: it's the sharpest turn on the course).
-# A_LON_MAX is the SAFE speed lever: it doesn't raise any corner speed, just lets the drone
-# accelerate onto the straights and brake later into corners (more time spent at top speed).
-# ======================================================================================
-A_LAT_MAX = 3.0     # VQ2 SAFE BASELINE (was 6) -- gentle corners; keep <= g*tan(roll cap)
-A_LON_MAX = 3.0      # VQ2 SAFE BASELINE (was 9) -- gentle accel/brake
-
-# FINISH_SPEED: speed (m/s) allowed AT the last waypoint. A race doesn't need to stop -- the
-# timer ends when you cross the final gate -- so braking to a halt there wastes the run.
-# 0.0 = brake to a full stop (settle on the last point). A positive value CROSSES the finish
-# at speed (much faster overall): the drone keeps the last gate's corner/cruise speed instead
-# of decelerating for ~CRUISE^2/(2*A_LON) metres. It will overshoot ~FINISH_SPEED^2/(2*A_LON)
-# m PAST the finish before the completion-hover brakes it, so only raise it toward CRUISE if
-# there is open space beyond the last gate. (Looping missions ignore this -- they never stop.)
-FINISH_SPEED = 8.0
-
-# ======================================================================================
-# Manual teleop (teleop.py)
-#   TELEOP_SPEED      : m/s horizontal at full stick (one WASD key held).
-#   TELEOP_VSPEED     : m/s climb/descend at full stick (Space / C).
-#   TELEOP_YAWRATE_DPS: deg/s yaw rate while Q/E are held.
-#   TELEOP_YAW_SIGN   : flip to -1.0 if Q/E turn the nose the wrong way.
-# ======================================================================================
-TELEOP_SPEED = 2.0
-TELEOP_VSPEED = 1.5
-TELEOP_YAWRATE_DPS = 60.0
-TELEOP_YAW_SIGN = 1.0
+# ---- Camera / geometry ----
+GATE_INNER_M    = 1.5       # gate inner side (m) for range estimation
+CAMERA_FOCAL_PX = 320.0     # fx = fy from spec
+CAMERA_CX       = 320.0
+CAMERA_CY       = 180.0
+CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward

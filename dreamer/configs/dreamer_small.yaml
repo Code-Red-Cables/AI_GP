@@ -1,0 +1,93 @@
+# DreamerV3 "small" — sized for a single RTX 4070 Laptop (8 GB VRAM).
+# Every field maps to a dataclass in src/dreamer_drone/config.py. Runs save the fully
+# resolved config next to their artifacts, so this file is the starting point, not the record.
+name: dreamer_small
+
+sim:
+  mavlink_host: "127.0.0.1"     # set to the Windows host IP if WSL mirrored-net is off
+  mavlink_port: 14550
+  camera_bind: "0.0.0.0"
+  camera_port: 5600
+  sim_exe: ""                   # e.g. /mnt/d/Code/Competitions/AI_GP/AIGP_3385/FlightSim.exe
+  launch_sim: false             # attach to an already-running sim by default
+  reset_cmd_id: 31000
+  reset_settle_s: 1.5
+  stale_image_s: 0.5
+  stale_telem_s: 0.5
+
+obs:
+  image_h: 64
+  image_w: 64
+  grayscale: false
+
+action:
+  hover_thrust: 0.27
+  thrust_span: 0.5
+  thrust_min: 0.05
+  thrust_max: 0.90
+  max_rate_rad_s: 3.0           # ~2.5x sim gain measured -> ±1 action ≈ ±8 rad/s roll/pitch
+  rate_sign_pitch: -1.0         # all axes inverted vs gyro (probe_control 2026-07-23)
+  rate_sign_roll: -1.0
+  rate_sign_yaw: -1.0
+  slew_rate_limit: 0.0
+  lpf_alpha: 0.0
+  control_hz: 30.0              # matches spec camera rate; confirm with the probe
+  action_repeat: 1
+
+reward:
+  w_progress: 1.0
+  w_gate: 10.0
+  w_finish: 100.0
+  w_time: 0.05
+  w_collision: 20.0
+  w_control: 0.01
+  w_offcourse: 0.0                  # off: a per-step off-course penalty made hover < crash
+  w_alive: 0.0                     # optional survival bonus (keep < time penalty to avoid hover-farm)
+  use_privileged_progress: false   # auto-usable only if the probe shows position telemetry
+  progress_clip: 2.0
+
+termination:
+  episode_timeout_s: 60.0
+  collision_terminates: true
+  collision_threat_min: 1
+  finish_terminates: true
+  stuck_no_gate_s: 12.0
+
+curriculum:
+  enabled: true
+  start_stage: 0
+  promote_success_rate: 0.7
+  promote_window: 20
+
+model:
+  deter_dim: 512
+  stoch_dim: 32
+  stoch_classes: 32
+  hidden: 256
+  cnn_depth: 32
+  vector_layers: 2
+  reward_bins: 255
+  critic_bins: 255
+  free_bits: 1.0
+  kl_balance: 0.8
+
+train:
+  seed: 0
+  device: "cuda"
+  batch_size: 16
+  seq_len: 50
+  replay_capacity: 500000
+  prefill: 5000
+  train_ratio: 512
+  imag_horizon: 15
+  gamma: 0.997
+  lambda_: 0.95
+  lr_model: 0.0001
+  lr_actor: 0.00003
+  lr_critic: 0.00003
+  actor_entropy: 0.0003
+  grad_clip: 1000.0
+  total_env_steps: 2000000
+  checkpoint_every: 10000
+  eval_every: 20000
+  log_dir: "artifacts/runs"

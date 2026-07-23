@@ -1,136 +1,70 @@
-"""GateChaser -- VQ2 reactive visual servo: fly toward the detected gate.
-
-VQ2 gives no absolute position (no LOCAL_POSITION_NED, no baro, no mag) -- only the IMU
-(attitude, via state_estimator) and the camera. So we DON'T navigate a map; we chase the gate
-the camera sees, frame by frame. Every frame ``shared_data['vision']['gate_body']`` is the gate
-centre in BODY axes (x forward, y right, z down) -- a DRIFT-FREE relative fix. We turn that into
-a velocity command:
-
-  * forward  : approach the gate (throttled down while we're still off-centre / off-height, so
-               the drone CENTRES and CLIMBS to the gate first, then drives through);
-  * strafe   : null the lateral offset (y) -> gate horizontally centred;
-  * vertical : null the vertical offset (z) -> match the gate's height (this is also our only
-               altitude reference under VQ2 -- the gate tells us how high to be).
-
-All loops close through VISION, so the controller's missing horizontal velocity feedback
-doesn't matter: a velocity command becomes a lean, the drone moves, and the next frame's
-gate_body reflects the result. Body velocities are mapped to NED with the SAME convention as
-teleop (the inverse of controller.velocity_to_attitude), so a "forward" command becomes a
-forward lean. Heading is HELD (no yaw command in v1 -- the gate starts ahead and the 90deg FOV
-is wide; yaw-to-acquire-the-next-gate is a later step).
-
-Pass-through: within ``GATE_CLOSE_RANGE`` we COMMIT -- drive straight forward at the gate's
-height and stop making late lateral corrections (which would only jerk us off-line). When the
-gate then leaves the frame (too close to see), we COAST forward for ``GATE_COAST_S`` to clear
-it, then hover and wait to reacquire the next gate.
-
-Same ``compute_target()`` -> ``{'mode':'velocity','vel_ned','yaw',...}`` contract as the other
-planners, so controller.py is unchanged.
-"""
-
 import math
-import threading
 import time
 
-from config import (MAX_SPEED, MAX_VSPEED, GATE_APPROACH_SPEED, GATE_KP_FWD, GATE_KP_LAT,
-                    GATE_KP_VERT, GATE_MAX_STRAFE, GATE_ALIGN_FALLOFF, GATE_MIN_ALIGN,
-                    GATE_CLOSE_RANGE, GATE_COAST_S, GATE_VISION_TIMEOUT_S)
+import config
 
-TELEM_TIMEOUT_NS = 500_000_000
-MAX_ALT_M = 30.0                 # sanity guard: if our (drifty) altitude blows past this, hover
-
-
-def _clamp(x, lim):
-    return max(-lim, min(lim, x))
+CX = config.CAMERA_CX
+CY = config.CAMERA_CY
+F  = config.CAMERA_FOCAL_PX
+MIN_CONFIDENCE = 0.30
 
 
-class GateChaser:
+class GateChaserPlanner:
+    """Visual servo: fly toward the nearest detected gate."""
+    name = 'gate_chase'
 
-    def __init__(self, data):
-        self.data = data
-        if 'lock' not in self.data:
-            self.data['lock'] = threading.RLock()
-        self._committed = False      # within close range -> punching through
-        self._commit_ts = 0          # when we last saw a close gate (for coast-through)
-        self._last_vd = 0.0          # vertical command held through a brief gate loss
+    def __init__(self):
+        self._lost_since = None
 
-    def _snapshot(self):
-        with self.data['lock']:
-            return {
-                'attitude': self.data.get('attitude'),
-                'vision': self.data.get('vision'),
-                'position_ned': self.data.get('position_ned'),
-            }
+    def compute_target(self, shared_data):
+        shared_data['planner_mode'] = self.name
+        log = shared_data.get('log_event', lambda e, d='': None)
+        gate = shared_data.get('gate_detection')
 
-    def _publish(self, target):
-        with self.data['lock']:
-            self.data['target'] = target
-        return target
+        if gate is None or gate.get('confidence', 0.0) < MIN_CONFIDENCE:
+            conf_str = f"{gate['confidence']:.2f}" if gate else 'none'
+            if self._lost_since is None:
+                self._lost_since = time.time()
+                log('GATE_LOST', f'conf={conf_str}')
+            return {'vn': 0.0, 've': 0.0, 'vd': 0.0, 'yaw_rate': 0.0}
 
-    def _ned(self, f_v, r_v, vd, yaw_now, **extra):
-        """Body (forward, right, vd) -> NED velocity along the physical nose (cos y, -sin y),
-        matching teleop / the inverse of the controller's body loop. Returns a target dict."""
-        c, s = math.cos(yaw_now), math.sin(yaw_now)
-        vn = c * f_v + s * r_v
-        ve = -s * f_v + c * r_v
-        vd = _clamp(vd, MAX_VSPEED)
-        return {'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
-                'yaw': float(yaw_now), 'ts': time.time_ns(), **extra}
+        self._lost_since = None
 
-    def compute_target(self):
-        now = time.time_ns()
-        snap = self._snapshot()
-        att = snap['attitude']
-        yaw_now = att.get('yaw', 0.0) if att else 0.0
+        u, v    = gate['center_px']
+        area_px = gate['area_px']
+        conf    = gate['confidence']
 
-        # Altitude sanity guard (our vertical estimate is drifty without baro): if it claims
-        # we've blown well past any gate height, descend gently rather than trust a bad climb.
-        pos = snap['position_ned']
-        if pos and pos.get('z') is not None and -pos['z'] > MAX_ALT_M:
-            return self._publish(self._ned(0.0, 0.0, MAX_VSPEED, yaw_now,
-                                           source='alt_guard', range_m=-pos['z']))
+        # Range estimate: apparent side = F * L / r  →  r = F * L / sqrt(area)
+        side_px = math.sqrt(max(area_px, 1.0))
+        rng = F * config.GATE_INNER_M / side_px
 
-        vis = snap['vision']
-        fresh = (vis and vis.get('detected') and vis.get('ts') is not None
-                 and (now - vis['ts']) < GATE_VISION_TIMEOUT_S * 1e9
-                 and vis.get('gate_body') is not None)
+        # Body-frame gate offset (camera-tilt corrected)
+        gy = rng * (u - CX) / F
+        gz = rng * ((v - CY) / F - math.tan(config.CAMERA_TILT_RAD))
 
-        if not fresh:
-            # Lost the gate. If we just committed to a close gate, COAST forward to clear it
-            # (it left the frame because we're passing through); otherwise hover and wait.
-            if self._committed and (now - self._commit_ts) < GATE_COAST_S * 1e9:
-                print(f'[CHASE] gate_pass  yaw={yaw_now:+.3f}', flush=True)
-                return self._publish(self._ned(GATE_APPROACH_SPEED, 0.0, self._last_vd, yaw_now,
-                                               source='gate_pass'))
-            self._committed = False
-            print(f'[CHASE] gate_LOST  yaw={yaw_now:+.3f}', flush=True)
-            return self._publish(self._ned(0.0, 0.0, 0.0, yaw_now, source='gate_lost'))
+        # Body-frame velocity commands
+        r_v = gy * config.GATE_KP_LAT
+        r_v = max(-config.GATE_MAX_STRAFE, min(config.GATE_MAX_STRAFE, r_v))
 
-        gx, gy, gz = vis['gate_body']                       # forward, right, down (body)
-        rng = vis.get('range_m') or math.sqrt(gx * gx + gy * gy + gz * gz)
-        vd = _clamp(GATE_KP_VERT * gz, MAX_VSPEED)          # gz<0 (gate above) -> climb
-        self._last_vd = vd
+        vd = gz * config.GATE_KP_VERT
+        vd = max(-config.GATE_MAX_VERT, min(config.GATE_MAX_VERT, vd))
 
-        if rng < GATE_CLOSE_RANGE:
-            # Commit: punch straight through at the gate's height, stop late lateral steering.
-            self._committed = True
-            self._commit_ts = now
-            print(f'[CHASE] COMMIT  rng={rng:.1f}m  gb=({gx:+.1f},{gy:+.1f},{gz:+.1f})'
-                  f'  vd={vd:+.2f}  yaw={yaw_now:+.3f}', flush=True)
-            return self._publish(self._ned(GATE_APPROACH_SPEED, 0.0, vd, yaw_now,
-                                           source='gate_commit', range_m=rng))
+        if rng < config.GATE_CLOSE_RANGE:
+            f_v = config.GATE_APPROACH_SPD * 1.5
+            log('GATE_COMMIT', f'rng={rng:.1f}m')
+        else:
+            f_v = min(config.GATE_APPROACH_SPD, rng * 0.15)
 
-        self._committed = False
-        # Forward approach, THROTTLED by how far off-centre/height we still are, so the drone
-        # centres + climbs to the gate before driving through it (perp offset = lateral+vertical).
-        perp = math.hypot(gy, gz)
-        align = max(GATE_MIN_ALIGN, 1.0 - perp / GATE_ALIGN_FALLOFF)
-        f_v = min(GATE_APPROACH_SPEED, GATE_KP_FWD * gx) * align
-        f_v = max(0.0, min(f_v, MAX_SPEED))
-        r_v = _clamp(GATE_KP_LAT * gy, GATE_MAX_STRAFE)     # gy>0 (gate right) -> strafe right
-        tgt = self._ned(f_v, r_v, vd, yaw_now, source='gate_track', range_m=rng)
-        vel = tgt['vel_ned']
-        print(f'[CHASE] track  rng={rng:5.1f}m  gb=({gx:+5.1f},{gy:+5.1f},{gz:+5.1f})'
-              f'  r_v={r_v:+.2f}  ned=({vel[0]:+.2f},{vel[1]:+.2f},{vel[2]:+.2f})'
-              f'  yaw={yaw_now:+.3f}', flush=True)
-        return self._publish(tgt)
+        # Body → NED
+        yaw = (shared_data.get('attitude') or {}).get('yaw', 0.0)
+        vn  =  math.cos(yaw) * f_v - math.sin(yaw) * r_v
+        ve  =  math.sin(yaw) * f_v + math.cos(yaw) * r_v
+
+        print(
+            f'[CHASE] rng={rng:5.1f}m  u={u:.0f}  v={v:.0f}  '
+            f'gy={gy:+.2f}  gz={gz:+.2f}  conf={conf:.2f}  '
+            f'r_v={r_v:+.2f}  vd={vd:+.2f}  ned=({vn:+.2f},{ve:+.2f},{vd:+.2f})',
+            flush=True,
+        )
+
+        return {'vn': vn, 've': ve, 'vd': vd, 'yaw_rate': 0.0}

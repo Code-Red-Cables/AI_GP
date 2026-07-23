@@ -7,6 +7,7 @@ from pymavlink import mavutil
 ENCAPSULATED_RACE_STATUS_MSG_ID = 1
 ENCAPSULATED_TRACK_INFO_MSG_ID  = 2
 
+
 class MAVLinkRX:
 
     def __init__(self, mavlink_connection, data):
@@ -14,26 +15,14 @@ class MAVLinkRX:
         self.data = data
         self.thread = None
         self.is_running = False
-
         self.track_chunks = {}
         self.expected_num_track_chunks = {}
-
-        # shared_data is written by 3 RX threads and read by the control loop.
-        # Guard all access with a single re-entrant lock created exactly once.
-        if 'lock' not in self.data:
-            self.data['lock'] = threading.RLock()
-
-    def _store(self, key, value):
-        with self.data['lock']:
-            self.data[key] = value
+        self._last_gate_idx = None
 
     @classmethod
     def create_mavlink_rx(cls, mavlink_connection, data):
         rx = cls(mavlink_connection, data)
-        rx.thread = threading.Thread(
-            target=rx.mavlink_receive_loop,
-            daemon = False
-        )
+        rx.thread = threading.Thread(target=rx.mavlink_receive_loop, daemon=False)
         rx.is_running = True
         rx.thread.start()
         return rx
@@ -42,274 +31,167 @@ class MAVLinkRX:
         self.is_running = False
         return self.thread
 
-    def mavlink_receive_loop(self):
-        """
-        Continuously receive MAVLink messages without blocking.
-        """
-        while self.is_running:
+    def _log(self, event, detail=''):
+        fn = self.data.get('log_event')
+        if fn:
+            fn(event, detail)
 
+    # ------------------------------------------------------------------
+    def mavlink_receive_loop(self):
+        while self.is_running:
             try:
                 msg = self.mavlink_conn.recv_match(blocking=False)
             except ConnectionResetError:
-                print('WARNING: ConnectionResetError was thrown. No longer listening to MAVLink port.')
+                print('WARNING: ConnectionResetError — no longer listening.', flush=True)
                 return
 
             if msg is None:
                 time.sleep(0.001)
                 continue
 
-            msg_type = msg.get_type()
-
-            if msg_type == "BAD_DATA":
+            t = msg.get_type()
+            if t == 'BAD_DATA':
                 continue
 
-            # --------------------------------------------------------------------------------------
-            # HEARTBEAT
-            # --------------------------------------------------------------------------------------
-            if msg_type == "HEARTBEAT":
-                self.on_heartbeat(msg)
+            if   t == 'HEARTBEAT':              self.on_heartbeat(msg)
+            elif t == 'TIMESYNC':               self.on_timesync(msg)
+            elif t == 'ATTITUDE':               self.on_attitude(msg)
+            elif t == 'LOCAL_POSITION_NED':     self.on_local_position_ned(msg)
+            elif t == 'ODOMETRY':               self.on_odometry(msg)
+            elif t == 'HIGHRES_IMU':            self.on_highres_imu(msg)
+            elif t == 'ENCAPSULATED_DATA':      self.on_encapsulated_data(msg)
+            elif t == 'ACTUATOR_OUTPUT_STATUS': self.on_actuator_output_status(msg)
+            elif t == 'COLLISION':              self.on_collision(msg)
+            elif t == 'DATA_TRANSMISSION_HANDSHAKE':
+                transfer_id = msg.width
+                self.track_chunks[transfer_id] = {}
+                self.expected_num_track_chunks[transfer_id] = msg.packets
 
-            # --------------------------------------------------------------------------------------
-            # TIMESYNC
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "TIMESYNC":
-                self.on_timesync(msg)
-
-            # --------------------------------------------------------------------------------------
-            # ATTITUDE
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "ATTITUDE":
-                self.on_attitude(msg)
-
-            # --------------------------------------------------------------------------------------
-            # LOCAL_POSITION_NED
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "LOCAL_POSITION_NED":
-                self.on_local_position_ned(msg)
-
-            # --------------------------------------------------------------------------------------
-            # ODOMETRY
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "ODOMETRY":
-                self.on_odometry(msg)
-
-            # --------------------------------------------------------------------------------------
-            # HIGHRES_IMU
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "HIGHRES_IMU":
-                self.on_highres_imu(msg)
-
-            # --------------------------------------------------------------------------------------
-            # ENCAPSULATED_DATA
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "ENCAPSULATED_DATA":
-                self.on_encapsulated_data(msg)
-
-            # --------------------------------------------------------------------------------------
-            # ACTUATOR_OUTPUT_STATUS
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "ACTUATOR_OUTPUT_STATUS":
-                self.on_actuator_output_status(msg)
-
-            # --------------------------------------------------------------------------------------
-            # COLLISION
-            # --------------------------------------------------------------------------------------
-            elif msg_type == "COLLISION":
-                self.on_collision(msg)
-
-            # --------------------------------------------------------------------------------------
-            # DATA_TRANSMISSION_HANDSHAKE - Repurposed and used for upcoming 'Track Data' packets
-            # --------------------------------------------------------------------------------------
-            elif msg.get_type() == "DATA_TRANSMISSION_HANDSHAKE":
-                track_data_transfer_id = msg.width
-                self.track_chunks[track_data_transfer_id] = {}
-                self.expected_num_track_chunks[track_data_transfer_id] = msg.packets
-
+    # ------------------------------------------------------------------
     def on_heartbeat(self, msg):
-        armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-        ts = time.time_ns()
-        # Decode the human-readable flight-mode name so logs show what mode the FC is
-        # actually in (we depend on a self-levelling/rate mode; verifying it is critical).
-        try:
-            mode_name = self.mavlink_conn.flightmode
-        except Exception:
-            mode_name = None
-        with self.data['lock']:
-            self.data['armed'] = armed
-            self.data['heartbeat_ts'] = ts
-            self.data['flight_mode'] = mode_name
-            self.data['base_mode'] = int(msg.base_mode)
-            self.data['custom_mode'] = int(msg.custom_mode)
+        pass
 
     def on_timesync(self, msg):
-        request_time = msg.ts1
-        response_time = msg.tc1
-
-    # VQ2: when our own state estimator owns 'attitude'/'position_ned' (use_state_estimator),
-    # the sim's real messages -- if a TRAINING flight still sends them -- must NOT overwrite
-    # the estimate (they raced it 400x/s and tumbled the drone). Route them to *_truth keys
-    # instead: harmless if absent, and a free GROUND-TRUTH reference to calibrate the estimator.
-    def _est_active(self):
-        return bool(self.data.get('use_state_estimator'))
+        pass
 
     def on_attitude(self, msg):
-        data = {
-            'roll': msg.roll,
-            'pitch': msg.pitch,
-            'yaw': msg.yaw,
-            'rollspeed': msg.rollspeed,
+        # NOTE: ATTITUDE is marked disabled in VQ2 spec but still arrives.
+        # This is our only yaw source (AHRS has no magnetometer in sim).
+        self.data['attitude'] = {
+            'roll':       msg.roll,
+            'pitch':      msg.pitch,
+            'yaw':        msg.yaw,
+            'rollspeed':  msg.rollspeed,
             'pitchspeed': msg.pitchspeed,
-            'yawspeed': msg.yawspeed,
-            'time_boot_ms': msg.time_boot_ms,
-            'ts': time.time_ns(),
+            'yawspeed':   msg.yawspeed,
+            'ts':         time.time_ns(),
         }
-        if self._est_active():
-            self._store('attitude_truth', data)
-            # AHRS has no magnetometer in VQ2, so yaw stays at 0 without this patch.
-            # ATTITUDE messages DO flow in VQ2 (confirmed by logs), so use them for yaw only;
-            # the AHRS handles roll/pitch correctly from accel.
-            with self.data['lock']:
-                att = self.data.get('attitude')
-                if att is not None:
-                    att['yaw'] = msg.yaw
-                    att['yawspeed'] = msg.yawspeed
-        else:
-            self._store('attitude', data)
 
     def on_local_position_ned(self, msg):
-        self._store('position_ned_truth' if self._est_active() else 'position_ned', {
-            'x': msg.x,
-            'y': msg.y,
-            'z': msg.z,
-            'vx': msg.vx,
-            'vy': msg.vy,
-            'vz': msg.vz,
-            'time_boot_ms': msg.time_boot_ms,
+        # Disabled in VQ2 — stored here for VQ1 compatibility.
+        self.data['local_position_ned'] = {
+            'x': msg.x, 'y': msg.y, 'z': msg.z,
+            'vx': msg.vx, 'vy': msg.vy, 'vz': msg.vz,
             'ts': time.time_ns(),
-        })
+        }
 
     def on_odometry(self, msg):
-        # q is stored [w, x, y, z]; keep that ordering in the record.
-        self._store('odometry_truth' if self._est_active() else 'odometry', {
-            'pos': (msg.x, msg.y, msg.z),
-            'q': (msg.q[0], msg.q[1], msg.q[2], msg.q[3]),
-            'vel': (msg.vx, msg.vy, msg.vz),
-            'rates': (msg.rollspeed, msg.pitchspeed, msg.yawspeed),
-            'time_usec': msg.time_usec,
-            'reset_counter': msg.reset_counter,
+        # Disabled in VQ2 — stored here for VQ1 compatibility.
+        self.data['odometry'] = {
+            'x': msg.x, 'y': msg.y, 'z': msg.z,
+            'vx': msg.vx, 'vy': msg.vy, 'vz': msg.vz,
             'ts': time.time_ns(),
-        })
+        }
 
     def on_highres_imu(self, msg):
-        # VQ2: ATTITUDE / LOCAL_POSITION_NED / ODOMETRY are gone, so HIGHRES_IMU is our ONLY
-        # raw state source. Capture everything it carries so the state estimator can rebuild
-        # attitude (gyro+accel+mag) and altitude (baro): acc/gyro in BODY frame (X fwd, Y right,
-        # Z down), mag in gauss, pressure_alt in metres (drift-free vertical reference).
-        # `fields_updated` is the bitmask of which fields the sim actually populated -- mag in
-        # particular may be absent; the estimator must cope (gyro-only yaw) if so.
-        self._store('imu', {
-            'acc': (msg.xacc, msg.yacc, msg.zacc),
-            'gyro': (msg.xgyro, msg.ygyro, msg.zgyro),
-            'mag': (msg.xmag, msg.ymag, msg.zmag),
+        self.data['highres_imu'] = {
+            'xacc': msg.xacc, 'yacc': msg.yacc, 'zacc': msg.zacc,
+            'xgyro': msg.xgyro, 'ygyro': msg.ygyro, 'zgyro': msg.zgyro,
+            'xmag': msg.xmag, 'ymag': msg.ymag, 'zmag': msg.zmag,
             'abs_pressure': msg.abs_pressure,
+            'diff_pressure': msg.diff_pressure,
             'pressure_alt': msg.pressure_alt,
             'temperature': msg.temperature,
-            'fields_updated': getattr(msg, 'fields_updated', None),
-            'time_usec': msg.time_usec,
-            'ts': time.time_ns(),
-        })
+            'ts_us': msg.time_usec,
+        }
 
     def on_encapsulated_data(self, msg):
-        if msg:
-            raw_payload = bytes(msg.data)
-            data_type = raw_payload[0]
-
-            if int(data_type) == ENCAPSULATED_RACE_STATUS_MSG_ID:
-                self.on_race_status(msg)
-            elif int(data_type) == ENCAPSULATED_TRACK_INFO_MSG_ID:
-                self.on_track_data_packet(msg)
+        if not msg:
+            return
+        raw = bytes(msg.data)
+        data_type = raw[0]
+        if data_type == ENCAPSULATED_RACE_STATUS_MSG_ID:
+            self.on_race_status(msg)
+        elif data_type == ENCAPSULATED_TRACK_INFO_MSG_ID:
+            self.on_track_data_packet(msg)
 
     def on_race_status(self, msg):
-        raw_payload = bytes(msg.data)
-        # data_type - ID of this message
-        # sim_boot_time_ms - elapsed ms on server since sim boot
-        # race_start_boot_time_ms - elapsed ms on server since sim boot when race started. None or < 0 if race has not started
-        # race_finish_time_ns - elapsed ns on server since sim boot when race finished. None or < 0 if race is ongoing
-        # active_gate_index - current index of target race gate
-        # last_gate_race_time - race time in seconds when last gate was passed
-        data_type, sim_boot_time_ms, race_start_boot_time_ms, race_finish_time_ns, active_gate_index, last_gate_race_time = struct.unpack_from(
-            "<BQqqIq", raw_payload)
-        self._store('race', {
-            'sim_boot_time_ms': sim_boot_time_ms,
-            'race_start_boot_time_ms': race_start_boot_time_ms,
-            'race_finish_time_ns': race_finish_time_ns,
-            'active_gate_index': active_gate_index,
-            'last_gate_race_time': last_gate_race_time,
-            'ts': time.time_ns(),
-        })
+        raw = bytes(msg.data)
+        (data_type, sim_boot_ms, race_start_ms, race_finish_ns,
+         active_gate_idx, last_gate_time) = struct.unpack_from('<BQqqIq', raw)
+
+        self.data['race_status'] = {
+            'sim_boot_ms':    sim_boot_ms,
+            'race_start_ms':  race_start_ms,
+            'race_finish_ns': race_finish_ns,
+            'active_gate':    active_gate_idx,
+            'last_gate_time': last_gate_time,
+        }
+
+        if active_gate_idx != self._last_gate_idx:
+            if self._last_gate_idx is not None:
+                self._log('GATE_PASSED',
+                          f'gate={active_gate_idx}  last_gate_time={last_gate_time/1e9:.3f}s')
+            self._last_gate_idx = active_gate_idx
+
+        if race_finish_ns > 0:
+            self._log('RACE_FINISH',
+                      f'finish_time={race_finish_ns/1e9:.3f}s')
 
     def on_track_data_packet(self, msg):
-        raw_payload = bytes(msg.data)
-        # header:
-        #   data_type - ID of this message
-        #   transfer_id - ID of the group of packets this chunk belongs to
-        data_type, transfer_id = struct.unpack_from("<BH", raw_payload)
+        raw = bytes(msg.data)
+        data_type, transfer_id = struct.unpack_from('<BH', raw)
         if transfer_id not in self.expected_num_track_chunks:
             return
-        raw_payload = raw_payload[3:]
-        self.track_chunks[transfer_id][msg.seqnr] = raw_payload
+        raw = raw[3:]
+        self.track_chunks[transfer_id][msg.seqnr] = raw
         if len(self.track_chunks[transfer_id]) == self.expected_num_track_chunks[transfer_id]:
-            full_payload = bytes()
+            full = bytes()
             for i in range(len(self.track_chunks[transfer_id])):
-                full_payload = full_payload + self.track_chunks[transfer_id][i]
+                full += self.track_chunks[transfer_id][i]
             del self.track_chunks[transfer_id]
             del self.expected_num_track_chunks[transfer_id]
-            self.on_track_data(full_payload)
+            self.on_track_data(full)
 
     def on_track_data(self, payload):
-        # header:
-        #   num_gates - track gate count
-        num_gates, = struct.unpack_from("<H", payload)
+        # Gate position/orientation nulled in VQ2 per spec.
+        num_gates, = struct.unpack_from('<H', payload)
         payload = payload[2:]
         gates = []
         for i in range(num_gates):
-            # Gate Info
-            #   gate_id - range is 0 - num_gates
-            #   position_ned_x, position_ned_y, position_ned_z - Position of gate in NED coordinates
-            #   orientation_ned_w, orientation_ned_x, orientation_ned_y, orientation_ned_z - Orientation of gate in NED coordinates
-            #   width - gate width in metres
-            #   height - gate height in metres
-            gate_id, position_ned_x, position_ned_y, position_ned_z, orientation_ned_w, orientation_ned_x, orientation_ned_y, orientation_ned_z, width, height = struct.unpack_from(
-                "<Hfffffffff", payload)
+            (gate_id, x, y, z, qw, qx, qy, qz, w, h) = struct.unpack_from(
+                '<Hfffffffff', payload)
             payload = payload[38:]
-            gates.append({
-                'gate_id': gate_id,
-                'pos_ned': (position_ned_x, position_ned_y, position_ned_z),
-                'orient_ned': (orientation_ned_w, orientation_ned_x, orientation_ned_y, orientation_ned_z),
-                'width': width,
-                'height': height,
-            })
-        gates.sort(key=lambda g: g['gate_id'])
-        self._store('gates', gates)
+            gates.append({'id': gate_id, 'pos': (x, y, z), 'size': (w, h)})
+        self.data['track_gates'] = gates
+        self._log('TRACK_DATA', f'{num_gates} gates received')
 
     def on_actuator_output_status(self, msg):
-        time_boot_us = msg.time_usec
-        motor_front_left = msg.actuator[0]
-        motor_front_right = msg.actuator[1]
-        motor_back_left = msg.actuator[2]
-        motor_back_right = msg.actuator[3]
+        self.data['actuator'] = {
+            'fl': msg.actuator[0],
+            'fr': msg.actuator[1],
+            'bl': msg.actuator[2],
+            'br': msg.actuator[3],
+        }
 
     def on_collision(self, msg):
-        # Collision IDs
-        # 1001 - Gate
-        # 1002 - Environment
-        collision_id = msg.id
-
-        threat_level = msg.threat_level # 1-2 with 2 being higher impact collision
-        impact = msg.horizontal_minimum_delta # this is not a delta - it is the impulse magnitude in kg m/s
-        self._store('last_collision', {
-            'collision_id': collision_id,
-            'threat_level': threat_level,
-            'impulse': impact,
+        # collision_id: 1001=Gate, 1002=Environment
+        label = {1001: 'Gate', 1002: 'Environment'}.get(msg.id, str(msg.id))
+        self.data['collision'] = {
+            'id': msg.id, 'label': label,
+            'threat': msg.threat_level,
+            'impulse': msg.horizontal_minimum_delta,
             'ts': time.time_ns(),
-        })
+        }
+        self._log('COLLISION',
+                  f'{label}  threat={msg.threat_level}  impulse={msg.horizontal_minimum_delta:.2f}kg·m/s')

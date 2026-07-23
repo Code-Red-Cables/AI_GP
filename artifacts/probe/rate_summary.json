@@ -1,0 +1,44 @@
+{
+  "seconds": 30.0,
+  "camera": {
+    "count": 900,
+    "mean_hz": 29.99663138407383,
+    "mean_dt_ms": 33.33707666024566,
+    "std_dt_ms": 2.9803226547921877,
+    "min_dt_ms": 25.409460067749023,
+    "max_dt_ms": 39.13378715515137,
+    "p95_dt_ms": 36.3309383392334
+  },
+  "attitude": null,
+  "highres_imu": {
+    "count": 3400,
+    "mean_hz": 114.22615237645397,
+    "mean_dt_ms": 8.754562586545944,
+    "std_dt_ms": 0.7348656242574932,
+    "min_dt_ms": 6.760120391845703,
+    "max_dt_ms": 11.480093002319336,
+    "p95_dt_ms": 10.010480880737305
+  },
+  "actions_sent": {
+    "count": 1450,
+    "mean_hz": 48.47157734846242,
+    "mean_dt_ms": 20.630646962672472,
+    "std_dt_ms": 0.38137523094158826,
+    "min_dt_ms": 18.80955696105957,
+    "max_dt_ms": 21.80790901184082,
+    "p95_dt_ms": 21.18849754333496
+  },
+  "frames_completed": 34006,
+  "frames_dropped": 0,
+  "duplicates": 33106,
+  "race_status": {
+    "sim_boot_ms": 214395,
+    "race_start_ms": 178579,
+    "race_finish_ns": -1,
+    "active_gate": 0,
+    "last_gate_time": -1,
+    "ts": 1784785531287213959
+  },
+  "track_gates_count": 0,
+  "position_available": false
+}

@@ -1,0 +1,27 @@
+# Fast smoke config: tiny model, tiny prefill. For validating the full loop quickly
+# (Milestones 1-3), NOT for a competitive policy.
+name: dreamer_tiny
+
+obs:
+  image_h: 64
+  image_w: 64
+
+model:
+  deter_dim: 128
+  stoch_dim: 16
+  stoch_classes: 16
+  hidden: 128
+  cnn_depth: 16
+  reward_bins: 127
+  critic_bins: 127
+
+train:
+  device: "cuda"
+  batch_size: 8
+  seq_len: 20
+  replay_capacity: 50000
+  prefill: 500
+  train_ratio: 64
+  imag_horizon: 8
+  total_env_steps: 100000
+  checkpoint_every: 5000

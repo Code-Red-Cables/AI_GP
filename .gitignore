@@ -1,28 +1,29 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.egg-info/
+.pytest_cache/
 
-# Virtual environments
+# Virtualenv
 venv/
-myenv/
-env/
 .venv/
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
+# DreamerV3 training outputs (large / regenerable)
+dreamer/artifacts/runs/
+artifacts/runs/
+*.pt
+*.ckpt
 
-# Editor / OS
-.vscode/
-.idea/
+# Simulator install (large binary, not source)
+AIGP_3385/
+
+# Old vision debug/capture output (regenerable)
+_vision_debug/
+frames/
+logs/*.csv
+logs/*.txt
+
+# OS
 .DS_Store
-.obsidian/
 
-# Run artifacts / debug output
-logs/
-reference/frames/
-_detect_debug.png
-_vision_*.png
-AIGP_3364/
+# Kept intentionally (measured data): artifacts/probe/
