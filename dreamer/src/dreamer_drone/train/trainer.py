@@ -19,8 +19,11 @@ from .collector import Collector
 
 
 class Trainer:
-    def __init__(self, cfg: Config, resume: Optional[str] = None):
+    def __init__(self, cfg: Config, resume: Optional[str] = None,
+                 demos: Optional[str] = None):
         self.cfg = cfg
+        self.demos = demos
+        self._demo_steps = 0
         self.agent = DreamerAgent(cfg)
         if resume:
             self.agent.load(resume)
@@ -57,9 +60,20 @@ class Trainer:
     def run(self) -> None:
         t = self.cfg.train
         bt = t.batch_size * t.seq_len
+
+        # replay seeding: preload demos into the main replay (for the world model) AND a
+        # separate demo buffer used for behavior cloning of the actor (Phase 5).
+        self.demo_replay: Optional[SequenceReplay] = None
+        if self.demos:
+            self._demo_steps = self.replay.load_episode_dir(self.demos)
+            self.demo_replay = SequenceReplay(max(self._demo_steps, 1))
+            self.demo_replay.load_episode_dir(self.demos)
+            print(f"[train] seeded replay with {self._demo_steps} demo transitions from "
+                  f"{self.demos} (BC coef={t.bc_coef} anneal={t.bc_anneal})", flush=True)
+
         self.collector.start()
 
-        # prefill with random exploration
+        # prefill with random exploration (tops up on top of any demos)
         print(f"[train] prefill to {t.prefill} transitions (random policy) ...", flush=True)
         while len(self.replay) < t.prefill:
             time.sleep(1.0)
@@ -76,11 +90,18 @@ class Trainer:
         last_report = t_start
         while self.collector.env_steps < t.total_env_steps:
             env_steps = self.collector.env_steps
-            # train-ratio pacing: keep replayed steps ~= train_ratio * env steps
-            target_updates = t.train_ratio * max(1, env_steps) / bt
+            # train-ratio pacing: keep replayed steps ~= train_ratio * (env + demo steps).
+            # Including demo_steps lets the learner train on seeded demos while env_steps is 0.
+            target_updates = t.train_ratio * max(1, env_steps + self._demo_steps) / bt
             if updates < target_updates and self.replay.can_sample(t.seq_len):
                 batch = self.replay.sample(t.batch_size, t.seq_len, self.agent.device)
-                metrics = self.agent.train_step(batch)
+                # behavior cloning: sample a demo batch + anneal the BC weight to 0
+                demo_batch, bc_weight = None, 0.0
+                if self.demo_replay is not None and self.demo_replay.can_sample(t.seq_len):
+                    bc_weight = t.bc_coef * max(0.0, 1.0 - updates / max(1, t.bc_anneal))
+                    if bc_weight > 0:
+                        demo_batch = self.demo_replay.sample(t.batch_size, t.seq_len, self.agent.device)
+                metrics = self.agent.train_step(batch, demo_batch, bc_weight)
                 updates += 1
 
                 if updates % t.sync_every == 0:
@@ -104,6 +125,7 @@ class Trainer:
                           f"sps={row['steps_per_s']} ups={row['updates_per_s']} "
                           f"wm={metrics.get('wm/loss', float('nan')):.2f} "
                           f"actor={metrics.get('ac/actor_loss', float('nan')):.2f} "
+                          f"bc={metrics.get('ac/bc_loss', 0.0):.2f}(w={bc_weight:.2f}) "
                           f"ep_r={self.collector.last_info.get('ep_reward')} "
                           f"gate={self.collector.last_info.get('max_gate')} "
                           f"stage={self.collector.last_info.get('stage')}", flush=True)

@@ -112,6 +112,13 @@ class TanhNormal:
         logp = self.base.log_prob(pre) - torch.log(1 - action.pow(2) + 1e-6)
         return action, logp.sum(-1, keepdim=True)
 
+    def log_prob(self, action: Tensor) -> Tensor:
+        """Log-prob of a given action in (-1,1) — used for behavior cloning on demos."""
+        a = action.clamp(-0.999, 0.999)
+        pre = 0.5 * (torch.log1p(a) - torch.log1p(-a))   # atanh
+        logp = self.base.log_prob(pre) - torch.log(1 - a.pow(2) + 1e-6)
+        return logp.sum(-1, keepdim=True)
+
     def mode(self) -> Tensor:
         return torch.tanh(self.base.mean)
 

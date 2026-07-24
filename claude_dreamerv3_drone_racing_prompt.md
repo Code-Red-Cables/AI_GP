@@ -5,7 +5,35 @@
 <!-- All code lives under dreamer/. Spec (unchanged) begins below the tracker. -->
 <!-- ============================================================================ -->
 
-> **📋 PROGRESS TRACKER — last updated: 2026-07-23 (M4 live: DreamerV3 trains; reward inversion fixed; needs GPU)**
+> **📋 PROGRESS TRACKER — last updated: 2026-07-24 (overnight train flat → added behavior cloning)**
+
+### 🔬 Overnight training result + fix (2026-07-24)
+Ran dreamer_small on GPU overnight with 30 gate-passing demos seeded. Result: **world model
+learned (wm 2.69→1.65) but the actor NEVER passed a gate** (max gate=0, ep_r flat −19.7→−18.8).
+Root cause: DreamerV3 trains the actor **only in imagination** — it never imitates the demo
+*actions*, so from a near-random policy the short imagined rollouts never reach a gate → zero
+gradient toward passing one. Throughput also low (ups~1.4; the sequential RSSM underuses the GPU).
+**Fix (built + offline-verified): behavior cloning.** Actor now also directly imitates the
+gate-passing demos (`bc_coef` weight, annealed to 0 over `bc_anneal` updates) — warm-starts it
+into a competent pilot, then RL refines. Also restored `imag_horizon` 15, bigger batch/shorter
+seq for GPU util. `dreamer.distributions.TanhNormal.log_prob`, `agent._bc_loss`, `--demos` builds a
+separate demo buffer. **NEXT: restart training; expect gate passes within the first few k updates.**
+
+### 🎯 Current plan: demo-seed the replay to accelerate first completion
+The old stack can't fly VQ2 (needed the removed attitude/position), so there's no existing
+demo source. Built an **IMU-only AHRS stabilizer** to generate demos instead:
+`env/ahrs.py` (complementary gyro+accel filter → clean roll/pitch) + `env/baselines.py`
+`StabilizedController` (P-on-angle→rate + visual gate centering — converges because the AHRS
+angle is trustworthy, unlike accel-only tilt). Record with `collect_demos --policy stabilized`
+(live-tunable gains + `--gyro-sign-*`, prints `ahrs_div`), then seed training via
+`train_dreamer --demos <dir>` (`replay.load_episode_dir`, pacing counts demo steps).
+
+**Live run 1 (stabilized):** AHRS WORKS — no tumble (mean|gyro| 0.08 vs 1.9 before). Drone
+stabilizes, leans forward, **sees the gate 100% and approaches it** (r_progress climbs +0.02→+1.1),
+but **collides with the gate frame at ~2s** — it centered horizontally (gate spawns dead-on) but
+had NO vertical guidance. **Fix:** added a vertical visual-servo (gate y-pixel → thrust) to thread
+the aperture; `--kp-vert` + `--gate-v-target` (>0.5 for the 20° up-tilt) tunable live. **NEXT: re-run,
+tune vertical servo until active_gate increments (first gate passed), then record a batch + GPU-train.**
 
 ### 🔬 Live-run findings (M2) — **ENVIRONMENT VALIDATED**
 The purpose of M2 was to verify the sim plumbing/constants (resets, action mapping,
@@ -57,8 +85,11 @@ tests; nothing here has been run against the live sim yet except the two probes.
 ## 🔲 What still needs to be done (ordered)
 1. [x] **Live env validation** — DONE: resets/action-mapping/telemetry/reward/loop all verified live (see Live-run findings). Scripted pilot intentionally not perfected.
 2. [x] **First live training run** — DONE: DreamerV3 trains live end-to-end, no errors, WM loss 4.1→2.0, checkpoints save (M4 ✅ live). Found two blockers (both addressed): CPU-only torch (learner never used GPU; ups~1.3, sps~6) and a **reward inversion** (hover −39 < crash −20 → agent learned to crash; fixed `w_offcourse→0` so hover −3 > crash −20, race +30, finish +150).
-2b. [ ] **Install CUDA torch** ← NEXT · `pip uninstall -y torch && pip install torch --index-url https://download.pytorch.org/whl/cu124` — learner onto the RTX 4070 (~50–100× updates/s; collector reclaims CPU → ~30 sps)
-2c. [ ] **Re-run training on GPU** with `dreamer_small` for a longer stint; watch ep_r trend upward, episodes lengthen, first gate passed. Fill `docs/training_throughput.md`.
+2b. [x] **CUDA torch installed** — `torch 2.5.1+cu124`, `cuda_available=True`, RTX 4070 detected.
+2c. [x] **AHRS demonstrator + replay-seeding built & offline-verified** (`env/ahrs.py`, `StabilizedController`, `collect_demos --policy stabilized`, `train_dreamer --demos`).
+2d. [ ] **Tune the demonstrator live** ← NEXT · `python dreamer/scripts/collect_demos.py --policy stabilized --episodes 5` — watch it stabilize (mean|gyro| "stable-ish"), hold altitude (tune `--climb-bias`), and center gates. If `ahrs_div` stays high, flip a `--gyro-sign-*`. Iterate until it flies + approaches gates.
+2e. [ ] **Record a demo batch** (`--episodes 20-50`) once it flies acceptably.
+2f. [ ] **GPU train with seeding** · `python dreamer/scripts/train_dreamer.py --config dreamer/configs/dreamer_small.yaml --demos artifacts/demos` — watch ep_r rise, episodes lengthen, first gate. Fill `docs/training_throughput.md`.
 3. [ ] Fill in `docs/training_throughput.md` from that run (GPU util, updates/s, VRAM)
 4. [ ] Re-run `probe_control` **mid-race** to confirm cmd-31000 rewinds gate progress (only tested from gate 0 so far)
 5. [ ] Scale throughput: parallel sim instances on separate UDP ports

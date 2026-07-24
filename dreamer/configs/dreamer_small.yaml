@@ -74,12 +74,14 @@ model:
 train:
   seed: 0
   device: "cuda"
-  batch_size: 16
-  seq_len: 50
+  batch_size: 32               # bigger batch = more parallel work per sequential step (GPU util)
+  seq_len: 32                  # fewer sequential world-model steps per update -> higher ups
   replay_capacity: 500000
   prefill: 5000
   train_ratio: 512
-  imag_horizon: 15
+  imag_horizon: 15             # longer lookahead = better credit assignment for sparse gate rewards
+  bc_coef: 1.0                 # behavior-clone the gate-passing demos into the actor, then anneal
+  bc_anneal: 30000             # updates over which BC weight decays 1 -> 0
   gamma: 0.997
   lambda_: 0.95
   lr_model: 0.0001
@@ -91,3 +93,5 @@ train:
   checkpoint_every: 10000
   eval_every: 20000
   log_dir: "artifacts/runs"
+  collector_device: "cuda"     # GPU inference for collection: keeps up with 30 Hz sim and
+                               # frees the GIL so the learner isn't starved (CPU collector -> ups~1)

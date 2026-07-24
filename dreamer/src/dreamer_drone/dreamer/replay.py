@@ -7,6 +7,8 @@ is stored in a way the actor could read (the actor only ever sees image+vector).
 """
 from __future__ import annotations
 
+import glob
+import os
 import random
 import threading
 from collections import deque
@@ -14,6 +16,8 @@ from typing import Optional
 
 import numpy as np
 import torch
+
+_EP_KEYS = ("image", "vector", "action", "reward", "cont", "aux")
 
 
 class EpisodeAccumulator:
@@ -77,6 +81,18 @@ class SequenceReplay:
     def can_sample(self, seq_len: int) -> bool:
         with self._lock:
             return any(ep["image"].shape[0] >= seq_len for ep in self._episodes)
+
+    def load_episode_dir(self, directory: str) -> int:
+        """Preload demonstration episodes (episode_*.npz) for replay seeding (Phase 5).
+        Returns the number of transitions added."""
+        total = 0
+        for f in sorted(glob.glob(os.path.join(directory, "episode_*.npz"))):
+            d = np.load(f)
+            ep = {k: d[k] for k in _EP_KEYS if k in d.files}
+            if "image" in ep and ep["image"].shape[0] >= 2:
+                self.add_episode(ep)
+                total += ep["image"].shape[0]
+        return total
 
     def sample(self, batch: int, seq_len: int, device="cpu") -> dict[str, torch.Tensor]:
         with self._lock:

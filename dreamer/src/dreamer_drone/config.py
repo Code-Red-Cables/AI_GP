@@ -150,6 +150,10 @@ class TrainConfig:
     sync_every: int = 100              # learner updates between collector weight syncs
     collector_device: str = "cpu"      # inference for collection (cheap at 30 Hz; frees GPU)
     log_every: int = 50                # learner updates between console/CSV log lines
+    # behavior cloning from demos (--demos): warm-start the actor to imitate gate-passing runs,
+    # then anneal to 0 so RL takes over. Fixes "world model learns but actor never passes a gate".
+    bc_coef: float = 1.0               # initial BC weight on the actor loss
+    bc_anneal: int = 30_000            # updates over which BC weight decays 1->0
 
 
 @dataclass

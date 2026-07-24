@@ -24,10 +24,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--resume", default=None, help="checkpoint (.pt) to resume from")
+    ap.add_argument("--demos", default=None,
+                    help="dir of episode_*.npz to seed the replay (e.g. artifacts/demos)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    trainer = Trainer(cfg, resume=args.resume)
+    trainer = Trainer(cfg, resume=args.resume, demos=args.demos)
     try:
         trainer.run()
     except KeyboardInterrupt:

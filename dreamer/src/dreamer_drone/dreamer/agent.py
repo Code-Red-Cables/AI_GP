@@ -52,6 +52,9 @@ class Actor(nn.Module):
     def entropy(self, feat: Tensor) -> Tensor:
         return self._dist(feat).entropy()
 
+    def log_prob(self, feat: Tensor, action: Tensor) -> Tensor:
+        return self._dist(feat).log_prob(action)
+
 
 class Critic(nn.Module):
     def __init__(self, feat_dim: int, hidden: int, bins: int, layers: int = 2):
@@ -161,7 +164,8 @@ class DreamerAgent:
         self._ret_std = 1.0  # EMA of return scale for actor normalization
 
     # ---- training ----------------------------------------------------------
-    def train_step(self, batch: dict[str, Tensor]) -> dict:
+    def train_step(self, batch: dict[str, Tensor], demo_batch: Optional[dict] = None,
+                   bc_weight: float = 0.0) -> dict:
         batch = {k: v.to(self.device) for k, v in batch.items()}
         # 1) world model
         wm_loss, metrics, start = self.wm.loss(batch)
@@ -170,14 +174,28 @@ class DreamerAgent:
         nn.utils.clip_grad_norm_(self.wm.parameters(), self.cfg.train.grad_clip)
         self.opt_wm.step()
 
-        # 2) imagine + actor-critic
-        ac_metrics = self._actor_critic(start)
+        # 2) imagine + actor-critic (with optional behavior-cloning on demos)
+        ac_metrics = self._actor_critic(start, demo_batch, bc_weight)
         metrics.update(ac_metrics)
         self._update_target()
         metrics["wm/loss"] = wm_loss.item()
         return metrics
 
-    def _actor_critic(self, start: dict[str, Tensor]) -> dict:
+    def _bc_loss(self, demo_batch: dict[str, Tensor]) -> Tensor:
+        """Behavior-cloning: make the actor imitate the (gate-passing) demo actions.
+        World-model feats are detached, so BC trains only the actor, not the WM."""
+        demo = {k: v.to(self.device) for k, v in demo_batch.items()}
+        B = demo["image"].shape[0]
+        with torch.no_grad():
+            embeds = self.wm.encode(demo["image"], demo["vector"])
+            prev_a = torch.cat([torch.zeros_like(demo["action"][:, :1]),
+                                demo["action"][:, :-1]], dim=1)
+            posts, _ = self.wm.rssm.observe(embeds, prev_a, self.wm.rssm.initial(B, self.device))
+            feats = self.wm.rssm.feature(posts)
+        return -self.actor.log_prob(feats, demo["action"]).mean()
+
+    def _actor_critic(self, start: dict[str, Tensor], demo_batch: Optional[dict] = None,
+                      bc_weight: float = 0.0) -> dict:
         t = self.cfg.train
         states, actions, logps = self.wm.rssm.imagine(self.actor, start, t.imag_horizon)
         feats = self.wm.rssm.feature(states)                     # (N,H,F)
@@ -195,6 +213,11 @@ class DreamerAgent:
         adv = (returns - value_t) / self._ret_std
         entropy = self.actor.entropy(feats.detach())
         actor_loss = -(adv).mean() - t.actor_entropy * entropy.mean()
+        bc_val = 0.0
+        if demo_batch is not None and bc_weight > 0:
+            bc = self._bc_loss(demo_batch)
+            actor_loss = actor_loss + bc_weight * bc
+            bc_val = bc.item()
         self.opt_actor.zero_grad(set_to_none=True)
         self.opt_wm.zero_grad(set_to_none=True)
         actor_loss.backward()
@@ -215,6 +238,7 @@ class DreamerAgent:
             "ac/critic_loss": critic_loss.item(),
             "ac/return_mean": returns.mean().item(),
             "ac/entropy": entropy.mean().item(),
+            "ac/bc_loss": bc_val,
         }
 
     def _update_target(self, tau: float = 0.02) -> None:
