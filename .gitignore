@@ -13,6 +13,10 @@ dreamer/artifacts/runs/
 artifacts/runs/
 *.pt
 *.ckpt
+train.log
+
+# Recorded demos (large binaries; regenerate with collect_demos --policy stabilized)
+artifacts/demos/
 
 # Simulator install (large binary, not source)
 AIGP_3385/
