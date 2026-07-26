@@ -289,14 +289,22 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertTrue(result.found)
         self.assertLess(result.center_x, 300)
 
-    def test_14_largest_valid_gate_overrides_temporal_hint(self):
+    def test_14_largest_valid_gate_is_selected_at_acquisition(self):
+        image = blank_frame()
+        add_gate(image, (190, 180), 180, 24)
+        add_gate(image, (470, 180), 100, 16)
+        result = self.detector.detect(image)
+        self.assertTrue(result.found)
+        self.assertLess(result.center_x, 300)
+
+    def test_14b_tracked_gate_cannot_be_stolen_by_larger_off_axis_gate(self):
         image = blank_frame()
         add_gate(image, (190, 180), 180, 24)
         add_gate(image, (470, 180), 100, 16)
         hint = detection_at(nx=(470 - 320) / 320, opening_width=68)
         result = self.detector.detect(image, hint=hint)
         self.assertTrue(result.found)
-        self.assertLess(result.center_x, 300)
+        self.assertGreater(result.center_x, 400)
 
     def test_15_isolated_orange_post_is_rejected(self):
         image = blank_frame()

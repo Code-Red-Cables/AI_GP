@@ -76,6 +76,13 @@ class GateVisionConfig:
     temporal_center_sigma: float = 0.38
     temporal_size_sigma: float = 0.75
     temporal_angle_sigma_degrees: float = 40.0
+    # Once the tracker owns a gate, keep that identity until its opening
+    # disappears or becomes implausible. This prevents a farther off-axis gate
+    # from stealing control for a few frames as contour areas fluctuate.
+    target_lock_center_radius_normalized: float = 0.30
+    target_lock_min_area_ratio: float = 0.40
+    target_lock_max_area_ratio: float = 2.50
+    target_lock_min_confidence: float = 0.32
     gate_inner_width_m: float = cm.GATE_INNER_M
     focal_length_px: float = cm.FX
 
@@ -991,11 +998,10 @@ class OrangeGateDetector:
                 candidates.append(line_candidate)
         line_done = time.perf_counter()
 
-        # The closest race gate has the largest apparent flyable opening.
-        # Area is authoritative here: confidence/temporal score only break
-        # ties between similarly sized candidates that already passed all
-        # validity checks in _finalize_candidate().
-        selected = max(
+        # Acquire the largest valid opening. While a tracked hint exists,
+        # retain the matching gate so normal contour-size jitter cannot cause
+        # a brief switch to the next off-axis gate.
+        largest = max(
             candidates,
             key=lambda candidate: (
                 candidate.opening_width * candidate.opening_height,
@@ -1003,6 +1009,42 @@ class OrangeGateDetector:
             ),
             default=None,
         )
+        selected = largest
+        if hint is not None and hint.found and candidates:
+            hint_area_ratio = max(hint.opening_area_ratio, 1e-9)
+            locked_candidates = []
+            for candidate in candidates:
+                nx, ny = normalized_image_coordinates(
+                    candidate.center[0],
+                    candidate.center[1],
+                    cleaned_mask.shape[1],
+                    cleaned_mask.shape[0],
+                )
+                center_distance = math.hypot(
+                    nx - hint.normalized_x,
+                    ny - hint.normalized_y,
+                )
+                candidate_area_ratio = (
+                    candidate.opening_width
+                    * candidate.opening_height
+                    / float(cleaned_mask.shape[0] * cleaned_mask.shape[1])
+                )
+                relative_area = candidate_area_ratio / hint_area_ratio
+                if (
+                    center_distance
+                    <= self.config.target_lock_center_radius_normalized
+                    and self.config.target_lock_min_area_ratio
+                    <= relative_area
+                    <= self.config.target_lock_max_area_ratio
+                    and candidate.confidence
+                    >= self.config.target_lock_min_confidence
+                ):
+                    locked_candidates.append(candidate)
+            if locked_candidates:
+                selected = max(
+                    locked_candidates,
+                    key=lambda candidate: candidate.score,
+                )
         timings = {
             "preprocess": (preprocess_done - start) * 1000.0,
             "mask_generation": (mask_done - preprocess_done) * 1000.0,

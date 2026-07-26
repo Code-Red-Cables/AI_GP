@@ -39,7 +39,10 @@ python main.py
 
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
 2. `OrangeGateDetector` finds the flyable opening rather than the orange
-   material centroid and always selects the largest valid opening in view.
+   material centroid. Acquisition selects the largest valid opening in view.
+   Once tracked, center-and-size hysteresis holds that gate until it disappears
+   or becomes implausible, preventing a farther off-axis gate from stealing
+   control during normal contour-area fluctuations.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards
