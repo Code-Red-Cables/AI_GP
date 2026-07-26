@@ -205,6 +205,13 @@ Primary runtime tuning variables:
 Set `VISION_DEBUG=1` to save periodically annotated frames in
 `_vision_debug/`. This is off by default to avoid disk I/O in the race loop.
 
+Raw gate-dataset capture is enabled by default. Every frame with a real
+detector measurement is saved unannotated under `frames/`; tracker-predicted
+frames are excluded. Set `GATE_FRAME_CAPTURE=0` to disable it, change
+`GATE_FRAME_CAPTURE_DIR` to select another directory, or set
+`GATE_FRAME_CAPTURE_INTERVAL_S=0.2` to limit capture to five frames per
+second. The default interval is zero, which saves every detector hit.
+
 For a safe live Windows view without arming or sending commands:
 
 ```powershell

@@ -23,6 +23,25 @@ from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
 
 
+def save_gate_capture(
+    output_dir: Path,
+    session_id: str,
+    frame_id: int,
+    image: np.ndarray,
+    jpeg_bytes: bytes | None = None,
+) -> Path:
+    """Save the unannotated camera frame without re-encoding when possible."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / (
+        f'gate_{session_id}_{int(frame_id):010d}.jpg'
+    )
+    if jpeg_bytes:
+        output_path.write_bytes(jpeg_bytes)
+    elif not cv2.imwrite(str(output_path), image):
+        raise OSError(f'OpenCV could not write gate frame: {output_path}')
+    return output_path
+
+
 def create_gate_detector():
     """Build the configured detector without changing downstream interfaces."""
     hsv_ranges = ((config.GATE_HSV_LOWER, config.GATE_HSV_UPPER),)
@@ -148,6 +167,22 @@ class VisionRX:
         self._last_state = None
         self._display_enabled = config.VISION_DISPLAY
         self._overlay_enabled = True
+        self._gate_capture_enabled = config.GATE_FRAME_CAPTURE
+        self._gate_capture_dir = Path(config.GATE_FRAME_CAPTURE_DIR)
+        if not self._gate_capture_dir.is_absolute():
+            self._gate_capture_dir = (
+                Path(__file__).resolve().parent / self._gate_capture_dir
+            )
+        self._gate_capture_session = str(time.time_ns())
+        self._last_gate_capture_t = -float('inf')
+        self._gate_capture_count = 0
+        if self._gate_capture_enabled:
+            self._gate_capture_dir.mkdir(parents=True, exist_ok=True)
+            print(
+                '[VISION] gate-frame capture enabled: '
+                f'{self._gate_capture_dir}',
+                flush=True,
+            )
         if config.VISION_DEBUG:
             os.makedirs(config.VISION_DEBUG_DIR, exist_ok=True)
         self.thread = threading.Thread(target=self._vision_loop, daemon=False)
@@ -255,6 +290,7 @@ class VisionRX:
                                 frame_id,
                                 image,
                                 sim_time_ns=entry['sim_time_ns'],
+                                jpeg_bytes=jpeg,
                             )
                             latest_complete_id = frame_id
                             latest_complete_sim_time = sim_time_ns
@@ -386,11 +422,54 @@ class VisionRX:
             print(f'[VISION] live display disabled: {exc}', flush=True)
 
     # ------------------------------------------------------------------
+    def _capture_gate_frame(
+        self,
+        measured: GateDetection,
+        frame_id: int,
+        image: np.ndarray,
+        jpeg_bytes: bytes | None,
+        now: float,
+    ) -> None:
+        """Capture detector-confirmed gates, excluding tracker predictions."""
+        if (
+            not self._gate_capture_enabled
+            or not measured.found
+            or measured.predicted
+            or now - self._last_gate_capture_t
+            < config.GATE_FRAME_CAPTURE_INTERVAL_S
+        ):
+            return
+        try:
+            path = save_gate_capture(
+                self._gate_capture_dir,
+                self._gate_capture_session,
+                frame_id,
+                image,
+                jpeg_bytes,
+            )
+        except (OSError, cv2.error) as exc:
+            self._gate_capture_enabled = False
+            print(
+                f'[VISION] gate-frame capture disabled: {exc}',
+                flush=True,
+            )
+            return
+        self._last_gate_capture_t = now
+        self._gate_capture_count += 1
+        if self._gate_capture_count == 1 or self._gate_capture_count % 50 == 0:
+            print(
+                '[VISION] saved gate frame '
+                f'#{self._gate_capture_count}: {path.name}',
+                flush=True,
+            )
+
+    # ------------------------------------------------------------------
     def process_frame(
         self,
         frame_id: int,
         img: np.ndarray,
         sim_time_ns: int | None = None,
+        jpeg_bytes: bytes | None = None,
     ):
         started = time.perf_counter()
         monotonic_now = time.monotonic()
@@ -402,6 +481,13 @@ class VisionRX:
             img,
             hint=hint,
             timestamp=monotonic_now,
+        )
+        self._capture_gate_frame(
+            measured,
+            frame_id,
+            img,
+            jpeg_bytes,
+            monotonic_now,
         )
         tracked = self.tracker.update(
             measured

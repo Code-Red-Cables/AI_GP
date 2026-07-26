@@ -90,6 +90,15 @@ VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
 VISION_DEBUG_INTERVAL_S   = float(
     os.environ.get('VISION_DEBUG_INTERVAL_S', '5.0')
 )
+GATE_FRAME_CAPTURE        = _env_bool('GATE_FRAME_CAPTURE', True)
+GATE_FRAME_CAPTURE_DIR    = os.environ.get(
+    'GATE_FRAME_CAPTURE_DIR', 'frames'
+)
+# Zero saves every real detector hit. Increase this only if a lower capture
+# rate is desired, for example 0.2 for at most five images per second.
+GATE_FRAME_CAPTURE_INTERVAL_S = float(
+    os.environ.get('GATE_FRAME_CAPTURE_INTERVAL_S', '0.0')
+)
 
 # ``auto`` uses the custom YOLO model when it exists and otherwise prints an
 # explicit warning before preserving the established HSV detector. Set
