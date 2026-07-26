@@ -1,0 +1,11 @@
+# One-class Ultralytics detection dataset.
+# Expected repository layout:
+# datasets/gates/
+#   images/train/  images/val/
+#   labels/train/  labels/val/
+path: datasets/gates
+train: images/train
+val: images/val
+
+names:
+  0: gate

@@ -5,6 +5,7 @@ import socket
 import struct
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -14,11 +15,77 @@ from gate_estimator import estimate_gate
 from vision.gate_detector import (
     DetectorDebug,
     GateDetection,
+    GateVisionConfig,
     OrangeGateDetector,
     draw_detection,
 )
 from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
+
+
+def create_gate_detector():
+    """Build the configured detector without changing downstream interfaces."""
+    hsv_ranges = ((config.GATE_HSV_LOWER, config.GATE_HSV_UPPER),)
+    legacy_config = GateVisionConfig(
+        hsv_ranges=hsv_ranges,
+        min_contour_area=config.GATE_MIN_CONTOUR_AREA,
+    )
+    backend = config.GATE_DETECTOR_BACKEND
+    if backend == 'hsv':
+        print('[VISION] detector=hsv (explicit legacy mode)', flush=True)
+        return OrangeGateDetector(legacy_config)
+
+    model_path = Path(config.YOLO_MODEL_PATH)
+    if not model_path.is_absolute():
+        model_path = Path(__file__).resolve().parent / model_path
+    if not model_path.is_file():
+        message = (
+            '[VISION] custom YOLO gate weights are missing at '
+            f'{model_path}; place trained one-class weights there'
+        )
+        if backend == 'yolo_hybrid':
+            raise FileNotFoundError(message)
+        print(f'{message}; detector=HSV fallback', flush=True)
+        return OrangeGateDetector(legacy_config)
+
+    from vision.yolo_gate_detector import (
+        HybridGateConfig,
+        YoloHybridGateDetector,
+    )
+
+    hybrid_config = HybridGateConfig(
+        model_path=str(model_path),
+        gate_class_name=config.YOLO_GATE_CLASS_NAME,
+        confidence_threshold=config.YOLO_CONFIDENCE_THRESHOLD,
+        nms_iou_threshold=config.YOLO_NMS_IOU_THRESHOLD,
+        target_lock_seconds=config.YOLO_TARGET_LOCK_SECONDS,
+        crop_padding_px=config.YOLO_CROP_PADDING_PX,
+        minimum_gate_area_px=config.YOLO_MIN_GATE_AREA_PX,
+        maximum_outside_fraction=config.YOLO_MAX_OUTSIDE_FRACTION,
+        previous_center_frames=config.YOLO_PREVIOUS_CENTER_FRAMES,
+        inference_size=config.YOLO_INFERENCE_SIZE,
+        device=config.YOLO_DEVICE,
+        log_interval_s=config.YOLO_LOG_INTERVAL_S,
+        minimum_opening_area_px=config.GATE_MIN_CONTOUR_AREA,
+        hsv_ranges=hsv_ranges,
+    )
+    try:
+        detector = YoloHybridGateDetector(hybrid_config)
+    except (ImportError, RuntimeError) as exc:
+        if backend == 'yolo_hybrid':
+            raise
+        print(
+            f'[VISION] YOLO hybrid unavailable ({exc}); detector=HSV fallback',
+            flush=True,
+        )
+        return OrangeGateDetector(legacy_config)
+    print(
+        '[VISION] detector=yolo_hybrid '
+        f'model={model_path} conf={config.YOLO_CONFIDENCE_THRESHOLD:.2f} '
+        f'iou={config.YOLO_NMS_IOU_THRESHOLD:.2f}',
+        flush=True,
+    )
+    return detector
 
 
 def course_lookahead_horizontal(
@@ -73,7 +140,7 @@ class VisionRX:
 
     def __init__(self, data):
         self.data = data
-        self.detector = OrangeGateDetector()
+        self.detector = create_gate_detector()
         self.tracker = GateTracker(q2_demo_tracker_config())
         self.navigator = GateNavigator(q2_demo_navigation_config())
         self._last_active_gate = None
@@ -111,6 +178,11 @@ class VisionRX:
             return
         if active_gate > self._last_active_gate:
             self.tracker.reset()
+            reset_target_lock = getattr(
+                self.detector, 'reset_target_lock', None
+            )
+            if reset_target_lock is not None:
+                reset_target_lock()
             self.navigator.confirm_gate_pass(now)
         self._last_active_gate = max(self._last_active_gate, active_gate)
 
@@ -332,7 +404,9 @@ class VisionRX:
             timestamp=monotonic_now,
         )
         tracked = self.tracker.update(
-            measured if measured.found else None,
+            measured
+            if measured.found and not measured.predicted
+            else None,
             timestamp=monotonic_now,
         )
         next_gate_horizontal = course_lookahead_horizontal(
@@ -432,6 +506,11 @@ class VisionRX:
                         show_accepted_candidates=False,
                         show_mask_insets=False,
                     )
+                    draw_hybrid_overlay = getattr(
+                        self.detector, 'draw_debug_overlay', None
+                    )
+                    if draw_hybrid_overlay is not None:
+                        annotated = draw_hybrid_overlay(annotated)
                 except Exception as exc:
                     self._overlay_enabled = False
                     print(

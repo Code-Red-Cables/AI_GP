@@ -8,6 +8,18 @@ def _env_bool(name, default=False):
         return default
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
+
+def _env_int_tuple(name, default):
+    value = os.environ.get(name)
+    if value is None:
+        return tuple(default)
+    parsed = tuple(int(part.strip()) for part in value.split(','))
+    if len(parsed) != len(default):
+        raise ValueError(
+            f'{name} must contain {len(default)} comma-separated integers'
+        )
+    return parsed
+
 # ---- Flight controller ----
 HOVER_THRUST    = 0.25      # open-loop hover baseline (no baro in VQ2)
 TAKEOFF_THRUST  = 0.31      # short launch boost before settling to hover
@@ -77,4 +89,51 @@ PERCEPTION_ONLY           = _env_bool('PERCEPTION_ONLY', False)
 VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
 VISION_DEBUG_INTERVAL_S   = float(
     os.environ.get('VISION_DEBUG_INTERVAL_S', '5.0')
+)
+
+# ``auto`` uses the custom YOLO model when it exists and otherwise prints an
+# explicit warning before preserving the established HSV detector. Set
+# ``yolo_hybrid`` to require the model and fail fast if weights/dependencies
+# are missing; set ``hsv`` to intentionally use the legacy global detector.
+GATE_DETECTOR_BACKEND = os.environ.get(
+    'GATE_DETECTOR_BACKEND', 'auto'
+).strip().lower()
+if GATE_DETECTOR_BACKEND not in {'auto', 'yolo_hybrid', 'hsv'}:
+    raise ValueError(
+        'GATE_DETECTOR_BACKEND must be "auto", "yolo_hybrid", or "hsv"'
+    )
+
+YOLO_MODEL_PATH = os.environ.get(
+    'YOLO_MODEL_PATH', 'models/gate_detector.pt'
+)
+YOLO_GATE_CLASS_NAME = os.environ.get('YOLO_GATE_CLASS_NAME', 'gate')
+YOLO_CONFIDENCE_THRESHOLD = float(
+    os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.35')
+)
+YOLO_NMS_IOU_THRESHOLD = float(
+    os.environ.get('YOLO_NMS_IOU_THRESHOLD', '0.70')
+)
+YOLO_TARGET_LOCK_SECONDS = float(
+    os.environ.get('YOLO_TARGET_LOCK_SECONDS', '0.75')
+)
+YOLO_CROP_PADDING_PX = int(os.environ.get('YOLO_CROP_PADDING_PX', '14'))
+YOLO_MIN_GATE_AREA_PX = float(
+    os.environ.get('YOLO_MIN_GATE_AREA_PX', '400')
+)
+YOLO_MAX_OUTSIDE_FRACTION = float(
+    os.environ.get('YOLO_MAX_OUTSIDE_FRACTION', '0.35')
+)
+YOLO_PREVIOUS_CENTER_FRAMES = int(
+    os.environ.get('YOLO_PREVIOUS_CENTER_FRAMES', '5')
+)
+YOLO_INFERENCE_SIZE = int(os.environ.get('YOLO_INFERENCE_SIZE', '640'))
+YOLO_DEVICE = os.environ.get('YOLO_DEVICE', '').strip() or None
+YOLO_LOG_INTERVAL_S = float(os.environ.get('YOLO_LOG_INTERVAL_S', '1.0'))
+
+# Initial crop-local segmentation uses the calibrated Q2 values. These remain
+# environment-configurable without modifying detector code.
+GATE_HSV_LOWER = _env_int_tuple('GATE_HSV_LOWER', (3, 105, 180))
+GATE_HSV_UPPER = _env_int_tuple('GATE_HSV_UPPER', (17, 255, 255))
+GATE_MIN_CONTOUR_AREA = float(
+    os.environ.get('GATE_MIN_CONTOUR_AREA', '45')
 )

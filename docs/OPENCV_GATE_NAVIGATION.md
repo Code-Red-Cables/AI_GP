@@ -25,6 +25,19 @@ Run OpenCV mode:
 python main.py
 ```
 
+Detector selection defaults to `auto`: it loads
+`models/gate_detector.pt` when trained custom weights exist, otherwise it
+prints a warning and preserves the established HSV detector. Generic COCO
+weights are never used for live gate inference.
+
+Require the hybrid detector on Windows:
+
+```powershell
+$env:GATE_DETECTOR_BACKEND="yolo_hybrid"
+$env:YOLO_MODEL_PATH="models/gate_detector.pt"
+.\.venv\Scripts\python.exe main.py
+```
+
 Run the existing Q2 Dreamer policy:
 
 ```bash
@@ -38,7 +51,28 @@ python main.py
 ## OpenCV data flow
 
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
-2. `OrangeGateDetector` finds the flyable opening rather than the orange
+2. `YoloHybridGateDetector` runs one inference on that frame. Ultralytics is
+   called with class-aware NMS (`agnostic_nms=False`) and a configurable
+   default IoU threshold of `0.70`, preserving separately labeled overlapping
+   gates when the trained model supports them. Acquisition selects the largest
+   valid YOLO gate. While locked, overlap with the previous target is
+   authoritative and center/size similarity breaks ties, preventing rapid
+   switching between overlapping gates.
+3. Only the selected padded YOLO crop enters orange segmentation. The crop
+   reuses the calibrated Q2 HSV range and light one-pass opening/closing, with
+   no dilation. Contour hierarchy identifies a non-orange hole enclosed by the
+   orange frame. Its ordered `top_left`, `top_right`, `bottom_left`, and
+   `bottom_right` coordinates are translated from crop-local to full-image
+   pixels. The target center is the arithmetic mean of those four corners,
+   never the centroid of all orange pixels.
+   If corner extraction fails but YOLO still has the target, the selected
+   YOLO-box center is used temporarily. A short disappearance exposes the
+   previous-frame center for diagnostics while `GateTracker` performs its
+   bounded prediction. After the configured lock/fallback timeout, normal
+   search behavior resumes. Race pass confirmation resets both the box lock
+   and the existing tracker before the next gate is acquired.
+4. With no custom model, `auto` mode uses `OrangeGateDetector`, which finds the
+   flyable opening rather than the orange
    material centroid. Acquisition selects the largest valid opening in view.
    The deployed HSV mask is calibrated to the illuminated gate face
    (`H=3..17`, `S>=105`, `V>=180`), rejecting the dimmer `H=18..20`
@@ -75,11 +109,11 @@ python main.py
    the frame without reusing the old gate's final correction, then begins a
    bounded lateral/yaw handoff toward the retained next gate. The old tracker
    prediction is released at pass-through so it cannot block acquisition.
-3. `GateTracker` rejects implausible jumps and predicts through at most five
+5. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards
    prevent post-pass signs and gate-frame fragments from taking control.
-4. `GateNavigator` moves through `SEARCH`, `TRACK`,
+6. `GateNavigator` moves through `SEARCH`, `TRACK`,
    `ALIGN_AND_APPROACH`, `COMMIT`, `PASS_THROUGH`, and `RECOVER`.
    Its attitude gains come from `collect_demos.py` and
    `StabilizedController`, but consecutive-gate flight uses a slower approach
@@ -112,9 +146,9 @@ python main.py
    `0.05` normalized image units (about 16 pixels at 640-wide input). Lateral
    centering remains live during commit; drift beyond `0.08` (about 26 pixels)
    aborts the pass attempt back to alignment rather than clipping a side.
-5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
+7. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
-6. `Controller` reuses the demonstration AHRS from
+8. `Controller` reuses the demonstration AHRS from
    `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
    attitude gains and inverted rate axes. Forward pitch keeps the demonstrated
    gain, while lateral requests use a stronger bank mapping for the Q2 gate
@@ -130,6 +164,35 @@ around steps 75-83.
 The camera tilt and 640x360 pinhole model are centralized in
 `camera_model.py`. `gate_estimator.py` reports a size-based range and upgrades
 to PnP when reliable opening corners are available.
+
+## YOLO model and training
+
+No trained racing-gate weights are committed to this repository. Prepare a
+one-class YOLO detection dataset under `datasets/gates/` using the layout in
+`models/README.md`. Every physical gate must receive its own box, including
+overlapping gates. Install dependencies and train:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe tools\train_gate_yolo.py
+```
+
+The training script uses generic pretrained weights only as a training
+starting point, then copies the custom `best.pt` to
+`models/gate_detector.pt`. Live inference validates that the resulting model
+defines a class named `gate`.
+
+Primary runtime tuning variables:
+
+- `YOLO_MODEL_PATH` (default `models/gate_detector.pt`)
+- `YOLO_CONFIDENCE_THRESHOLD` (default `0.35`)
+- `YOLO_NMS_IOU_THRESHOLD` (default `0.70`)
+- `YOLO_TARGET_LOCK_SECONDS` (default `0.75`)
+- `YOLO_CROP_PADDING_PX` (default `14`)
+- `YOLO_MIN_GATE_AREA_PX` (default `400`)
+- `YOLO_PREVIOUS_CENTER_FRAMES` (default `5`)
+- `GATE_HSV_LOWER` / `GATE_HSV_UPPER` (comma-separated HSV triples)
+- `GATE_MIN_CONTOUR_AREA` (default `45`)
 
 ## Diagnostics and tests
 
@@ -147,6 +210,10 @@ $env:VISION_DISPLAY="1"
 The live window keeps the annotated camera full-size on the left and stacks
 two diagnostics on the right: the orange color mask and an accepted-target
 view containing only the orange gate geometry that may influence steering.
+In hybrid mode the overlay also shows every YOLO detection/confidence, the
+selected box, padded crop, four inner corners, calculated center, and center
+source (`inner_corners`, `yolo_box_fallback`, or
+`previous_frame_fallback`).
 Orange pixels in the mask are color candidates, not necessarily
 accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
 to stop the client. Reset the simulator before using perception-only mode so
