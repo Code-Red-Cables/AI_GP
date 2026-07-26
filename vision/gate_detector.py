@@ -1051,6 +1051,59 @@ def _legacy_config(cfg: Optional[dict]) -> GateVisionConfig:
     )
 
 
+def _make_cfg(cfg: Optional[dict]) -> dict:
+    """Compatibility dictionary for Q2 debug/training utilities."""
+    base = GateVisionConfig()
+    first = base.hsv_ranges[0]
+    second = base.hsv_ranges[1] if len(base.hsv_ranges) > 1 else (None, None)
+    merged = {
+        "lower_hsv": first[0],
+        "upper_hsv": first[1],
+        "lower_hsv2": second[0],
+        "upper_hsv2": second[1],
+        "kernel_size": base.opening_kernel_size,
+        "min_area": base.min_contour_area,
+        "approx_eps_frac": base.polygon_epsilon_ratio,
+    }
+    if cfg:
+        merged.update(cfg)
+    return merged
+
+
+def _build_mask(hsv: np.ndarray, cfg: dict) -> np.ndarray:
+    """Compatibility mask builder for tools that already hold an HSV image."""
+    config = _legacy_config(_make_cfg(cfg))
+    mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    for lower, upper in config.hsv_ranges:
+        mask = cv2.bitwise_or(
+            mask,
+            cv2.inRange(
+                hsv,
+                np.asarray(lower, dtype=np.uint8),
+                np.asarray(upper, dtype=np.uint8),
+            ),
+        )
+    operations = (
+        (
+            cv2.MORPH_OPEN,
+            config.opening_kernel_size,
+            config.opening_iterations,
+        ),
+        (
+            cv2.MORPH_CLOSE,
+            config.closing_kernel_size,
+            config.closing_iterations,
+        ),
+    )
+    for operation, size, iterations in operations:
+        if size > 1 and iterations > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+            mask = cv2.morphologyEx(
+                mask, operation, kernel, iterations=int(iterations)
+            )
+    return mask
+
+
 def detect_gate(
     bgr: np.ndarray, cfg: Optional[dict] = None
 ) -> Optional[GateDetection]:

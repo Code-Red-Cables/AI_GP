@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.pytest_cache/
 
 # Virtual environments
 venv/
@@ -12,17 +14,32 @@ env/
 # Distribution / packaging
 build/
 dist/
-*.egg-info/
 
 # Editor / OS
 .vscode/
 .idea/
-.DS_Store
 .obsidian/
+.DS_Store
 
-# Run artifacts / debug output
+# Dreamer training outputs and regenerable recordings
+dreamer/artifacts/runs/
+artifacts/runs/
+artifacts/demos/
+artifacts/demos*/
+*.pt
+*.ckpt
+train.log
+
+# Runtime logs and vision/debug output
 logs/
+logs/*.csv
+logs/*.txt
 reference/frames/
 _detect_debug.png
 _vision_*.png
+_vision_debug/
+frames/
+
+# Simulator installations
 AIGP_3364/
+AIGP_3385/

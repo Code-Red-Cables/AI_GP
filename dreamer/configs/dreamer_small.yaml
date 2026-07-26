@@ -1,0 +1,150 @@
+# DreamerV3 "small" — sized for a single RTX 4070 Laptop (8 GB VRAM).
+# Every field maps to a dataclass in src/dreamer_drone/config.py. Runs save the fully
+# resolved config next to their artifacts, so this file is the starting point, not the record.
+name: dreamer_small
+
+sim:
+  mavlink_host: "127.0.0.1"     # set to the Windows host IP if WSL mirrored-net is off
+  mavlink_port: 14550
+  camera_bind: "0.0.0.0"
+  camera_port: 5600
+  sim_exe: ""                   # e.g. /mnt/d/Code/Competitions/AI_GP/AIGP_3385/FlightSim.exe
+  launch_sim: false             # attach to an already-running sim by default
+  reset_cmd_id: 31000
+  reset_settle_s: 1.5
+  stale_image_s: 0.5
+  stale_telem_s: 0.5
+
+obs:
+  # 64x64 -> 192x108 (2026-07-25): at 64px the gate ring was 2-3 px thick at approach
+  # range; 192x108 is ~5x the pixels AND preserves the camera's native 16:9 aspect
+  # (640x360) instead of squishing it square. Encoder/decoder auto-adapt to the shape.
+  # Max sensible on the 8GB RTX 4070 Laptop; camera native is 360p so "480p" is moot.
+  # NOTE: demos must be recorded at the same resolution (demos_v3+).
+  image_h: 108
+  image_w: 192
+  grayscale: false
+
+action:
+  hover_thrust: 0.27
+  thrust_span: 0.5
+  thrust_min: 0.05
+  thrust_max: 0.90
+  max_rate_rad_s: 3.0           # ~2.5x sim gain measured -> ±1 action ≈ ±8 rad/s roll/pitch
+  rate_sign_pitch: -1.0         # all axes inverted vs gyro (probe_control 2026-07-23)
+  rate_sign_roll: -1.0
+  rate_sign_yaw: -1.0
+  slew_rate_limit: 0.0
+  lpf_alpha: 0.0
+  control_hz: 30.0              # matches spec camera rate; confirm with the probe
+  action_repeat: 1
+
+reward:
+  # MEASURED 2026-07-24 (run 1784924120, 158k steps): approach paid ~+0.12/episode (0.6% of
+  # the collision penalty) and the gate was passed once in 158k steps at w_gate=10 — the
+  # policy plateaued at crash-early (-20). Progress x3 makes a full approach pay ~+2 (it
+  # telescopes, so it can't be hover-farmed); gate x4 makes pass-then-crash (+20) clearly
+  # beat crash-early (-20) in imagination.
+  # MEASURED 2026-07-25 (run 1784997774): with demo-precision flight restored (min_std
+  # fix) the policy approached cleanly, then at blob-area~150 (close range) slammed to
+  # 98% thrust and fled upward — "gate fear": thousands of near-gate crashes at -20 in
+  # replay vs a handful of +40 passes, so imagined proximity is net-terrifying. Soften
+  # the crash penalty and pay approach more so closing in stops losing to fleeing.
+  w_progress: 5.0
+  w_gate: 40.0
+  # MEASURED 2026-07-25 (run 1785002622): episodes earned +1.3-2.3 progress while sliding
+  # sideways PAST gate 1 (area grows even off-axis; gate exits the left of frame). This is
+  # potential-based (pays Δ of -|u-0.5|, gate-lost = worst), so it charges that trajectory
+  # ~-1 but can't be farmed by hovering and can't make crashing attractive.
+  # 2.0 -> 4.0: at 2.0 gate visibility jumped 0.63 -> 0.88 within the same run and the
+  # first live passes followed — doubling to pull the remaining off-center (u~0.23)
+  # approaches onto the gate axis.
+  w_center: 4.0
+  # MEASURED 2026-07-25 (run 1785018804): passes stopped after 80k — the sight-loss
+  # charge taxed threading itself (gate must exit the frame to pass through), so
+  # textbook approaches veered up-and-over at the aperture. sqrt(area) >= 90 full-res
+  # px (~3.5% of frame) = threading range: hold φ neutral there for up to 8 blind
+  # frames so the pass registers (+40, baseline reset) before any charge.
+  center_hold_sqrt_px: 90.0
+  w_finish: 100.0
+  w_time: 0.05
+  w_collision: 8.0
+  # First live passes at 105k-155k (run 1785004602) but collision rate stuck at ~87%,
+  # mostly close-range attempts. A frame clip is a NEAR-MISS, not a failure mode to
+  # fear — charge it 3 vs 8 so the critic prefers attempting the aperture over bailing.
+  w_collision_gate: 3.0
+  w_control: 0.01
+  w_offcourse: 0.0                  # off: a per-step off-course penalty made hover < crash
+  w_alive: 0.0                     # optional survival bonus (keep < time penalty to avoid hover-farm)
+  use_privileged_progress: false   # auto-usable only if the probe shows position telemetry
+  progress_clip: 2.0
+  progress_area_jump: 1.35         # per-step sqrt(area) ratio beyond which the detector is
+                                   # assumed to have switched targets -> re-baseline, 0 reward
+  progress_center_jump: 0.25       # same for detection-center moves (fraction of frame diag)
+
+termination:
+  episode_timeout_s: 60.0
+  collision_terminates: true
+  collision_threat_min: 1
+  finish_terminates: true
+  stuck_no_gate_s: 12.0
+
+curriculum:
+  enabled: true
+  start_stage: 0
+  promote_success_rate: 0.7
+  promote_window: 20
+
+model:
+  deter_dim: 512
+  stoch_dim: 32
+  stoch_classes: 32
+  hidden: 256
+  cnn_depth: 32
+  vector_layers: 2
+  reward_bins: 255
+  critic_bins: 255
+  free_bits: 1.0
+  kl_balance: 0.8
+
+train:
+  seed: 0
+  device: "cuda"
+  batch_size: 12               # 32 -> 12 when images went to 192x108 (5x pixels): at 32 the
+                               # 8GB GPU spilled to shared memory (7.8GB used, 100% util,
+                               # <0.1 updates/s). 12x32x192x108 fits with headroom.
+  seq_len: 32                  # fewer sequential world-model steps per update -> higher ups
+  replay_capacity: 150000        # cut when images went 64x64 -> 192x108 (5x bytes/frame);
+                                 # 150k x ~62KB ≈ 9GB of a 23GB WSL box. Still ~3h of experience.
+  prefill: 5000
+  train_ratio: 512
+  imag_horizon: 15             # longer lookahead = better credit assignment for sparse gate rewards
+  bc_coef: 10.0                # behavior-clone the gate-passing demos into the actor, then anneal.
+                               # Raised 1 -> 10 (2026-07-25): the RL advantage is normalized to
+                               # unit scale so its gradient never shrinks, while the BC gradient
+                               # does as the fit improves — at coef 1 the (pessimistic-critic) RL
+                               # term overpowered imitation and the actor's action scale drifted
+                               # to 10-20x the demos' (thrust |a|~0.4 vs 0.02) and never recovered
+  bc_anneal: 100000            # updates over which BC weight decays 1 -> 0. Slowed 30k -> 100k:
+                               # the demos are the only source of gate-pass behavior, and at 30k
+                               # BC was fading before the live policy ever threaded the aperture
+  demo_trim_steps: 30          # drop the last N steps of crash-ending demos from the BC buffer
+                               # (all current demos crash after gate 1 - don't clone the crash)
+  demo_wm_frac: 0.25           # fraction of each world-model batch drawn from the demo buffer:
+                               # keeps gate passes in every batch and starts imagination rollouts
+                               # from aperture states (they were ~3% of replay and shrinking)
+  gamma: 0.997
+  lambda_: 0.95
+  lr_model: 0.0001
+  lr_actor: 0.00003
+  lr_critic: 0.00003
+  actor_entropy: 0.0005        # 1e-3 made the policy visibly jittery (entropy -3.4 -> -1.5 over
+                               # run 1784940039) without producing directed exploration; split
+                               # the difference with the original 3e-4
+  grad_clip: 1000.0
+  total_env_steps: 2000000
+  checkpoint_every: 10000
+  eval_every: 20000
+  log_dir: "artifacts/runs"
+  collector_device: "cuda"     # GPU inference for collection: keeps up with 30 Hz sim and
+                               # frees the GIL so the learner isn't starved (CPU collector -> ups~1)
