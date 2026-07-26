@@ -392,6 +392,17 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertLess(selected.opening_width, 130.0)
         self.assertLess(selected.bbox[2], 180)
 
+    def test_19d_inner_opening_bbox_never_uses_parent_union(self):
+        image = blank_frame()
+        add_gate(image, (300, 180), 140, thickness=18)
+        add_gate(image, (340, 180), 140, thickness=18)
+
+        selected = OrangeGateDetector().detect(image)
+
+        self.assertTrue(selected.found)
+        self.assertLess(selected.bbox[2], 170)
+        self.assertLess(selected.bbox[3], 170)
+
 
 class TrackerTests(unittest.TestCase):
     def test_20_timestamped_velocity_and_short_dropout(self):

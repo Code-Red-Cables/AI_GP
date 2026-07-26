@@ -49,7 +49,9 @@ python main.py
    control during normal contour-area fluctuations.
    If overlapping gates form one connected orange component with multiple
    openings, the detector selects one plausible child opening and constructs
-   local bounds for it; the combined component is never reported as one gate.
+   local bounds for it. Every inner-opening detection publishes and draws its
+   box from that opening—not from the parent orange contour—so the combined
+   component is never reported or displayed as one gate.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards

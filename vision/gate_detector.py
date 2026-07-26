@@ -772,8 +772,37 @@ class OrangeGateDetector:
                 else order_corners(cv2.boxPoints(opening_rect))
             )
             center = opening_center or quadrilateral_diagonal_center(corners)
+            # Always keep published/debug geometry local to this one opening.
+            # The parent orange contour can be the connected union of two
+            # overlapping gates even when hierarchy heuristics do not label it
+            # compound.
+            opening_box = order_corners(cv2.boxPoints(opening_rect))
+            opening_center_array = np.asarray(center, dtype=np.float32)
+            expansion = 1.0 / max(cfg.estimated_opening_scale, 1e-6)
+            local_outer_corners = (
+                opening_center_array
+                + expansion * (opening_box - opening_center_array)
+            )
+            local_outer_corners[:, 0] = np.clip(
+                local_outer_corners[:, 0], 0, mask.shape[1] - 1
+            )
+            local_outer_corners[:, 1] = np.clip(
+                local_outer_corners[:, 1], 0, mask.shape[0] - 1
+            )
+            local_outer = np.round(local_outer_corners).astype(
+                np.int32
+            ).reshape(-1, 1, 2)
+            local_x, local_y, local_width, local_height = cv2.boundingRect(
+                local_outer
+            )
+            local_bbox = (
+                int(local_x),
+                int(local_y),
+                int(local_width),
+                int(local_height),
+            )
             candidate_outer = contour
-            candidate_bbox = bbox
+            candidate_bbox = local_bbox
             candidate_outer_width = float(rect_width)
             candidate_outer_height = float(rect_height)
             candidate_area = area
@@ -783,31 +812,7 @@ class OrangeGateDetector:
                 # gates. Build local bounds around one plausible opening so
                 # neither apparent size nor debug geometry represents their
                 # combined union.
-                opening_box = order_corners(cv2.boxPoints(opening_rect))
-                opening_center_array = np.asarray(center, dtype=np.float32)
-                expansion = 1.0 / max(cfg.estimated_opening_scale, 1e-6)
-                local_outer_corners = (
-                    opening_center_array
-                    + expansion * (opening_box - opening_center_array)
-                )
-                local_outer_corners[:, 0] = np.clip(
-                    local_outer_corners[:, 0], 0, mask.shape[1] - 1
-                )
-                local_outer_corners[:, 1] = np.clip(
-                    local_outer_corners[:, 1], 0, mask.shape[0] - 1
-                )
-                candidate_outer = np.round(local_outer_corners).astype(
-                    np.int32
-                ).reshape(-1, 1, 2)
-                local_x, local_y, local_width, local_height = cv2.boundingRect(
-                    candidate_outer
-                )
-                candidate_bbox = (
-                    int(local_x),
-                    int(local_y),
-                    int(local_width),
-                    int(local_height),
-                )
+                candidate_outer = local_outer
                 candidate_outer_width = float(opening_width * expansion)
                 candidate_outer_height = float(opening_height * expansion)
                 candidate_area = max(
@@ -816,7 +821,7 @@ class OrangeGateDetector:
                     - float(cv2.contourArea(opening)),
                 )
                 candidate_method = "compound_split"
-            return self._finalize_candidate(
+            candidate, debug = self._finalize_candidate(
                 outer=candidate_outer,
                 opening=opening,
                 center=center,
@@ -835,6 +840,14 @@ class OrangeGateDetector:
                 convexity=convexity,
                 hint=hint,
             )
+            # Scoring for a normal gate still uses its measured parent frame,
+            # but consumers and overlays must never receive that union contour.
+            debug.outer_contour = local_outer
+            debug.bbox = local_bbox
+            if candidate is not None:
+                candidate.outer_contour = local_outer
+                candidate.bbox = local_bbox
+            return candidate, debug
 
         perimeter = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(
@@ -1432,7 +1445,13 @@ def draw_detection(
             output, "NO GATE", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2
         )
     else:
-        x, y, bbox_width, bbox_height = detection.bbox
+        if detection.corners is not None:
+            opening_points = np.round(detection.corners).astype(
+                np.int32
+            ).reshape(-1, 1, 2)
+            x, y, bbox_width, bbox_height = cv2.boundingRect(opening_points)
+        else:
+            x, y, bbox_width, bbox_height = detection.bbox
         cv2.rectangle(
             output, (x, y), (x + bbox_width, y + bbox_height), (0, 255, 0), 2
         )
