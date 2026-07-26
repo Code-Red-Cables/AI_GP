@@ -56,6 +56,11 @@ python main.py
    fitting, producing separate candidates for separate gates. Each cluster
    must satisfy the same single-opening aspect limits; an implausible aspect
    is a hard rejection rather than merely a confidence penalty.
+   When a farther gate is visible, its horizontal direction is retained
+   through the current gate pass. The pass-through controller first clears
+   the frame without reusing the old gate's final correction, then begins a
+   bounded lateral/yaw handoff toward the retained next gate. The old tracker
+   prediction is released at pass-through so it cannot block acquisition.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards

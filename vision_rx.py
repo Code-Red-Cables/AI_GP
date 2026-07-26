@@ -343,6 +343,15 @@ class VisionRX:
             monotonic_now,
             next_gate_horizontal=next_gate_horizontal,
         )
+        if (
+            command.state.value == 'PASS_THROUGH'
+            and tracked is not None
+            and tracked.predicted
+        ):
+            # COMMIT intentionally treats a missing measured gate as a pass.
+            # Do not let that just-passed track reject the spatially separate
+            # next gate for the tracker's remaining prediction frames.
+            self.tracker.reset()
         state = command.state.value
         self._log_state(state)
 

@@ -227,6 +227,50 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertEqual(navigator.state, NavigationState.SEARCH)
         self.assertEqual(navigator._state_since, 2.0)
 
+    def test_pass_through_drops_old_left_correction_then_turns_right(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        navigator.state = NavigationState.ALIGN_AND_APPROACH
+        navigator._state_since = 1.0
+        navigator._last_alignment_command[:] = (-2.0, 0.0, -0.3)
+        primary = detection_at(
+            nx=0.0,
+            ny=0.24,
+            opening_width=100,
+            opening_height=80,
+            stable_frames=5,
+        )
+
+        navigator.update(primary, 1.1, next_gate_horizontal=0.60)
+        navigator.state = NavigationState.COMMIT
+        navigator._state_since = 1.1
+        clearance = navigator.update(None, 1.2)
+        toward_next = navigator.update(None, 1.45)
+
+        self.assertEqual(clearance.state, NavigationState.PASS_THROUGH)
+        self.assertGreaterEqual(clearance.right_mps, 0.0)
+        self.assertGreater(toward_next.right_mps, 0.0)
+        self.assertGreater(toward_next.yaw_rate_rps, 0.0)
+
+    def test_confirmed_pass_scans_toward_latched_right_gate(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        navigator.state = NavigationState.ALIGN_AND_APPROACH
+        navigator._state_since = 1.0
+        primary = detection_at(
+            nx=0.0,
+            ny=0.24,
+            opening_width=100,
+            opening_height=80,
+            stable_frames=5,
+        )
+        navigator.update(primary, 1.1, next_gate_horizontal=0.60)
+        navigator._last_direction = -1.0
+
+        navigator.confirm_gate_pass(1.2)
+        command = navigator.update(None, 1.3)
+
+        self.assertEqual(command.state, NavigationState.SEARCH)
+        self.assertGreater(command.yaw_rate_rps, 0.0)
+
     def test_vertical_servo_keeps_distant_gate_in_frame(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         far = detection_at(ny=0.70, opening_width=35)

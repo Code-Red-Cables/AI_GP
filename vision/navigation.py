@@ -101,6 +101,7 @@ class NavigationConfig:
     next_gate_yaw_kp: float = 0.0
     next_gate_max_right_mps: float = 0.0
     next_gate_max_yaw_rate_rps: float = 0.0
+    pass_through_lookahead_delay_s: float = 0.20
     framing_soft_edge_normalized: float = 0.58
     framing_hard_edge_normalized: float = 0.82
     framing_retreat_mps: float = -0.12
@@ -132,6 +133,7 @@ class GateNavigator:
         self._last_command = np.zeros(4, dtype=np.float64)
         self._last_alignment_command = np.zeros(3, dtype=np.float64)
         self._previous_alignment_error = 1.0
+        self._pending_next_gate_horizontal: Optional[float] = None
 
     def reset(self) -> None:
         self.state = NavigationState.SEARCH
@@ -142,6 +144,7 @@ class GateNavigator:
         self._last_command[:] = 0.0
         self._last_alignment_command[:] = 0.0
         self._previous_alignment_error = 1.0
+        self._pending_next_gate_horizontal = None
 
     def _transition(
         self, new_state: NavigationState, now: float, force: bool = False
@@ -294,6 +297,15 @@ class GateNavigator:
     def confirm_gate_pass(self, now: float) -> None:
         """Release the old visual target after the race timer confirms a pass."""
         self._last_seen_at = now
+        self._last_alignment_command[:] = 0.0
+        self._last_command[1:] = 0.0
+        if (
+            self._pending_next_gate_horizontal is not None
+            and abs(self._pending_next_gate_horizontal) > 0.02
+        ):
+            self._last_direction = (
+                1.0 if self._pending_next_gate_horizontal > 0.0 else -1.0
+            )
         # Race confirmation arrives after the physical crossing. Do not add
         # another blind pass-through interval; stop and acquire the largest
         # visible gate immediately.
@@ -316,7 +328,7 @@ class GateNavigator:
         if usable:
             assert detection is not None
             self._last_seen_at = now
-            if abs(detection.normalized_x) > cfg.center_deadband:
+            if measured and abs(detection.normalized_x) > cfg.center_deadband:
                 self._last_direction = (
                     1.0 if detection.normalized_x > 0.0 else -1.0
                 )
@@ -325,6 +337,33 @@ class GateNavigator:
         alignment_error = 1.0
         if usable:
             horizontal, vertical, alignment_error = self._errors(detection)
+
+        starting_state = self.state
+        lookahead_supported = bool(
+            measured
+            and detection is not None
+            and next_gate_horizontal is not None
+            and detection.opening_area_ratio
+            >= cfg.next_gate_minimum_primary_area_ratio
+            and abs(detection.normalized_x)
+            <= cfg.next_gate_maximum_primary_horizontal
+        )
+        if (
+            lookahead_supported
+            and starting_state
+            in (
+                NavigationState.TRACK,
+                NavigationState.ALIGN_AND_APPROACH,
+                NavigationState.COMMIT,
+            )
+        ):
+            self._pending_next_gate_horizontal = float(
+                np.clip(next_gate_horizontal, -1.0, 1.0)
+            )
+        elif starting_state == NavigationState.SEARCH and measured:
+            # This is the newly acquired gate. Do not reuse the turn that led
+            # from the previous gate unless a fresh farther gate is also seen.
+            self._pending_next_gate_horizontal = None
 
         if self.state == NavigationState.SEARCH:
             if measured:
@@ -449,7 +488,34 @@ class GateNavigator:
                 desired[3] += 0.20 * cfg.horizontal_yaw_kp * horizontal
         elif self.state == NavigationState.PASS_THROUGH:
             desired[0] = cfg.commit_forward_mps
-            desired[1:] = 0.18 * self._last_alignment_command
+            # The final correction for the passed gate points back toward that
+            # gate and may have the opposite sign from the next turn. Fly
+            # straight until the frame has cleared, then translate and yaw
+            # toward the latched next gate.
+            pass_elapsed = (
+                0.0
+                if self._state_since is None
+                else max(0.0, now - self._state_since)
+            )
+            if (
+                self._pending_next_gate_horizontal is not None
+                and pass_elapsed >= cfg.pass_through_lookahead_delay_s
+            ):
+                lookahead = self._pending_next_gate_horizontal
+                desired[1] = float(
+                    np.clip(
+                        cfg.next_gate_lateral_kp * lookahead,
+                        -cfg.next_gate_max_right_mps,
+                        cfg.next_gate_max_right_mps,
+                    )
+                )
+                desired[3] = float(
+                    np.clip(
+                        cfg.next_gate_yaw_kp * lookahead,
+                        -cfg.next_gate_max_yaw_rate_rps,
+                        cfg.next_gate_max_yaw_rate_rps,
+                    )
+                )
         elif self.state == NavigationState.RECOVER:
             desired[0] = cfg.recover_forward_mps
             desired[3] = (
@@ -457,13 +523,7 @@ class GateNavigator:
             )
 
         next_gate_usable = bool(
-            usable
-            and detection is not None
-            and next_gate_horizontal is not None
-            and detection.opening_area_ratio
-            >= cfg.next_gate_minimum_primary_area_ratio
-            and abs(detection.normalized_x)
-            <= cfg.next_gate_maximum_primary_horizontal
+            lookahead_supported
             and self.state
             in (NavigationState.TRACK, NavigationState.ALIGN_AND_APPROACH)
         )
