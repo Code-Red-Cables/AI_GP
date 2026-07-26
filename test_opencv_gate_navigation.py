@@ -403,6 +403,15 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertLess(selected.bbox[2], 170)
         self.assertLess(selected.bbox[3], 170)
 
+    def test_19e_line_reconstruction_rejects_multi_gate_span(self):
+        mask = np.zeros(FRAME_SIZE, dtype=np.uint8)
+        cv2.rectangle(mask, (120, 100), (300, 280), 255, 8)
+        cv2.rectangle(mask, (430, 120), (540, 230), 255, 8)
+
+        candidate, _ = OrangeGateDetector()._line_candidate(mask, None)
+
+        self.assertIsNone(candidate)
+
 
 class TrackerTests(unittest.TestCase):
     def test_20_timestamped_velocity_and_short_dropout(self):

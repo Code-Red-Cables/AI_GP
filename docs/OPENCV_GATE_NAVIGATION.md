@@ -52,6 +52,9 @@ python main.py
    local bounds for it. Every inner-opening detection publishes and draws its
    box from that opening—not from the parent orange contour—so the combined
    component is never reported or displayed as one gate.
+   Hough-line fallback candidates must satisfy the same single-opening aspect
+   limits, and an implausible aspect is a hard rejection rather than merely a
+   confidence penalty.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards

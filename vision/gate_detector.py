@@ -601,6 +601,7 @@ class OrangeGateDetector:
             / max(1, bbox[2] * bbox[3])
         )
         reason = "accepted"
+        opening_geometry_valid = True
         opening_aspect = opening_width / max(opening_height, 1e-6)
         if (
             opening_width < cfg.min_opening_width
@@ -608,6 +609,7 @@ class OrangeGateDetector:
         ):
             confidence -= 0.65
             reason = "tiny_opening"
+            opening_geometry_valid = False
         elif not (
             cfg.single_opening_min_aspect_ratio
             <= opening_aspect
@@ -615,6 +617,7 @@ class OrangeGateDetector:
         ):
             confidence -= 0.45
             reason = "implausible_opening"
+            opening_geometry_valid = False
         if supported_sides < 2:
             confidence -= 0.55
             reason = "single_post"
@@ -641,7 +644,7 @@ class OrangeGateDetector:
         debug = CandidateDebug(
             outer,
             opening,
-            confidence >= cfg.min_confidence,
+            confidence >= cfg.min_confidence and opening_geometry_valid,
             score,
             confidence,
             reason,
@@ -650,7 +653,7 @@ class OrangeGateDetector:
             bbox,
             features,
         )
-        if confidence < cfg.min_confidence:
+        if confidence < cfg.min_confidence or not opening_geometry_valid:
             return None, debug
         return (
             _Candidate(
@@ -985,13 +988,14 @@ class OrangeGateDetector:
         points = points.reshape(-1, 2).astype(np.float32)
         rect = cv2.minAreaRect(points)
         (_, _), (width, height), _ = rect
+        opening_aspect = width / max(height, 1e-6)
         if (
             width < cfg.min_gate_width
             or height < cfg.min_gate_height
             or not (
-                cfg.min_aspect_ratio
-                <= width / max(height, 1e-6)
-                <= cfg.max_aspect_ratio
+                cfg.single_opening_min_aspect_ratio
+                <= opening_aspect
+                <= cfg.single_opening_max_aspect_ratio
             )
         ):
             return None, None
