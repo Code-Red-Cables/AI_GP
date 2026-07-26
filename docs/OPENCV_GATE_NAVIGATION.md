@@ -83,6 +83,10 @@ python main.py
    If the selected gate approaches any image edge, forward speed is reduced
    and then reversed while centering continues. With no measured gate, blind
    forward flight stops and the vehicle scans toward the last known direction.
+   Gate commit requires three stable frames with horizontal error within
+   `0.05` normalized image units (about 16 pixels at 640-wide input). Lateral
+   centering remains live during commit; drift beyond `0.08` (about 26 pixels)
+   aborts the pass attempt back to alignment rather than clipping a side.
 5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
 6. `Controller` reuses the demonstration AHRS from

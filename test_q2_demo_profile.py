@@ -59,8 +59,9 @@ class DemoNavigationProfileTests(unittest.TestCase):
             cfg.next_gate_max_yaw_rate_rps,
         )
         self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.030)
-        self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.40)
-        self.assertAlmostEqual(cfg.commit_horizontal_tolerance, 0.10)
+        self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.10)
+        self.assertAlmostEqual(cfg.commit_horizontal_tolerance, 0.05)
+        self.assertEqual(cfg.commit_stable_frames, 3)
 
     def test_recorded_close_gate_enters_commit_before_dropout(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -73,12 +74,12 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator.update(far, 1.1)
         navigator.update(far, 1.2)
         close = detection_at(
-            # Latest gate-one telemetry places the opening near -0.20 at
-            # commit; this remains inside the raised flight-line tolerance.
-            ny=-0.20,
+            # Current gate-one telemetry places the opening near optical
+            # center at commit, inside the camera-tilt-adjusted flight line.
+            ny=0.02,
             opening_width=100,
             opening_height=82,
-            stable_frames=1,
+            stable_frames=3,
             size_rate=12.0,
         )
         command = navigator.update(close, 1.3)
@@ -107,6 +108,26 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertEqual(
             command.state, NavigationState.ALIGN_AND_APPROACH
         )
+
+    def test_commit_aborts_and_recenters_if_gate_drifts_sideways(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        navigator.state = NavigationState.COMMIT
+        navigator._state_since = 1.0
+        navigator._last_alignment_command[:] = 0.0
+        drifted = detection_at(
+            nx=0.12,
+            ny=0.24,
+            opening_width=110,
+            opening_height=90,
+            stable_frames=5,
+        )
+
+        command = navigator.update(drifted, 1.2)
+
+        self.assertEqual(
+            command.state, NavigationState.ALIGN_AND_APPROACH
+        )
+        self.assertGreater(command.right_mps, 0.0)
 
     def test_q2_tracker_rejects_recorded_false_gate_shapes(self):
         false_gates = (

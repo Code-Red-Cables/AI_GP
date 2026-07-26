@@ -33,6 +33,8 @@ class NavigationConfig:
     commit_stable_frames: int = 4
     commit_alignment_tolerance: float = 0.12
     commit_horizontal_tolerance: float = 0.12
+    commit_abort_alignment_tolerance: float = 0.20
+    commit_abort_horizontal_tolerance: float = 0.20
     commit_opening_area_ratio: float = 0.075
     commit_minimum_confidence: float = 0.52
     commit_max_center_speed: float = 0.35
@@ -358,9 +360,23 @@ class GateNavigator:
                 if ready:
                     self._transition(NavigationState.COMMIT, now)
         elif self.state == NavigationState.COMMIT:
-            # Once committed, disappearance is expected: punch through instead
-            # of reacting to orange edges leaving the image.
-            if not measured:
+            # Stay committed only while the opening remains centered. A gate
+            # drifting sideways is not a successful pass trajectory.
+            if (
+                measured
+                and (
+                    abs(horizontal)
+                    > cfg.commit_abort_horizontal_tolerance
+                    or abs(vertical)
+                    > cfg.commit_abort_alignment_tolerance
+                )
+            ):
+                self._transition(
+                    NavigationState.ALIGN_AND_APPROACH, now, force=True
+                )
+            # Once a centered commit makes the gate disappear, punch through
+            # instead of reacting to orange edges leaving the image.
+            elif not measured:
                 self._transition(NavigationState.PASS_THROUGH, now, force=True)
             elif (
                 self._state_since is not None
@@ -423,10 +439,14 @@ class GateNavigator:
             )
         elif self.state == NavigationState.COMMIT:
             desired[0] = cfg.commit_forward_mps
-            desired[1:] = 0.22 * self._last_alignment_command
+            desired[1:] = 0.35 * self._last_alignment_command
             if measured:
+                # Recompute lateral centering throughout commit. Holding only
+                # the pre-commit command let inertia carry gate two across the
+                # image and into the frame.
+                desired[1] += 0.75 * cfg.lateral_kp * horizontal
                 desired[2] += 0.15 * cfg.vertical_kp * vertical
-                desired[3] += 0.12 * cfg.horizontal_yaw_kp * horizontal
+                desired[3] += 0.20 * cfg.horizontal_yaw_kp * horizontal
         elif self.state == NavigationState.PASS_THROUGH:
             desired[0] = cfg.commit_forward_mps
             desired[1:] = 0.18 * self._last_alignment_command
@@ -573,9 +593,11 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # dropout. Commit earlier, while the centered opening is still measured,
         # instead of falling into recovery and acquiring background orange.
         commit_opening_area_ratio=0.030,
-        commit_alignment_tolerance=0.40,
-        commit_horizontal_tolerance=0.10,
-        commit_stable_frames=1,
+        commit_alignment_tolerance=0.10,
+        commit_horizontal_tolerance=0.05,
+        commit_abort_alignment_tolerance=0.16,
+        commit_abort_horizontal_tolerance=0.08,
+        commit_stable_frames=3,
         commit_max_center_speed=2.0,
         commit_max_size_rate=100.0,
         center_deadband=0.0,
