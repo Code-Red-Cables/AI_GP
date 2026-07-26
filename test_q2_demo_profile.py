@@ -12,7 +12,11 @@ from controller import Controller
 from dreamer_drone.config import load_config
 from dreamer_drone.env.spaces import VECTOR_OBS_FIELDS, scale_action
 from test_opencv_gate_navigation import detection_at
-from vision.navigation import GateNavigator, q2_demo_navigation_config
+from vision.navigation import (
+    GateNavigator,
+    NavigationState,
+    q2_demo_navigation_config,
+)
 from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 
 
@@ -35,8 +39,8 @@ class _FakeConnection:
 class DemoNavigationProfileTests(unittest.TestCase):
     def test_profile_matches_collect_demos_tuning(self):
         cfg = q2_demo_navigation_config()
-        self.assertAlmostEqual(cfg.search_forward_mps, 1.0)
-        self.assertAlmostEqual(cfg.maximum_approach_mps, 1.0)
+        self.assertAlmostEqual(cfg.search_forward_mps, 0.45)
+        self.assertAlmostEqual(cfg.maximum_approach_mps, 0.65)
         self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.16)
         self.assertAlmostEqual(cfg.vertical_deadband, 0.30)
         self.assertAlmostEqual(
@@ -114,11 +118,45 @@ class DemoNavigationProfileTests(unittest.TestCase):
             tracker.update(forward_gate, timestamp=1.0)
         )
 
-    def test_no_gate_keeps_demo_ballistic_approach_without_yaw(self):
+    def test_no_gate_uses_reduced_blind_approach_without_yaw(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         command = navigator.update(None, 1.0)
-        self.assertAlmostEqual(command.forward_mps, 1.0)
+        self.assertAlmostEqual(command.forward_mps, 0.45)
         self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
+
+    def test_close_gate_slows_and_brakes_before_commit(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        far = detection_at(
+            opening_width=42,
+            opening_height=36,
+        )
+        close = detection_at(
+            opening_width=60,
+            opening_height=60,
+        )
+        very_close = detection_at(
+            opening_width=80,
+            opening_height=75,
+        )
+        far_speed = navigator._approach_speed(far, 0.0, 0.0)
+        close_speed = navigator._approach_speed(close, 0.0, 0.0)
+        very_close_speed = navigator._approach_speed(
+            very_close, 0.0, 0.0
+        )
+        self.assertGreater(far_speed, close_speed)
+        self.assertGreater(close_speed, very_close_speed)
+        self.assertLess(very_close_speed, 0.0)
+
+    def test_confirmed_pass_releases_old_gate_immediately(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        navigator.state = NavigationState.COMMIT
+        navigator.confirm_gate_pass(2.0)
+        self.assertEqual(
+            navigator.state, NavigationState.PASS_THROUGH
+        )
+        self.assertLess(
+            navigator._state_since, 2.0
+        )
 
     def test_vertical_servo_is_close_range_with_demo_deadband(self):
         navigator = GateNavigator(q2_demo_navigation_config())

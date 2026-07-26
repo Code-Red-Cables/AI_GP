@@ -78,6 +78,7 @@ class VisionRX:
         self.path_detector = BluePathDetector()
         self.tracker = GateTracker(q2_demo_tracker_config())
         self.navigator = GateNavigator(q2_demo_navigation_config())
+        self._last_active_gate = None
         self._last_debug_t = 0.0
         self._last_state = None
         self._display_enabled = config.VISION_DISPLAY
@@ -99,6 +100,21 @@ class VisionRX:
         if log_event:
             log_event('VISION_STATE', state)
         self._last_state = state
+
+    # ------------------------------------------------------------------
+    def _consume_confirmed_gate_pass(self, now: float) -> None:
+        race_status = self.data.get('race_status') or {}
+        active_gate = race_status.get('active_gate')
+        if active_gate is None:
+            return
+        active_gate = int(active_gate)
+        if self._last_active_gate is None:
+            self._last_active_gate = active_gate
+            return
+        if active_gate > self._last_active_gate:
+            self.tracker.reset()
+            self.navigator.confirm_gate_pass(now)
+        self._last_active_gate = max(self._last_active_gate, active_gate)
 
     # ------------------------------------------------------------------
     def _vision_loop(self):
@@ -326,6 +342,7 @@ class VisionRX:
         monotonic_now = time.monotonic()
         timestamp_ns = time.time_ns()
 
+        self._consume_confirmed_gate_pass(monotonic_now)
         hint = self.tracker.hint(monotonic_now)
         measured = self.detector.detect(
             img,
@@ -398,6 +415,7 @@ class VisionRX:
             'path_offset': path_detection.normalized_offset,
             'path_heading': path_detection.normalized_heading,
             'next_gate_horizontal': next_gate_horizontal,
+            'active_gate': self._last_active_gate,
         }
         path_data = {
             'ts': timestamp_ns,

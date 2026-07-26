@@ -58,6 +58,11 @@ class NavigationConfig:
     minimum_approach_mps: float = 0.28
     maximum_approach_mps: float = 1.75
     commit_forward_mps: float = 1.90
+    minimum_forward_mps: float = 0.0
+    maximum_forward_mps: float = 2.0
+    approach_slowdown_start_area_ratio: float = 1.0
+    approach_slowdown_end_area_ratio: float = 1.0
+    close_approach_mps: float = 0.0
 
     horizontal_yaw_kp: float = 1.05
     horizontal_yaw_kd: float = 0.12
@@ -188,7 +193,7 @@ class GateNavigator:
         cfg = self.config
         limits = np.array(
             [
-                cfg.commit_forward_mps,
+                cfg.maximum_forward_mps,
                 cfg.max_right_mps,
                 cfg.max_down_mps,
                 cfg.max_yaw_rate_rps,
@@ -255,9 +260,38 @@ class GateNavigator:
             * worsening_quality
             * prediction_quality
         )
-        return cfg.minimum_approach_mps + (
+        speed = cfg.minimum_approach_mps + (
             cfg.maximum_approach_mps - cfg.minimum_approach_mps
         ) * quality
+        slowdown_span = (
+            cfg.approach_slowdown_end_area_ratio
+            - cfg.approach_slowdown_start_area_ratio
+        )
+        if slowdown_span > 1e-6:
+            proximity = float(
+                np.clip(
+                    (
+                        detection.opening_area_ratio
+                        - cfg.approach_slowdown_start_area_ratio
+                    )
+                    / slowdown_span,
+                    0.0,
+                    1.0,
+                )
+            )
+            speed = (
+                (1.0 - proximity) * speed
+                + proximity * cfg.close_approach_mps
+            )
+        return speed
+
+    def confirm_gate_pass(self, now: float) -> None:
+        """Release the old visual target after the race timer confirms a pass."""
+        self._last_seen_at = now
+        self._transition(NavigationState.PASS_THROUGH, now, force=True)
+        # Confirmation arrives after the physical crossing, so path guidance
+        # may resume immediately rather than waiting another delay interval.
+        self._state_since = now - self.config.path_pass_through_delay_s
 
     def update(
         self,
@@ -483,7 +517,9 @@ class GateNavigator:
         self._last_update = now
         self._previous_alignment_error = alignment_error
         return NavigationCommand(
-            forward_mps=float(max(0.0, conditioned[0])),
+            forward_mps=float(
+                max(cfg.minimum_forward_mps, conditioned[0])
+            ),
             right_mps=float(conditioned[1]),
             down_mps=float(conditioned[2]),
             yaw_rate_rps=float(conditioned[3]),
@@ -516,13 +552,18 @@ def q2_demo_navigation_config() -> NavigationConfig:
         vertical_setpoint_normalized=2.0 * 0.58 - 1.0,
         vertical_deadband=0.30,
         vertical_control_min_area_ratio=40.0 / 4096.0,
-        search_forward_mps=1.0,
+        search_forward_mps=0.45,
         search_yaw_rate_rps=0.0,
-        track_forward_mps=1.0,
-        minimum_approach_mps=1.0,
-        maximum_approach_mps=1.0,
-        commit_forward_mps=1.0,
-        recover_forward_mps=1.0,
+        track_forward_mps=0.55,
+        minimum_approach_mps=0.35,
+        maximum_approach_mps=0.65,
+        commit_forward_mps=0.40,
+        recover_forward_mps=0.25,
+        minimum_forward_mps=-0.12,
+        maximum_forward_mps=0.65,
+        approach_slowdown_start_area_ratio=0.008,
+        approach_slowdown_end_area_ratio=0.025,
+        close_approach_mps=-0.12,
         horizontal_yaw_kp=2.4,
         horizontal_yaw_kd=0.0,
         lateral_kp=3.0,

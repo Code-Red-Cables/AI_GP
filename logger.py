@@ -74,6 +74,8 @@ class Logger:
         gate = d.get('gate_detection')
         nav  = d.get('navigation')      or {}
         path = d.get('path_detection') or {}
+        pos  = d.get('local_position_ned') or {}
+        race = d.get('race_status')     or {}
         vis  = d.get('vision')          or {}
         tel  = d.get('teleop_cmd')      or {}
         tgt  = d.get('planner_target')  or {}
@@ -127,6 +129,11 @@ class Logger:
             'path_conf':      self._f(path.get('confidence')),
             'path_offset':    self._f(path.get('offset')),
             'path_heading':   self._f(path.get('heading')),
+            # optional simulator telemetry and pass confirmation
+            'vel_n':          self._f(pos.get('vx')),
+            'vel_e':          self._f(pos.get('vy')),
+            'vel_d':          self._f(pos.get('vz')),
+            'active_gate':    race.get('active_gate', 'nan'),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
             # teleop inputs

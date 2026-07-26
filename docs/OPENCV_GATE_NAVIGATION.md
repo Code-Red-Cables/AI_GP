@@ -49,10 +49,13 @@ python main.py
    center and heading; isolated blue objects are not accepted as a path.
 5. `GateNavigator` moves through `SEARCH`, `TRACK`,
    `ALIGN_AND_APPROACH`, `COMMIT`, `PASS_THROUGH`, and `RECOVER`.
-   Its deployed gains come from `collect_demos.py` and
-   `StabilizedController`: constant 1.0 m/s approach, gate target at 58% image
-   height, a 30%-frame vertical deadband, and vertical correction only after
-   the gate opening reaches the demonstrated close-range size.
+   Its attitude gains come from `collect_demos.py` and
+   `StabilizedController`, but consecutive-gate flight uses a slower approach
+   profile: reduced blind/track lean, progressive leveling from 0.8% opening
+   area, and a short bounded braking command near 2.5%. This prevents the
+   constant demo lean from accelerating through gate one too quickly to align
+   gate two. The gate target remains at 58% image height with a 30%-frame
+   vertical deadband.
    The blue path supplies bounded lateral/yaw assistance, at only 20% strength
    while a usable orange gate is visible, so the flyable gate stays primary.
    Path assistance is suspended during gate commit, then resumes at bounded
@@ -64,6 +67,9 @@ python main.py
    When another fully supported gate is already visible beyond a centered,
    nearby active gate, a separately bounded look-ahead term begins the next
    turn early. It cannot override primary-gate alignment.
+   The race timer's active-gate increment is used only to confirm a completed
+   pass and release the old visual track immediately; it supplies no steering
+   geometry.
 6. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
 7. `Controller` reuses the demonstration AHRS from
