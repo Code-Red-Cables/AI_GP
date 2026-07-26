@@ -61,7 +61,10 @@ python main.py
    neutral non-orange region is gate lettering, not an opening. When the
    tracked gate reaches a frame edge, a sudden apparent shrink is treated as
    clipping and the last full geometry is predicted instead of resizing onto
-   a logo or rail fragment.
+   a logo or rail fragment. Line reconstruction publishes its fitted
+   four-corner rectangle rather than the irregular hull of every Hough
+   endpoint, and the live overlay draws that quadrilateral directly instead
+   of an axis-aligned enclosing box.
    When a farther gate is visible, its horizontal direction is retained
    through the current gate pass. The pass-through controller first clears
    the frame without reusing the old gate's final correction, then begins a

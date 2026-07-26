@@ -461,6 +461,23 @@ class DetectorRobustnessTests(unittest.TestCase):
 
         self.assertFalse(result.found)
 
+    def test_19h_line_debug_contour_is_fitted_quadrilateral(self):
+        mask = np.zeros(FRAME_SIZE, dtype=np.uint8)
+        box = cv2.boxPoints(((320, 180), (210, 140), 24.0)).astype(np.int32)
+        cv2.polylines(mask, [box], True, 255, 9)
+
+        results = OrangeGateDetector()._line_candidates(mask, None)
+        candidates = [
+            (candidate, debug)
+            for candidate, debug in results
+            if candidate is not None
+        ]
+
+        self.assertTrue(candidates)
+        for candidate, debug in candidates:
+            self.assertEqual(candidate.outer_contour.reshape(-1, 2).shape[0], 4)
+            self.assertEqual(debug.outer_contour.reshape(-1, 2).shape[0], 4)
+
 
 class TrackerTests(unittest.TestCase):
     def test_20_timestamped_velocity_and_short_dropout(self):

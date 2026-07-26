@@ -1061,10 +1061,14 @@ class OrangeGateDetector:
             return None, None
         corners = order_corners(cv2.boxPoints(rect))
         center = quadrilateral_diagonal_center(corners)
-        contour = cv2.convexHull(points.reshape(-1, 1, 2))
+        # The union of Hough endpoints can form an irregular hull even when
+        # the supported gate is a clean rotated rectangle. Publish only the
+        # fitted four-rail geometry so drawing, tracking, and bounding boxes
+        # all describe the same physical gate.
+        contour = np.round(corners).astype(np.int32).reshape(-1, 1, 2)
         x, y, bbox_width, bbox_height = cv2.boundingRect(contour)
         bbox = (x, y, bbox_width, bbox_height)
-        area = max(float(cv2.contourArea(contour)), 1.0)
+        area = max(float(width * height), 1.0)
         candidate, debug = self._finalize_candidate(
             outer=contour,
             opening=None,
@@ -1788,11 +1792,26 @@ def draw_detection(
                 np.int32
             ).reshape(-1, 1, 2)
             x, y, bbox_width, bbox_height = cv2.boundingRect(opening_points)
+            # A normal axis-aligned rectangle around a rotated/perspective
+            # opening looks like a second, incorrect target. Draw the actual
+            # accepted four-corner opening instead.
+            cv2.polylines(
+                output,
+                [opening_points],
+                True,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
         else:
             x, y, bbox_width, bbox_height = detection.bbox
-        cv2.rectangle(
-            output, (x, y), (x + bbox_width, y + bbox_height), (0, 255, 0), 2
-        )
+            cv2.rectangle(
+                output,
+                (x, y),
+                (x + bbox_width, y + bbox_height),
+                (0, 255, 0),
+                2,
+            )
         tracked_center = (
             int(round(detection.center_x)),
             int(round(detection.center_y)),
@@ -1812,8 +1831,8 @@ def draw_detection(
         cv2.line(output, image_center, tracked_center, (0, 255, 255), 1)
         if detection.corners is not None:
             corners = np.round(detection.corners).astype(np.int32)
-            cv2.polylines(output, [corners], True, (255, 0, 255), 2)
             for label, point in zip(("TL", "TR", "BR", "BL"), corners):
+                cv2.circle(output, tuple(point), 3, (255, 0, 255), -1)
                 cv2.putText(
                     output,
                     label,
