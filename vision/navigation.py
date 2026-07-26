@@ -451,6 +451,14 @@ def q2_demo_navigation_config() -> NavigationConfig:
     0.8 m/s down-velocity gain.
     """
     return NavigationConfig(
+        # The recorded first pass peaked at 6.49% frame opening area before
+        # dropout. Commit earlier, while the centered opening is still measured,
+        # instead of falling into recovery and acquiring background orange.
+        commit_opening_area_ratio=0.035,
+        commit_alignment_tolerance=0.25,
+        commit_stable_frames=1,
+        commit_max_center_speed=2.0,
+        commit_max_size_rate=100.0,
         center_deadband=0.0,
         vertical_setpoint_normalized=2.0 * 0.58 - 1.0,
         vertical_deadband=0.30,

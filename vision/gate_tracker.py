@@ -27,6 +27,12 @@ class GateTrackerConfig:
     maximum_dt_seconds: float = 0.20
     stable_center_residual: float = 0.055
     stable_size_change_ratio: float = 0.14
+    # Optional seed gate prevents a new track from latching onto tiny side
+    # signs/posts after the previously approached gate leaves the frame.
+    minimum_seed_confidence: float = 0.0
+    minimum_seed_area_ratio: float = 0.0
+    maximum_seed_abs_horizontal: float = 1.0
+    maximum_seed_normalized_y: float = 1.0
 
 
 # Compatibility name retained for existing imports/tests.
@@ -180,6 +186,21 @@ class GateTracker:
 
         assert detection is not None
         if self._track is None:
+            cfg = self.config
+            plausible_seed = bool(
+                detection.confidence >= cfg.minimum_seed_confidence
+                and detection.opening_area_ratio
+                >= cfg.minimum_seed_area_ratio
+                and abs(detection.normalized_x)
+                <= cfg.maximum_seed_abs_horizontal
+                and detection.normalized_y
+                <= cfg.maximum_seed_normalized_y
+            )
+            if not plausible_seed:
+                self.last_update_ms = (
+                    time.perf_counter() - started
+                ) * 1000.0
+                return None
             seeded = replace(
                 detection,
                 predicted=False,
@@ -300,3 +321,13 @@ class GateTracker:
             )
         self.last_update_ms = (time.perf_counter() - started) * 1000.0
         return tracked
+
+
+def q2_demo_tracker_config() -> GateTrackerConfig:
+    """Reject the post-pass false tracks observed in the Q2 FlightSim run."""
+    return GateTrackerConfig(
+        minimum_seed_confidence=0.55,
+        minimum_seed_area_ratio=0.004,
+        maximum_seed_abs_horizontal=0.60,
+        maximum_seed_normalized_y=0.70,
+    )

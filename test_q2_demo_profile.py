@@ -13,6 +13,7 @@ from dreamer_drone.config import load_config
 from dreamer_drone.env.spaces import VECTOR_OBS_FIELDS, scale_action
 from test_opencv_gate_navigation import detection_at
 from vision.navigation import GateNavigator, q2_demo_navigation_config
+from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 
 
 class _FakeMav:
@@ -44,6 +45,74 @@ class DemoNavigationProfileTests(unittest.TestCase):
         )
         self.assertAlmostEqual(cfg.horizontal_yaw_kp, 2.4)
         self.assertAlmostEqual(cfg.max_yaw_rate_rps, 1.05)
+        self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.035)
+        self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.25)
+
+    def test_recorded_close_gate_enters_commit_before_dropout(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        far = detection_at(
+            opening_width=50,
+            opening_height=40,
+            stable_frames=5,
+        )
+        navigator.update(far, 1.0)
+        navigator.update(far, 1.1)
+        navigator.update(far, 1.2)
+        close = detection_at(
+            ny=-0.35,
+            opening_width=100,
+            opening_height=82,
+            stable_frames=1,
+            size_rate=12.0,
+        )
+        command = navigator.update(close, 1.3)
+        self.assertEqual(command.state.value, 'COMMIT')
+        after_dropout = navigator.update(None, 1.4)
+        self.assertEqual(after_dropout.state.value, 'PASS_THROUGH')
+
+    def test_q2_tracker_rejects_recorded_false_gate_shapes(self):
+        false_gates = (
+            detection_at(
+                confidence=0.67,
+                opening_width=27,
+                opening_height=26,
+            ),
+            detection_at(
+                nx=-0.72,
+                confidence=0.67,
+                opening_width=50,
+                opening_height=40,
+            ),
+            detection_at(
+                ny=0.88,
+                confidence=0.67,
+                opening_width=50,
+                opening_height=40,
+            ),
+        )
+        for false_gate in false_gates:
+            with self.subTest(
+                nx=false_gate.normalized_x,
+                ny=false_gate.normalized_y,
+                area=false_gate.area_px,
+            ):
+                tracker = GateTracker(q2_demo_tracker_config())
+                self.assertIsNone(
+                    tracker.update(false_gate, timestamp=1.0)
+                )
+
+    def test_q2_tracker_accepts_forward_course_gate(self):
+        tracker = GateTracker(q2_demo_tracker_config())
+        forward_gate = detection_at(
+            nx=-0.52,
+            ny=0.10,
+            confidence=0.63,
+            opening_width=55,
+            opening_height=43,
+        )
+        self.assertIsNotNone(
+            tracker.update(forward_gate, timestamp=1.0)
+        )
 
     def test_no_gate_keeps_demo_ballistic_approach_without_yaw(self):
         navigator = GateNavigator(q2_demo_navigation_config())

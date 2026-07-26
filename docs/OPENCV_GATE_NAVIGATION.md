@@ -41,7 +41,9 @@ python main.py
 2. `OrangeGateDetector` finds the flyable opening rather than the orange
    material centroid.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
-   missed frames.
+   missed frames. When starting a new track, it also rejects tiny openings,
+   extreme side targets, and objects at the bottom of the image. These guards
+   prevent post-pass signs and gate-frame fragments from taking control.
 4. `BluePathDetector` uses only the lower 60% of the image and requires
    converging left/right cyan lane boundaries. It estimates a smoothed lane
    center and heading; isolated blue objects are not accepted as a path.
@@ -54,6 +56,9 @@ python main.py
    The blue path supplies bounded lateral/yaw assistance, at only 20% strength
    while a usable orange gate is visible, so the flyable gate stays primary.
    Path assistance is suspended during gate commit and pass-through.
+   The Q2 close-gate threshold is calibrated below the measured first-gate
+   peak, ensuring the controller commits through the opening before it drops
+   out of view.
 6. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
 7. `Controller` reuses the demonstration AHRS from

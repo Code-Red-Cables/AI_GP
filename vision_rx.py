@@ -12,7 +12,7 @@ import numpy as np
 import config
 from gate_estimator import estimate_gate
 from vision.gate_detector import OrangeGateDetector, draw_detection
-from vision.gate_tracker import GateTracker
+from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
 from vision.path_detector import BluePathDetection, BluePathDetector, draw_blue_path
 
@@ -23,7 +23,7 @@ class VisionRX:
         self.data = data
         self.detector = OrangeGateDetector()
         self.path_detector = BluePathDetector()
-        self.tracker = GateTracker()
+        self.tracker = GateTracker(q2_demo_tracker_config())
         self.navigator = GateNavigator(q2_demo_navigation_config())
         self._last_debug_t = 0.0
         self._last_state = None
