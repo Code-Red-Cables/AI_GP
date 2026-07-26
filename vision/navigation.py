@@ -533,13 +533,12 @@ class GateNavigator:
 
 
 def q2_demo_navigation_config() -> NavigationConfig:
-    """Reproduce the gate-passing profile used by collect_demos.py.
+    """Adapt the demonstrated gate-passing profile to the multi-gate course.
 
-    The mapping preserves the demonstrated physical behavior through Q2's
-    velocity planner: forward lean 0.10 -> 1.0 m/s, bank gain 0.30 ->
-    3.0 m/s lateral target, yaw gain 0.8 normalized -> 2.4 rad/s before
-    the demonstrated 1.05 rad/s cap, and vertical thrust gain 0.4 ->
-    0.8 m/s down-velocity gain.
+    The attitude loop retains collect_demos.py's physical conventions. Gate
+    centering deliberately favors lateral bank over yaw so rotating the camera
+    cannot make an off-axis gate look aligned before the vehicle has moved
+    toward its opening.
     """
     return NavigationConfig(
         # The recorded first pass peaked at 6.49% frame opening area before
@@ -552,8 +551,10 @@ def q2_demo_navigation_config() -> NavigationConfig:
         commit_max_center_speed=2.0,
         commit_max_size_rate=100.0,
         center_deadband=0.0,
-        vertical_setpoint_normalized=2.0 * 0.58 - 1.0,
-        vertical_deadband=0.30,
+        # Hold the opening lower in the camera (drone higher in the opening)
+        # and start correcting sooner to clear the first gate's bottom rail.
+        vertical_setpoint_normalized=2.0 * 0.62 - 1.0,
+        vertical_deadband=0.24,
         vertical_control_min_area_ratio=40.0 / 4096.0,
         search_forward_mps=0.45,
         search_yaw_rate_rps=0.0,
@@ -567,7 +568,10 @@ def q2_demo_navigation_config() -> NavigationConfig:
         approach_slowdown_start_area_ratio=0.008,
         approach_slowdown_end_area_ratio=0.025,
         close_approach_mps=-0.12,
-        horizontal_yaw_kp=2.4,
+        # Horizontal error primarily commands bank/translation. The earlier
+        # 2.4 yaw gain centered gate two by rotating the camera while the
+        # vehicle remained outside its lateral flight line.
+        horizontal_yaw_kp=0.75,
         horizontal_yaw_kd=0.0,
         lateral_kp=3.0,
         lateral_kd=0.0,
@@ -575,7 +579,7 @@ def q2_demo_navigation_config() -> NavigationConfig:
         vertical_kd=0.0,
         max_right_mps=3.0,
         max_down_mps=0.60,
-        max_yaw_rate_rps=1.05,
+        max_yaw_rate_rps=0.48,
         max_forward_acceleration=100.0,
         max_lateral_acceleration=100.0,
         max_vertical_acceleration=100.0,
@@ -584,17 +588,17 @@ def q2_demo_navigation_config() -> NavigationConfig:
         track_alignment_scale=1.0,
         path_minimum_confidence=0.30,
         path_heading_weight=0.60,
-        path_lateral_kp=1.0,
-        path_yaw_kp=0.80,
-        path_max_right_mps=0.60,
-        path_max_yaw_rate_rps=0.35,
+        path_lateral_kp=1.30,
+        path_yaw_kp=0.35,
+        path_max_right_mps=0.75,
+        path_max_yaw_rate_rps=0.15,
         path_blend_with_gate=0.35,
         path_pass_through_delay_s=0.15,
         path_pass_through_weight=0.65,
         next_gate_minimum_primary_area_ratio=0.008,
         next_gate_maximum_primary_horizontal=0.18,
-        next_gate_lateral_kp=0.50,
-        next_gate_yaw_kp=0.65,
-        next_gate_max_right_mps=0.25,
-        next_gate_max_yaw_rate_rps=0.25,
+        next_gate_lateral_kp=0.90,
+        next_gate_yaw_kp=0.25,
+        next_gate_max_right_mps=0.45,
+        next_gate_max_yaw_rate_rps=0.12,
     )

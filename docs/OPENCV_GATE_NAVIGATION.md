@@ -54,9 +54,12 @@ python main.py
    profile: reduced blind/track lean, progressive leveling from 0.8% opening
    area, and a short bounded braking command near 2.5%. This prevents the
    constant demo lean from accelerating through gate one too quickly to align
-   gate two. The gate target remains at 58% image height with a 30%-frame
-   vertical deadband.
-   The blue path supplies bounded lateral/yaw assistance, at only 20% strength
+   gate two. The gate target is held at 62% image height with a 24%-frame
+   vertical deadband, placing the drone higher in the opening to clear the
+   bottom rail. Horizontal gate capture favors lateral bank over camera yaw,
+   so turning toward an off-axis gate cannot masquerade as moving onto its
+   flight line.
+   The blue path supplies bounded lateral/yaw assistance, at 35% strength
    while a usable orange gate is visible, so the flyable gate stays primary.
    Path assistance is suspended during gate commit, then resumes at bounded
    strength 150 ms into pass-through so the drone can anticipate the turn
@@ -65,8 +68,9 @@ python main.py
    peak, ensuring the controller commits through the opening before it drops
    out of view.
    When another fully supported gate is already visible beyond a centered,
-   nearby active gate, a separately bounded look-ahead term begins the next
-   turn early. It cannot override primary-gate alignment.
+   nearby active gate, a separately bounded look-ahead term begins lateral
+   translation toward the next gate while applying only a small yaw term. It
+   cannot override primary-gate alignment.
    The race timer's active-gate increment is used only to confirm a completed
    pass and release the old visual track immediately; it supplies no steering
    geometry.
@@ -74,8 +78,11 @@ python main.py
    forward/right/down to Q2 NED velocity.
 7. `Controller` reuses the demonstration AHRS from
    `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
-   attitude gains and inverted rate axes, and caps all rates at 1.05 rad/s. A
-   stale-IMU watchdog commands neutral hover.
+   attitude gains and inverted rate axes. Forward pitch keeps the demonstrated
+   gain, while lateral requests use a stronger bank mapping for the Q2 gate
+   spacing. Gate-navigation yaw is capped at 0.48 rad/s; body pitch and roll
+   retain the demonstrated 1.05 rad/s safety cap. A stale-IMU watchdog
+   commands neutral hover.
 
 The profile is grounded in the saved demonstration corpus: 105 inspected
 episodes contain a gate pass, with the original demo set passing its first gate

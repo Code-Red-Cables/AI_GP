@@ -41,14 +41,19 @@ class DemoNavigationProfileTests(unittest.TestCase):
         cfg = q2_demo_navigation_config()
         self.assertAlmostEqual(cfg.search_forward_mps, 0.45)
         self.assertAlmostEqual(cfg.maximum_approach_mps, 0.65)
-        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.16)
-        self.assertAlmostEqual(cfg.vertical_deadband, 0.30)
+        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.24)
+        self.assertAlmostEqual(cfg.vertical_deadband, 0.24)
         self.assertAlmostEqual(
             cfg.vertical_control_min_area_ratio,
             40.0 / 4096.0,
         )
-        self.assertAlmostEqual(cfg.horizontal_yaw_kp, 2.4)
-        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 1.05)
+        self.assertAlmostEqual(cfg.horizontal_yaw_kp, 0.75)
+        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.48)
+        self.assertGreater(cfg.path_lateral_kp, cfg.path_yaw_kp)
+        self.assertGreater(
+            cfg.next_gate_max_right_mps,
+            cfg.next_gate_max_yaw_rate_rps,
+        )
         self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.030)
         self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.40)
         self.assertAlmostEqual(cfg.commit_horizontal_tolerance, 0.10)
@@ -64,7 +69,9 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator.update(far, 1.1)
         navigator.update(far, 1.2)
         close = detection_at(
-            ny=-0.46,
+            # Latest gate-one telemetry places the opening near -0.20 at
+            # commit; this remains inside the raised flight-line tolerance.
+            ny=-0.20,
             opening_width=100,
             opening_height=82,
             stable_frames=1,
@@ -170,6 +177,24 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertGreater(close_speed, very_close_speed)
         self.assertLess(very_close_speed, 0.0)
 
+    def test_gate_capture_favors_translation_over_camera_yaw(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        right_gate = detection_at(
+            nx=0.55,
+            opening_width=50,
+            opening_height=40,
+            stable_frames=5,
+        )
+        navigator.update(right_gate, 1.0)
+        navigator.update(right_gate, 1.1)
+        command = navigator.update(right_gate, 1.2)
+
+        self.assertEqual(
+            command.state, NavigationState.ALIGN_AND_APPROACH
+        )
+        self.assertGreater(command.right_mps, 1.5)
+        self.assertLessEqual(abs(command.yaw_rate_rps), 0.48)
+
     def test_confirmed_pass_releases_old_gate_immediately(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         navigator.state = NavigationState.COMMIT
@@ -189,8 +214,8 @@ class DemoNavigationProfileTests(unittest.TestCase):
 
         close = detection_at(ny=0.60, opening_width=80)
         _, close_vertical, _ = navigator._errors(close)
-        # (0.60 - 0.16 target) - 0.30 demonstrated deadband.
-        self.assertAlmostEqual(close_vertical, 0.14)
+        # (0.60 - 0.24 target) - 0.24 Q2 clearance deadband.
+        self.assertAlmostEqual(close_vertical, 0.12)
 
     def test_q2_controller_matches_demo_gain_damping_and_rate_cap(self):
         connection = _FakeConnection()
@@ -225,7 +250,12 @@ class DemoNavigationProfileTests(unittest.TestCase):
 
         output = data['control_output']
         self.assertAlmostEqual(output['pitch_rate'], -0.18)
-        self.assertAlmostEqual(output['roll_rate'], 0.54)
+        # Lateral capture uses a stronger bank gain and reaches the 25-degree
+        # lean cap for this deliberately large 3 m/s request.
+        self.assertAlmostEqual(
+            output['roll_rate'],
+            config.MAX_LEAN_RAD * config.KP_ATT,
+        )
         self.assertAlmostEqual(output['yaw_rate'], config.MAX_RATE_RAD_S)
         for key in ('roll_rate', 'pitch_rate', 'yaw_rate'):
             self.assertLessEqual(

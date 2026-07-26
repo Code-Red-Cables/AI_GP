@@ -17,6 +17,12 @@ MAVLINK_CMD_SIM_RESET = 31000
 # Ignore attitude quaternion, use body rates + thrust only
 _RATES_MASK = mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
 
+# The Q2 course needs materially more bank than pitch while capturing an
+# off-axis gate. Keeping this separate from config.KP_LEAN preserves the
+# demonstrated forward-speed mapping while making right_mps produce actual
+# lateral translation instead of being masked by the yaw response.
+_LATERAL_LEAN_GAIN = 0.18
+
 
 class Controller:
 
@@ -91,7 +97,7 @@ class Controller:
         # collect_demos.py AHRS convention: +pitch leans forward; a gate to
         # the right requests -roll. The simulator then inverts both rate axes.
         d_pitch =  v_fwd   * config.KP_LEAN
-        d_roll  = -v_right * config.KP_LEAN
+        d_roll  = -v_right * _LATERAL_LEAN_GAIN
         d_pitch = max(-config.MAX_LEAN_RAD, min(config.MAX_LEAN_RAD, d_pitch))
         d_roll  = max(-config.MAX_LEAN_RAD, min(config.MAX_LEAN_RAD, d_roll))
 
@@ -131,6 +137,8 @@ class Controller:
             'ahrs_roll': roll,
             'ahrs_pitch': pitch,
             'ahrs_divergence': self._ahrs.divergence,
+            'desired_roll': d_roll,
+            'desired_pitch': d_pitch,
         }
 
         now_ms = int(time.time() * 1000)

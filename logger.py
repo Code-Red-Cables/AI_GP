@@ -104,6 +104,10 @@ class Logger:
             'cmd_roll_rate':  self._f(ctrl.get('roll_rate')),
             'cmd_pitch_rate': self._f(ctrl.get('pitch_rate')),
             'cmd_yaw_rate':   self._f(ctrl.get('yaw_rate')),
+            'ahrs_roll':      self._f(ctrl.get('ahrs_roll')),
+            'ahrs_pitch':     self._f(ctrl.get('ahrs_pitch')),
+            'desired_roll':   self._f(ctrl.get('desired_roll')),
+            'desired_pitch':  self._f(ctrl.get('desired_pitch')),
             # planner target (NED velocity)
             'tgt_vn':         self._f(tgt.get('vn')),
             'tgt_ve':         self._f(tgt.get('ve')),
