@@ -13,12 +13,15 @@ HOVER_THRUST    = 0.27      # open-loop hover baseline (no baro in VQ2)
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
 KP_LEAN         = 0.10      # body velocity (m/s) → desired lean angle (rad)
 MAX_LEAN_RAD    = math.radians(25.0)
-KP_ATT          = 3.0       # lean error (rad) → body rate command (rad/s)
+KP_ATT          = 1.8       # demo: 0.6 normalized gain * 3.0 max rate
+KD_ATT          = 0.09      # demo: 0.03 normalized damping * 3.0 max rate
 RATE_SIGN_PITCH = -1.0      # sim pitch rate axis is inverted
-RATE_SIGN_ROLL  =  1.0
+RATE_SIGN_ROLL  = -1.0      # measured demo ActionConfig: all rate axes inverted
+MAX_RATE_RAD_S  = 1.05      # demo rate_cap 0.35 * 3.0 max rate
 MAX_THRUST      = 0.90
 MIN_THRUST      = 0.05
 CONTROL_HZ      = 100
+TELEMETRY_TIMEOUT_S = 0.35
 
 # ---- Mode selection ----
 # Exactly one racing command owner is selected at process start.  ``opencv``

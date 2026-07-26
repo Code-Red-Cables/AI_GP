@@ -42,6 +42,10 @@ class NavigationConfig:
     # Optical normalized-y that represents body-forward flight. This is zero
     # for a level camera and positive for Q2's upward-tilted camera.
     vertical_setpoint_normalized: float = 0.0
+    vertical_deadband: float = 0.035
+    vertical_control_min_area_ratio: float = 0.0
+    track_alignment_scale: float = 0.45
+    recover_forward_mps: float = 0.0
 
     minimum_state_duration_s: float = 0.10
     commit_maximum_duration_s: float = 0.65
@@ -147,14 +151,18 @@ class GateNavigator:
             if abs(detection.normalized_x) <= cfg.center_deadband
             else detection.normalized_x
         )
-        vertical_error = (
-            detection.normalized_y - cfg.vertical_setpoint_normalized
-        )
-        vertical = (
-            0.0
-            if abs(vertical_error) <= cfg.center_deadband
-            else vertical_error
-        )
+        vertical_error = detection.normalized_y - cfg.vertical_setpoint_normalized
+        if (
+            detection.opening_area_ratio
+            < cfg.vertical_control_min_area_ratio
+            or abs(vertical_error) <= cfg.vertical_deadband
+        ):
+            vertical = 0.0
+        else:
+            vertical = math.copysign(
+                abs(vertical_error) - cfg.vertical_deadband,
+                vertical_error,
+            )
         return horizontal, vertical, max(abs(horizontal), abs(vertical))
 
     def _condition(self, desired: np.ndarray, dt: float) -> np.ndarray:
@@ -323,9 +331,10 @@ class GateNavigator:
         elif self.state == NavigationState.TRACK:
             desired[0] = cfg.track_forward_mps if usable else 0.0
             if usable:
-                desired[1] = 0.45 * cfg.lateral_kp * horizontal
-                desired[2] = 0.45 * cfg.vertical_kp * vertical
-                desired[3] = 0.45 * cfg.horizontal_yaw_kp * horizontal
+                scale = cfg.track_alignment_scale
+                desired[1] = scale * cfg.lateral_kp * horizontal
+                desired[2] = scale * cfg.vertical_kp * vertical
+                desired[3] = scale * cfg.horizontal_yaw_kp * horizontal
         elif self.state == NavigationState.ALIGN_AND_APPROACH and usable:
             error_rate = (
                 alignment_error - self._previous_alignment_error
@@ -360,6 +369,7 @@ class GateNavigator:
             desired[0] = cfg.commit_forward_mps
             desired[1:] = 0.18 * self._last_alignment_command
         elif self.state == NavigationState.RECOVER:
+            desired[0] = cfg.recover_forward_mps
             desired[3] = (
                 0.55 * cfg.search_yaw_rate_rps * self._last_direction
             )
@@ -377,3 +387,42 @@ class GateNavigator:
             predicted=bool(detection.predicted) if usable else False,
             alignment_error=alignment_error,
         )
+
+
+def q2_demo_navigation_config() -> NavigationConfig:
+    """Reproduce the gate-passing profile used by collect_demos.py.
+
+    The mapping preserves the demonstrated physical behavior through Q2's
+    velocity planner: forward lean 0.10 -> 1.0 m/s, bank gain 0.30 ->
+    3.0 m/s lateral target, yaw gain 0.8 normalized -> 2.4 rad/s before
+    the demonstrated 1.05 rad/s cap, and vertical thrust gain 0.4 ->
+    0.8 m/s down-velocity gain.
+    """
+    return NavigationConfig(
+        center_deadband=0.0,
+        vertical_setpoint_normalized=2.0 * 0.58 - 1.0,
+        vertical_deadband=0.30,
+        vertical_control_min_area_ratio=40.0 / 4096.0,
+        search_forward_mps=1.0,
+        search_yaw_rate_rps=0.0,
+        track_forward_mps=1.0,
+        minimum_approach_mps=1.0,
+        maximum_approach_mps=1.0,
+        commit_forward_mps=1.0,
+        recover_forward_mps=1.0,
+        horizontal_yaw_kp=2.4,
+        horizontal_yaw_kd=0.0,
+        lateral_kp=3.0,
+        lateral_kd=0.0,
+        vertical_kp=0.8,
+        vertical_kd=0.0,
+        max_right_mps=3.0,
+        max_down_mps=0.60,
+        max_yaw_rate_rps=1.05,
+        max_forward_acceleration=100.0,
+        max_lateral_acceleration=100.0,
+        max_vertical_acceleration=100.0,
+        max_yaw_acceleration=100.0,
+        command_lpf_alpha=1.0,
+        track_alignment_scale=1.0,
+    )

@@ -1,8 +1,8 @@
 # Q2 OpenCV gate navigation
 
 This branch is based directly on `Q2_new` and preserves its MAVLink receiver,
-100 Hz body-rate controller, logging, simulator protocol, and complete
-`dreamer/` implementation.
+100 Hz body-rate control architecture, logging, simulator protocol, and
+complete `dreamer/` implementation.
 
 ## Command ownership
 
@@ -12,8 +12,9 @@ startup:
 - `opencv` (default): the UDP camera receiver runs the orange gate detector,
   timestamped tracker, and gate navigation state machine. `OpenCVGatePlanner`
   rotates its body-frame commands into Q2's existing
-  `{vn, ve, vd, yaw_rate}` planner contract. The unchanged Q2 controller sends
-  body rates and thrust to the simulator.
+  `{vn, ve, vd, yaw_rate}` planner contract. The Q2 controller uses the
+  demonstrated complementary-filter AHRS and sends rate-capped body rates and
+  thrust to the simulator.
 - `existing_ai`: `main.py` delegates to the unchanged Dreamer
   `DeployController`. The OpenCV receiver and Q2 controller are not started, so
   their outputs cannot be blended.
@@ -43,12 +44,20 @@ python main.py
    missed frames.
 4. `GateNavigator` moves through `SEARCH`, `TRACK`,
    `ALIGN_AND_APPROACH`, `COMMIT`, `PASS_THROUGH`, and `RECOVER`.
-   Its vertical setpoint is the body-forward ray, compensating for Q2's
-   20-degree upward camera tilt.
+   Its deployed gains come from `collect_demos.py` and
+   `StabilizedController`: constant 1.0 m/s approach, gate target at 58% image
+   height, a 30%-frame vertical deadband, and vertical correction only after
+   the gate opening reaches the demonstrated close-range size.
 5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
-6. Q2's original `Controller` converts that velocity to roll/pitch rates,
-   yaw rate, and thrust.
+6. `Controller` reuses the demonstration AHRS from
+   `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
+   attitude gains and inverted rate axes, and caps all rates at 1.05 rad/s. A
+   stale-IMU watchdog commands neutral hover.
+
+The profile is grounded in the saved demonstration corpus: 105 inspected
+episodes contain a gate pass, with the original demo set passing its first gate
+around steps 75-83.
 
 The camera tilt and 640x360 pinhole model are centralized in
 `camera_model.py`. `gate_estimator.py` reports a size-based range and upgrades
@@ -78,10 +87,9 @@ Use the offline viewer without sending flight commands:
 python tools/offline_gate_viewer.py frames/f_00070.png
 ```
 
-Run the deterministic detector, tracker, navigation, camera-model, and Q2
-planner-contract tests:
+Run the deterministic detector, tracker, navigation, camera-model,
+demo-profile, and Q2 planner-contract tests:
 
 ```bash
-python test_camera_model.py
-python -m unittest -v test_opencv_gate_navigation
+python -m pytest -q
 ```

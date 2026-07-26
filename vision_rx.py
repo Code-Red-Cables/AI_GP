@@ -9,12 +9,11 @@ import time
 import cv2
 import numpy as np
 
-import camera_model as cm
 import config
 from gate_estimator import estimate_gate
 from vision.gate_detector import OrangeGateDetector, draw_detection
 from vision.gate_tracker import GateTracker
-from vision.navigation import GateNavigator, NavigationConfig
+from vision.navigation import GateNavigator, q2_demo_navigation_config
 
 
 class VisionRX:
@@ -23,13 +22,7 @@ class VisionRX:
         self.data = data
         self.detector = OrangeGateDetector()
         self.tracker = GateTracker()
-        body_forward_v = cm.project(cm.body_to_cam((1.0, 0.0, 0.0)))[1]
-        body_forward_normalized_y = 2.0 * body_forward_v / cm.HEIGHT - 1.0
-        self.navigator = GateNavigator(
-            NavigationConfig(
-                vertical_setpoint_normalized=body_forward_normalized_y
-            )
-        )
+        self.navigator = GateNavigator(q2_demo_navigation_config())
         self._last_debug_t = 0.0
         self._last_state = None
         self._display_enabled = config.VISION_DISPLAY

@@ -113,6 +113,7 @@ class MAVLinkRX:
             'pressure_alt': msg.pressure_alt,
             'temperature': msg.temperature,
             'ts_us': msg.time_usec,
+            'ts': time.time_ns(),
         }
 
     def on_encapsulated_data(self, msg):
