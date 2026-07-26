@@ -44,10 +44,7 @@ python main.py
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards
    prevent post-pass signs and gate-frame fragments from taking control.
-4. `BluePathDetector` uses only the lower 60% of the image and requires
-   converging left/right cyan lane boundaries. It estimates a smoothed lane
-   center and heading; isolated blue objects are not accepted as a path.
-5. `GateNavigator` moves through `SEARCH`, `TRACK`,
+4. `GateNavigator` moves through `SEARCH`, `TRACK`,
    `ALIGN_AND_APPROACH`, `COMMIT`, `PASS_THROUGH`, and `RECOVER`.
    Its attitude gains come from `collect_demos.py` and
    `StabilizedController`, but consecutive-gate flight uses a slower approach
@@ -59,11 +56,8 @@ python main.py
    bottom rail. Horizontal gate capture favors lateral bank over camera yaw,
    so turning toward an off-axis gate cannot masquerade as moving onto its
    flight line.
-   The blue path supplies bounded lateral/yaw assistance, at 35% strength
-   while a usable orange gate is visible, so the flyable gate stays primary.
-   Path assistance is suspended during gate commit, then resumes at bounded
-   strength 150 ms into pass-through so the drone can anticipate the turn
-   toward the next gate without clipping the current gate frame.
+   Blue-path detection and steering are disabled in the Q2 runtime. Only the
+   accepted orange gate and orange next-gate look-ahead affect navigation.
    The Q2 close-gate threshold is calibrated below the measured first-gate
    peak, ensuring the controller commits through the opening before it drops
    out of view.
@@ -74,9 +68,9 @@ python main.py
    The race timer's active-gate increment is used only to confirm a completed
    pass and release the old visual track immediately; it supplies no steering
    geometry.
-6. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
+5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
-7. `Controller` reuses the demonstration AHRS from
+6. `Controller` reuses the demonstration AHRS from
    `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
    attitude gains and inverted rate axes. Forward pitch keeps the demonstrated
    gain, while lateral requests use a stronger bank mapping for the Q2 gate
@@ -107,8 +101,8 @@ $env:VISION_DISPLAY="1"
 
 The live window keeps the annotated camera full-size on the left and stacks
 two diagnostics on the right: the orange color mask and an accepted-target
-view containing only the gate and blue path geometry that may influence
-steering. Orange pixels in the mask are color candidates, not necessarily
+view containing only the orange gate geometry that may influence steering.
+Orange pixels in the mask are color candidates, not necessarily
 accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
 to stop the client. Reset the simulator before using perception-only mode so
 the vehicle is not left armed from an earlier run.

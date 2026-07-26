@@ -49,7 +49,8 @@ class DemoNavigationProfileTests(unittest.TestCase):
         )
         self.assertAlmostEqual(cfg.horizontal_yaw_kp, 0.75)
         self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.48)
-        self.assertGreater(cfg.path_lateral_kp, cfg.path_yaw_kp)
+        self.assertEqual(cfg.path_lateral_kp, 0.0)
+        self.assertEqual(cfg.path_yaw_kp, 0.0)
         self.assertGreater(
             cfg.next_gate_max_right_mps,
             cfg.next_gate_max_yaw_rate_rps,
@@ -202,9 +203,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertEqual(
             navigator.state, NavigationState.PASS_THROUGH
         )
-        self.assertLess(
-            navigator._state_since, 2.0
-        )
+        self.assertEqual(navigator._state_since, 2.0)
 
     def test_vertical_servo_is_close_range_with_demo_deadband(self):
         navigator = GateNavigator(q2_demo_navigation_config())

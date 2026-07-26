@@ -19,7 +19,6 @@ from vision.gate_detector import (
 )
 from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
-from vision.path_detector import BluePathDetection, BluePathDetector, draw_blue_path
 
 
 def course_lookahead_horizontal(
@@ -75,7 +74,6 @@ class VisionRX:
     def __init__(self, data):
         self.data = data
         self.detector = OrangeGateDetector()
-        self.path_detector = BluePathDetector()
         self.tracker = GateTracker(q2_demo_tracker_config())
         self.navigator = GateNavigator(q2_demo_navigation_config())
         self._last_active_gate = None
@@ -247,7 +245,7 @@ class VisionRX:
             (mask_panel, 'ORANGE COLOR MASK', upper_height),
             (
                 accepted_targets,
-                'ACCEPTED GATE + BLUE PATH',
+                'ACCEPTED GATE TARGET',
                 lower_height,
             ),
         ):
@@ -273,25 +271,9 @@ class VisionRX:
     def build_accepted_target_frame(
         shape: tuple[int, ...],
         gate_detection,
-        path_detection: BluePathDetection | None,
     ) -> np.ndarray:
         """Show only geometry accepted for steering, not rejected candidates."""
         target = np.zeros(shape, dtype=np.uint8)
-        if (
-            path_detection is not None
-            and path_detection.found
-            and path_detection.mask is not None
-        ):
-            path_mask = path_detection.mask
-            if path_mask.shape[:2] != target.shape[:2]:
-                path_mask = cv2.resize(
-                    path_mask,
-                    (target.shape[1], target.shape[0]),
-                    interpolation=cv2.INTER_NEAREST,
-                )
-            target[path_mask > 0] = (80, 45, 0)
-        draw_blue_path(target, path_detection)
-
         if gate_detection is not None and gate_detection.found:
             if gate_detection.corners is not None:
                 corners = np.round(
@@ -353,16 +335,12 @@ class VisionRX:
             measured if measured.found else None,
             timestamp=monotonic_now,
         )
-        path_detection = self.path_detector.detect(
-            img, timestamp=monotonic_now
-        )
         next_gate_horizontal = course_lookahead_horizontal(
             measured, self.detector.last_debug
         )
         command = self.navigator.update(
             tracked,
             monotonic_now,
-            path=path_detection,
             next_gate_horizontal=next_gate_horizontal,
         )
         state = command.state.value
@@ -410,22 +388,8 @@ class VisionRX:
             'confidence': command.confidence,
             'predicted': command.predicted,
             'alignment_error': command.alignment_error,
-            'path_found': path_detection.found,
-            'path_confidence': path_detection.confidence,
-            'path_offset': path_detection.normalized_offset,
-            'path_heading': path_detection.normalized_heading,
             'next_gate_horizontal': next_gate_horizontal,
             'active_gate': self._last_active_gate,
-        }
-        path_data = {
-            'ts': timestamp_ns,
-            'frame_id': frame_id,
-            'found': path_detection.found,
-            'confidence': path_detection.confidence,
-            'offset': path_detection.normalized_offset,
-            'heading': path_detection.normalized_heading,
-            'predicted': path_detection.predicted,
-            'segments': path_detection.segment_count,
         }
         total_ms = (time.perf_counter() - started) * 1000.0
 
@@ -433,10 +397,8 @@ class VisionRX:
         self.data['gate_detection'] = gate_detection
         self.data['vision'] = gate_estimate
         self.data['navigation'] = navigation
-        self.data['path_detection'] = path_data
         self.data['vision_timings_ms'] = {
             **self.detector.last_debug.timings_ms,
-            'path': self.path_detector.last_time_ms,
             'tracker': self.tracker.last_update_ms,
             'total': total_ms,
         }
@@ -460,9 +422,6 @@ class VisionRX:
                         show_rejected_candidates=False,
                         show_mask_insets=False,
                     )
-                    annotated = draw_blue_path(
-                        annotated, path_detection
-                    )
                 except Exception as exc:
                     self._overlay_enabled = False
                     print(
@@ -485,7 +444,6 @@ class VisionRX:
                 accepted_targets = self.build_accepted_target_frame(
                     annotated.shape,
                     tracked,
-                    path_detection,
                 )
                 self._show_display(
                     annotated.copy(),

@@ -54,7 +54,7 @@ class BluePathDetectorTests(unittest.TestCase):
         )
 
 
-class BluePathNavigationTests(unittest.TestCase):
+class Q2BluePathIsolationTests(unittest.TestCase):
     @staticmethod
     def right_path() -> BluePathDetection:
         return BluePathDetection(
@@ -64,27 +64,27 @@ class BluePathNavigationTests(unittest.TestCase):
             normalized_heading=0.10,
         )
 
-    def test_path_only_commands_right_correction(self):
+    def test_q2_profile_ignores_path_only_detection(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         command = navigator.update(None, 1.0, path=self.right_path())
-        self.assertGreater(command.right_mps, 0.0)
-        self.assertGreater(command.yaw_rate_rps, 0.0)
+        self.assertEqual(command.right_mps, 0.0)
+        self.assertEqual(command.yaw_rate_rps, 0.0)
         self.assertGreater(command.forward_mps, 0.0)
 
-    def test_gate_keeps_path_assist_conservative(self):
+    def test_q2_profile_ignores_path_with_gate(self):
         path = self.right_path()
-        path_only = GateNavigator(q2_demo_navigation_config()).update(
-            None, 1.0, path=path
-        )
         centered_gate = detection_at(
             nx=0.0, ny=0.16, confidence=0.9, stable_frames=1
         )
         with_gate = GateNavigator(q2_demo_navigation_config()).update(
             centered_gate, 1.0, path=path
         )
-        self.assertLess(abs(with_gate.right_mps), abs(path_only.right_mps))
-        self.assertLess(
-            abs(with_gate.yaw_rate_rps), abs(path_only.yaw_rate_rps)
+        without_gate_path = GateNavigator(
+            q2_demo_navigation_config()
+        ).update(centered_gate, 1.0)
+        self.assertEqual(with_gate.right_mps, without_gate_path.right_mps)
+        self.assertEqual(
+            with_gate.yaw_rate_rps, without_gate_path.yaw_rate_rps
         )
 
     def test_path_assist_is_suspended_during_gate_commit(self):
@@ -94,15 +94,15 @@ class BluePathNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(command.right_mps, 0.0)
         self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
 
-    def test_path_assist_resumes_early_during_pass_through(self):
+    def test_path_assist_stays_disabled_during_pass_through(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         navigator.state = NavigationState.PASS_THROUGH
         navigator._state_since = 1.0
         early = navigator.update(None, 1.10, path=self.right_path())
         self.assertAlmostEqual(early.right_mps, 0.0)
         active = navigator.update(None, 1.20, path=self.right_path())
-        self.assertGreater(active.right_mps, 0.0)
-        self.assertGreater(active.yaw_rate_rps, 0.0)
+        self.assertEqual(active.right_mps, 0.0)
+        self.assertEqual(active.yaw_rate_rps, 0.0)
 
     def test_visible_next_gate_adds_bounded_early_turn(self):
         cfg = q2_demo_navigation_config()
@@ -134,13 +134,12 @@ class BluePathNavigationTests(unittest.TestCase):
             anticipated.yaw_rate_rps,
             cfg.next_gate_max_yaw_rate_rps,
         )
-    def test_accepted_target_panel_contains_path(self):
-        path = BluePathDetector().detect(path_frame())
+    def test_accepted_target_panel_does_not_show_path(self):
         panel = VisionRX.build_accepted_target_frame(
-            (360, 640, 3), None, path
+            (360, 640, 3), None
         )
         self.assertEqual(panel.shape, (360, 640, 3))
-        self.assertGreater(np.count_nonzero(panel), 0)
+        self.assertEqual(np.count_nonzero(panel), 0)
 
 
 if __name__ == '__main__':

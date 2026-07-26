@@ -73,7 +73,6 @@ class Logger:
         ctrl = d.get('control_output')  or {}
         gate = d.get('gate_detection')
         nav  = d.get('navigation')      or {}
-        path = d.get('path_detection') or {}
         pos  = d.get('local_position_ned') or {}
         race = d.get('race_status')     or {}
         vis  = d.get('vision')          or {}
@@ -128,11 +127,6 @@ class Logger:
             'nav_down':       self._f(nav.get('down_mps')),
             'nav_yaw_rate':   self._f(nav.get('yaw_rate_rps')),
             'nav_align_err':  self._f(nav.get('alignment_error')),
-            # lower-image blue course-lane detector
-            'path_found':     str(int(bool(path.get('found')))),
-            'path_conf':      self._f(path.get('confidence')),
-            'path_offset':    self._f(path.get('offset')),
-            'path_heading':   self._f(path.get('heading')),
             # optional simulator telemetry and pass confirmation
             'vel_n':          self._f(pos.get('vx')),
             'vel_e':          self._f(pos.get('vy')),
