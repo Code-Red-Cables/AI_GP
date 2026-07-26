@@ -32,6 +32,7 @@ class NavigationConfig:
     track_confirmation_frames: int = 3
     commit_stable_frames: int = 4
     commit_alignment_tolerance: float = 0.12
+    commit_horizontal_tolerance: float = 0.12
     commit_opening_area_ratio: float = 0.075
     commit_minimum_confidence: float = 0.52
     commit_max_center_speed: float = 0.35
@@ -342,7 +343,8 @@ class GateNavigator:
                     detection.velocity_x, detection.velocity_y
                 )
                 ready = (
-                    alignment_error <= cfg.commit_alignment_tolerance
+                    abs(horizontal) <= cfg.commit_horizontal_tolerance
+                    and abs(vertical) <= cfg.commit_alignment_tolerance
                     and detection.opening_area_ratio
                     >= cfg.commit_opening_area_ratio
                     and detection.confidence >= cfg.commit_minimum_confidence
@@ -545,6 +547,7 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # instead of falling into recovery and acquiring background orange.
         commit_opening_area_ratio=0.030,
         commit_alignment_tolerance=0.40,
+        commit_horizontal_tolerance=0.10,
         commit_stable_frames=1,
         commit_max_center_speed=2.0,
         commit_max_size_rate=100.0,

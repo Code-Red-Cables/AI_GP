@@ -51,6 +51,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.max_yaw_rate_rps, 1.05)
         self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.030)
         self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.40)
+        self.assertAlmostEqual(cfg.commit_horizontal_tolerance, 0.10)
 
     def test_recorded_close_gate_enters_commit_before_dropout(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -73,6 +74,28 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertEqual(command.state.value, 'COMMIT')
         after_dropout = navigator.update(None, 1.4)
         self.assertEqual(after_dropout.state.value, 'PASS_THROUGH')
+
+    def test_close_but_off_center_gate_does_not_commit(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        aligned_far = detection_at(
+            opening_width=50,
+            opening_height=40,
+            stable_frames=5,
+        )
+        navigator.update(aligned_far, 1.0)
+        navigator.update(aligned_far, 1.1)
+        navigator.update(aligned_far, 1.2)
+        off_center_close = detection_at(
+            nx=0.18,
+            ny=-0.30,
+            opening_width=100,
+            opening_height=82,
+            stable_frames=5,
+        )
+        command = navigator.update(off_center_close, 1.3)
+        self.assertEqual(
+            command.state, NavigationState.ALIGN_AND_APPROACH
+        )
 
     def test_q2_tracker_rejects_recorded_false_gate_shapes(self):
         false_gates = (
