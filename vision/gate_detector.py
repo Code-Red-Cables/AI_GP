@@ -31,8 +31,10 @@ class GateVisionConfig:
     """Central configuration for segmentation and all candidate strategies."""
 
     hsv_ranges: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...] = (
-        ((0, 55, 75), (18, 255, 255)),
-        ((165, 55, 75), (179, 255, 255)),
+        # Q2 gate material is strongly saturated orange (primarily H=3..8).
+        # The higher S/V floors reject pale orange light reflected by walls.
+        ((0, 120, 100), (16, 255, 255)),
+        ((170, 120, 100), (179, 255, 255)),
     )
     input_format: str = "BGR"
     process_width: Optional[int] = None

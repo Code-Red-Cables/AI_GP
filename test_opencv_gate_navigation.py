@@ -322,6 +322,24 @@ class DetectorRobustnessTests(unittest.TestCase):
             cv2.circle(image, point, 2, ORANGE, -1)
         self.assertFalse(self.detector.detect(image).found)
 
+    def test_17b_low_saturation_wall_reflection_is_rejected(self):
+        image = blank_frame()
+        reflection_hsv = np.uint8([[[6, 85, 235]]])
+        reflection_bgr = tuple(
+            int(value)
+            for value in cv2.cvtColor(
+                reflection_hsv, cv2.COLOR_HSV2BGR
+            )[0, 0]
+        )
+        cv2.rectangle(
+            image,
+            (220, 80),
+            (420, 280),
+            reflection_bgr,
+            22,
+        )
+        self.assertFalse(self.detector.detect(image).found)
+
     def test_18_corner_ordering_and_diagonal_center(self):
         scrambled = np.array([[9, 9], [1, 1], [1, 9], [9, 1]], np.float32)
         ordered = order_corners(scrambled)

@@ -40,6 +40,8 @@ python main.py
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
 2. `OrangeGateDetector` finds the flyable opening rather than the orange
    material centroid. Acquisition selects the largest valid opening in view.
+   The deployed HSV mask requires strongly saturated orange (`S>=120`,
+   `V>=100`, with narrowed orange hue bands), rejecting pale wall reflections.
    Once tracked, center-and-size hysteresis holds that gate until it disappears
    or becomes implausible, preventing a farther off-axis gate from stealing
    control during normal contour-area fluctuations.
