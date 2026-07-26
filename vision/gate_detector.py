@@ -57,6 +57,14 @@ DEFAULT_CFG = {
     "require_hole": True,        # enforce the annulus test on large candidates
     "hole_min_bbox_frac": 0.025, # bbox area / frame area above which the hole is mandatory
     "min_squareness": 0.35,  # outer bbox aspect floor (1.0 = square); banners are ~0.1-0.3
+    # Light pre-blur (2026-07-26): denoises the HSV mask so thin/aliased ring pixels
+    # threshold consistently frame-to-frame. Odd kernel; 0/1 disables.
+    "blur_ksize": 3,
+    # Next-gate handoff (2026-07-26): when the current gate fills the frame (we are at
+    # threading range) the guidance center should transfer THROUGH the aperture to the
+    # next gate visible inside the hole, so approach guidance is continuous across the
+    # pass instead of dying when gate 1 exits the frame.
+    "handoff_bbox_frac": 0.30,   # bbox/frame above which we look through the hole (0 = off)
 }
 
 
@@ -133,6 +141,12 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
 
     cfg = _make_cfg(cfg)
 
+    bk = int(cfg.get("blur_ksize", 0) or 0)
+    if bk >= 3:
+        if bk % 2 == 0:
+            bk += 1
+        bgr = cv2.GaussianBlur(bgr, (bk, bk), 0)
+
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     mask = _build_mask(hsv, cfg)
 
@@ -152,7 +166,7 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
     frame_px = float(bgr.shape[0] * bgr.shape[1])
     hole_min_bbox = float(cfg["hole_min_bbox_frac"]) * frame_px
 
-    best = None  # (score, index, inner_contour_or_None, inner_area)
+    candidates = []  # (score, index, inner_contour_or_None, inner_area, bbox)
     for i, cnt in enumerate(contours):
         # Only consider outer contours (no parent) as the gate frame body.
         if hierarchy[i][3] != -1:
@@ -200,13 +214,32 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
         # frame to frame, which showed up as the range bouncing ~16m <-> ~21m in the logs.
         # Make AREA the dominant term (nearest wins) while still requiring squareness/fill.
         score = area * (0.5 + 0.5 * square) * (0.5 + 0.5 * extent)
-        if best is None or score > best[0]:
-            best = (score, i, inner if has_hole else None, inner_area)
+        candidates.append((score, i, inner if has_hole else None, inner_area, (x, y, w, h)))
 
-    if best is None:
+    if not candidates:
         return None
 
-    _, idx, inner, inner_area = best
+    best = max(candidates, key=lambda c: c[0])
+
+    # Next-gate handoff: at threading range the current gate fills the frame; if the
+    # next gate is visible THROUGH its hole, report that one so the guidance center
+    # transfers through the aperture instead of dying when the near ring exits view.
+    handoff_frac = float(cfg.get("handoff_bbox_frac", 0.0) or 0.0)
+    _, _, b_inner, _, (bx, by, bw, bh) = best
+    if handoff_frac > 0 and b_inner is not None and bw * bh >= handoff_frac * frame_px:
+        hx, hy, hw, hh = cv2.boundingRect(b_inner)
+        through = []
+        for c in candidates:
+            if c is best:
+                continue
+            cx0, cy0, cw0, ch0 = c[4]
+            ccx, ccy = cx0 + cw0 / 2.0, cy0 + ch0 / 2.0
+            if hx <= ccx <= hx + hw and hy <= ccy <= hy + hh:
+                through.append(c)
+        if through:
+            best = max(through, key=lambda c: c[0])
+
+    _, idx, inner, inner_area, _ = best
     outer = contours[idx]
     x, y, w, h = cv2.boundingRect(outer)
     bbox_px = (int(x), int(y), int(w), int(h))

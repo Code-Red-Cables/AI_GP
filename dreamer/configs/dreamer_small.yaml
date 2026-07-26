@@ -118,7 +118,11 @@ train:
                                  # 150k x ~62KB ≈ 9GB of a 23GB WSL box. Still ~3h of experience.
   prefill: 5000
   train_ratio: 512
-  imag_horizon: 15             # longer lookahead = better credit assignment for sparse gate rewards
+  imag_horizon: 25             # 15 -> 25 (2026-07-26, run 1785027981 plateau at ~5% pass rate for
+                               # 300k steps): at 15 steps (~1.2s) the +40 pass fell BEYOND the
+                               # horizon from mid-approach states, so the actor only felt it via
+                               # the critic's bootstrap (slow chicken-and-egg). At 25 the pass
+                               # lands inside imagined rollouts -> direct reward-head gradient.
   bc_coef: 10.0                # behavior-clone the gate-passing demos into the actor, then anneal.
                                # Raised 1 -> 10 (2026-07-25): the RL advantage is normalized to
                                # unit scale so its gradient never shrinks, while the BC gradient
@@ -130,9 +134,12 @@ train:
                                # BC was fading before the live policy ever threaded the aperture
   demo_trim_steps: 30          # drop the last N steps of crash-ending demos from the BC buffer
                                # (all current demos crash after gate 1 - don't clone the crash)
-  demo_wm_frac: 0.25           # fraction of each world-model batch drawn from the demo buffer:
+  demo_wm_frac: 0.40           # fraction of each world-model batch drawn from the demo buffer:
                                # keeps gate passes in every batch and starts imagination rollouts
-                               # from aperture states (they were ~3% of replay and shrinking)
+                               # from aperture states (they were ~3% of replay and shrinking).
+                               # 0.25 -> 0.40 (2026-07-26): pass rate flat at ~5% for 300k steps —
+                               # the reward head needs to see the +40 event more often relative
+                               # to the sea of crash transitions for imagination to chase it.
   gamma: 0.997
   lambda_: 0.95
   lr_model: 0.0001

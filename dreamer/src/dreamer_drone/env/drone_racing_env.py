@@ -162,6 +162,28 @@ class DroneRacingEnv:
         term = self.term_fn.check(ctx.dt_sim, snap.active_gate,
                                   snap.finished, collision_threat)
 
+        # Late gate-pass grace (2026-07-26): race_status lags the physical crossing
+        # (~0.75s update period measured), so a thread-then-clip crash can terminate
+        # the episode BEFORE the sim reports the pass — the +40 (the whole point of
+        # the episode) silently vanished. On a collision ending, poll briefly for a
+        # late active_gate increment and credit it to this final step.
+        if term.terminated and term.reason == "collision":
+            base_gate = int(snap.active_gate) if snap.active_gate is not None else None
+            deadline = time.time() + 1.2
+            while time.time() < deadline:
+                time.sleep(0.1)
+                late = self.priv.snapshot()
+                if (late.active_gate is not None and base_gate is not None
+                        and int(late.active_gate) > base_gate):
+                    delta = int(late.active_gate) - base_gate
+                    rc.gate_pass += self.cfg.reward.w_gate * delta
+                    rc.total += self.cfg.reward.w_gate * delta
+                    rc.raw["late_gate_pass"] = float(delta)
+                    snap = late   # info/_ep_max_gate below see the corrected gate
+                    print(f"[env] late gate pass credited (+{delta} gate) after collision",
+                          flush=True)
+                    break
+
         if snap.active_gate is not None:
             self._ep_max_gate = max(self._ep_max_gate, int(snap.active_gate))
 
