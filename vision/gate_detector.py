@@ -31,10 +31,10 @@ class GateVisionConfig:
     """Central configuration for segmentation and all candidate strategies."""
 
     hsv_ranges: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...] = (
-        # Q2 gate material is strongly saturated orange (primarily H=3..8).
-        # The higher S/V floors reject pale orange light reflected by walls.
-        ((0, 120, 100), (16, 255, 255)),
-        ((170, 120, 100), (179, 255, 255)),
+        # Calibrated from the live Q2 gate material: its illuminated face is
+        # H=3..17, strongly saturated, and bright. Floor/wall glow is primarily
+        # H=18..20 and substantially dimmer.
+        ((3, 105, 180), (17, 255, 255)),
     )
     input_format: str = "BGR"
     process_width: Optional[int] = None
@@ -52,8 +52,8 @@ class GateVisionConfig:
     # Below seven pixels the saved simulator floor markers become
     # indistinguishable from tiny outlined gates; a real 1.5 m opening remains
     # larger than this throughout the configured useful range.
-    min_opening_width: float = 7.0
-    min_opening_height: float = 7.0
+    min_opening_width: float = 18.0
+    min_opening_height: float = 18.0
     min_aspect_ratio: float = 0.35
     max_aspect_ratio: float = 2.8
     polygon_epsilon_ratio: float = 0.035
@@ -68,6 +68,9 @@ class GateVisionConfig:
     minimum_side_coverage: float = 0.16
     maximum_center_orange_fraction: float = 0.42
     filled_object_density: float = 0.72
+    compound_child_area_fraction: float = 0.18
+    single_opening_min_aspect_ratio: float = 0.50
+    single_opening_max_aspect_ratio: float = 2.00
 
     enable_line_reconstruction: bool = True
     hough_threshold: int = 20
@@ -330,6 +333,7 @@ class OrangeGateDetector:
 
     METHOD_PRIOR = {
         "inner_contour": 1.00,
+        "compound_split": 0.95,
         "quadrilateral": 0.82,
         "line_reconstruction": 0.68,
         "partial_gate": 0.58,
@@ -605,7 +609,9 @@ class OrangeGateDetector:
             confidence -= 0.65
             reason = "tiny_opening"
         elif not (
-            cfg.min_aspect_ratio <= opening_aspect <= cfg.max_aspect_ratio
+            cfg.single_opening_min_aspect_ratio
+            <= opening_aspect
+            <= cfg.single_opening_max_aspect_ratio
         ):
             confidence -= 0.45
             reason = "implausible_opening"
@@ -712,7 +718,45 @@ class OrangeGateDetector:
             for child in self._children(index, contours, hierarchy)
             if cv2.contourArea(child) >= cfg.min_opening_area
         ]
-        opening = max(children, key=cv2.contourArea) if children else None
+        children.sort(key=cv2.contourArea, reverse=True)
+        compound = bool(
+            len(children) >= 2
+            and cv2.contourArea(children[1])
+            >= cfg.compound_child_area_fraction
+            * max(cv2.contourArea(children[0]), 1.0)
+        )
+        plausible_openings = []
+        for child in children:
+            (_, _), (child_width, child_height), _ = cv2.minAreaRect(child)
+            child_aspect = child_width / max(child_height, 1e-6)
+            if (
+                cfg.single_opening_min_aspect_ratio
+                <= child_aspect
+                <= cfg.single_opening_max_aspect_ratio
+            ):
+                plausible_openings.append(child)
+        if compound and plausible_openings and hint is not None and hint.found:
+            hint_center = np.array(
+                [
+                    (hint.normalized_x + 1.0) * mask.shape[1] / 2.0,
+                    (hint.normalized_y + 1.0) * mask.shape[0] / 2.0,
+                ],
+                dtype=np.float64,
+            )
+            opening = min(
+                plausible_openings,
+                key=lambda child: float(
+                    np.linalg.norm(
+                        np.asarray(_contour_center(child)) - hint_center
+                    )
+                ),
+            )
+        else:
+            opening = (
+                max(plausible_openings, key=cv2.contourArea)
+                if plausible_openings
+                else None
+            )
         if opening is not None:
             opening_center = _contour_center(opening)
             opening_rect = cv2.minAreaRect(opening)
@@ -728,21 +772,65 @@ class OrangeGateDetector:
                 else order_corners(cv2.boxPoints(opening_rect))
             )
             center = opening_center or quadrilateral_diagonal_center(corners)
+            candidate_outer = contour
+            candidate_bbox = bbox
+            candidate_outer_width = float(rect_width)
+            candidate_outer_height = float(rect_height)
+            candidate_area = area
+            candidate_method = "inner_contour"
+            if compound:
+                # A connected orange component may contain two overlapping
+                # gates. Build local bounds around one plausible opening so
+                # neither apparent size nor debug geometry represents their
+                # combined union.
+                opening_box = order_corners(cv2.boxPoints(opening_rect))
+                opening_center_array = np.asarray(center, dtype=np.float32)
+                expansion = 1.0 / max(cfg.estimated_opening_scale, 1e-6)
+                local_outer_corners = (
+                    opening_center_array
+                    + expansion * (opening_box - opening_center_array)
+                )
+                local_outer_corners[:, 0] = np.clip(
+                    local_outer_corners[:, 0], 0, mask.shape[1] - 1
+                )
+                local_outer_corners[:, 1] = np.clip(
+                    local_outer_corners[:, 1], 0, mask.shape[0] - 1
+                )
+                candidate_outer = np.round(local_outer_corners).astype(
+                    np.int32
+                ).reshape(-1, 1, 2)
+                local_x, local_y, local_width, local_height = cv2.boundingRect(
+                    candidate_outer
+                )
+                candidate_bbox = (
+                    int(local_x),
+                    int(local_y),
+                    int(local_width),
+                    int(local_height),
+                )
+                candidate_outer_width = float(opening_width * expansion)
+                candidate_outer_height = float(opening_height * expansion)
+                candidate_area = max(
+                    cfg.min_contour_area,
+                    float(cv2.contourArea(candidate_outer))
+                    - float(cv2.contourArea(opening)),
+                )
+                candidate_method = "compound_split"
             return self._finalize_candidate(
-                outer=contour,
+                outer=candidate_outer,
                 opening=opening,
                 center=center,
                 opening_width=float(opening_width),
                 opening_height=float(opening_height),
-                outer_width=float(rect_width),
-                outer_height=float(rect_height),
+                outer_width=candidate_outer_width,
+                outer_height=candidate_outer_height,
                 angle=angle,
-                bbox=bbox,
+                bbox=candidate_bbox,
                 corners=corners,
                 corners_reliable=reliable,
-                method="inner_contour",
+                method=candidate_method,
                 mask=mask,
-                contour_area=area,
+                contour_area=candidate_area,
                 rectangularity=rectangularity,
                 convexity=convexity,
                 hint=hint,

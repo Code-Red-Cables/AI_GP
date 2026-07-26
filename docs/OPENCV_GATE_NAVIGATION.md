@@ -40,11 +40,16 @@ python main.py
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
 2. `OrangeGateDetector` finds the flyable opening rather than the orange
    material centroid. Acquisition selects the largest valid opening in view.
-   The deployed HSV mask requires strongly saturated orange (`S>=120`,
-   `V>=100`, with narrowed orange hue bands), rejecting pale wall reflections.
+   The deployed HSV mask is calibrated to the illuminated gate face
+   (`H=3..17`, `S>=105`, `V>=180`), rejecting the dimmer `H=18..20`
+   floor/wall glow visible in the Q2 course. Reconstructed openings must also
+   be at least 18 pixels on both axes, excluding small reflection geometry.
    Once tracked, center-and-size hysteresis holds that gate until it disappears
    or becomes implausible, preventing a farther off-axis gate from stealing
    control during normal contour-area fluctuations.
+   If overlapping gates form one connected orange component with multiple
+   openings, the detector selects one plausible child opening and constructs
+   local bounds for it; the combined component is never reported as one gate.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards
