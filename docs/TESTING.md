@@ -22,10 +22,13 @@ Run everything from the repo root (`C:\Users\rocky\docs\AI_GP\AI_GP`).
 ```
 All must pass. Combined they take < 2 s on the development machine.
 
-`test_opencv_gate_navigation.py` adds 14 focused checks covering HSV
-segmentation, normalized coordinates, contour selection, ordered corners, PnP
-validation, tiny/filled rejection, partial/rotated gates, tracking, command
-signs/caps, state transitions, dropouts, and hybrid hysteresis.
+`test_opencv_gate_navigation.py` adds 32 focused checks covering HSV
+segmentation, normalized opening coordinates, perspective/rotation/blur,
+lighting and clipping, broken-side reconstruction, ordered corners, PnP
+validation, post/filled/noise rejection, temporal candidate selection,
+timestamped tracking, jump rejection, command signs/caps, all state
+transitions, dropouts, exclusive OpenCV/existing-AI modes, and a saved-frame
+regression that rejects tiny floor markers while accepting the real gate.
 
 ### `test_camera_model.py` — geometry (8 checks)
 Validates the frame math in isolation (numpy only). Each asserts a *physical*
@@ -89,6 +92,8 @@ For image folders and videos:
 ```powershell
 & $PY tools/offline_gate_viewer.py frames --save-dir debug_frames
 & $PY tools/offline_gate_viewer.py flight.mp4 --video-out annotated.mp4
+& $PY tools/offline_gate_viewer.py frames --show --step
+& $PY tools/offline_gate_viewer.py frame.jpg --tune-hsv --show-hsv
 ```
 
 ## 4. On-sim verification (manual)

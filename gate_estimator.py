@@ -192,5 +192,6 @@ def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
         "gate_ned": gate_ned,
         "normal_body": normal_body,
         "method": method,
+        "detection_method": getattr(det, "method", "unknown"),
         "pnp_reprojection_error": reprojection_error,
     }

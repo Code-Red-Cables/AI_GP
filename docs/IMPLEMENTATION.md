@@ -69,11 +69,11 @@ Results include pixel/normalized center, width/height, area, angle, distance,
 TL/TR/BR/BL corners, and tracking metadata. The legacy `detect_gate()` wrapper
 remains for compatibility.
 
-`vision/gate_tracker.py` adds EMA smoothing, jump rejection, five-frame bounded
-prediction, and reset. `vision/navigation.py` implements
-SEARCH→ALIGN→APPROACH→COMMIT→PASS_THROUGH→RECOVER with bounded, filtered,
-slew-limited body-axis commands. `vision/mode_router.py` owns exclusive
-OpenCV/AI/hybrid selection with hysteresis.
+`vision/gate_tracker.py` adds timestamped alpha-beta filtering, center/size jump
+rejection, five-frame bounded prediction, and reset. `vision/navigation.py`
+implements SEARCH→TRACK→ALIGN_AND_APPROACH→COMMIT→PASS_THROUGH→RECOVER with
+bounded, filtered, slew-limited body-axis commands. `vision/mode_router.py`
+selects exactly one command owner: `opencv` or `existing_ai`.
 
 ### `gate_estimator.py` — pixels → 3D pose (uses camera_model, cv2 for PnP)
 `estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None) -> dict`.

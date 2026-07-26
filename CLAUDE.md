@@ -8,10 +8,11 @@ A Python client for the **AI Grand Prix (AI-GP)** autonomous drone-racing compet
 
 **Current OpenCV navigation (2026-07-26):** `vision/gate_detector.py` now exposes
 `OrangeGateDetector`/`DetectorConfig` with structured normalized detections;
-`vision/gate_tracker.py` smooths and predicts bounded dropouts;
-`vision/navigation.py` implements SEARCH/ALIGN/APPROACH/COMMIT/PASS_THROUGH/RECOVER;
-and `vision/mode_router.py` provides OpenCV/AI/hybrid hysteresis. `vision_rx.py`
-publishes `vision`, `navigation`, `control_source`, and optional `ai_action`;
+`vision/gate_tracker.py` performs timestamped smoothing and bounded prediction;
+`vision/navigation.py` implements
+SEARCH/TRACK/ALIGN_AND_APPROACH/COMMIT/PASS_THROUGH/RECOVER; and
+`vision/mode_router.py` selects exclusive `opencv` or `existing_ai` ownership.
+`vision_rx.py` publishes `vision`, `navigation`, `control_source`, and optional `ai_action`;
 `Planner` adapts body image guidance to NED targets; `Controller` remains the
 exclusive body-rate/thrust sender. See `docs/OPENCV_GATE_NAVIGATION.md`. The
 checked-out `main` branch has no AI checkpoint; an existing learned policy is

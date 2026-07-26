@@ -17,7 +17,9 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     )
     shared_data.setdefault(
         'control_source',
-        'ai' if shared_data.get('vision_mode') == 'ai' else 'opencv'
+        'ai'
+        if shared_data.get('gate_navigation_mode') == 'existing_ai'
+        else 'opencv'
     )
     # -------------------------------
     # Mavlink Connection

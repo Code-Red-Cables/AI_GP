@@ -11,8 +11,8 @@ from vision.gate_detector import OrangeGateDetector, draw_detection
 from vision.gate_tracker import GateTracker
 from vision.navigation import GateNavigator
 from vision.mode_router import (
+    GateNavigationMode,
     ModeRouterConfig,
-    VisionMode,
     VisionModeRouter,
 )
 from vision.ai_adapter import validate_ai_action
@@ -57,9 +57,11 @@ class VisionRX:
         self.detector = OrangeGateDetector()
         self.tracker = GateTracker()
         self.navigator = GateNavigator()
-        requested_mode = str(self.data.get('vision_mode', 'opencv')).lower()
+        requested_mode = str(
+            self.data.get('gate_navigation_mode', 'opencv')
+        ).lower()
         self.mode_router = VisionModeRouter(
-            ModeRouterConfig(mode=VisionMode(requested_mode))
+            ModeRouterConfig(mode=GateNavigationMode(requested_mode))
         )
         self.thread = threading.Thread(
             target=self._vision_loop,
@@ -178,9 +180,15 @@ class VisionRX:
         the planner can fuse it. Returns None on no detection (still publishes a
         'detected': False record so downstream code can detect staleness).
         """
-        raw_detection = self.detector.detect(img)
-        det = self.tracker.update(raw_detection)
-        command = self.navigator.update(det, time.monotonic())
+        frame_time = time.monotonic()
+        frame_started = time.perf_counter()
+        hint = self.tracker.hint(frame_time)
+        raw_detection = self.detector.detect(
+            img, hint=hint, timestamp=frame_time
+        )
+        det = self.tracker.update(raw_detection, timestamp=frame_time)
+        command = self.navigator.update(det, frame_time)
+        navigation_done = time.perf_counter()
 
         # Snapshot the latest pose for the camera->NED transform.
         with self.data['lock']:
@@ -245,6 +253,13 @@ class VisionRX:
             dict(self.detector.last_debug.timings_ms)
             if self.detector.last_debug else {}
         )
+        est['tracker_time_ms'] = self.tracker.last_update_ms
+        est['detection_tracking_navigation_time_ms'] = (
+            navigation_done - frame_started
+        ) * 1000.0
+        est['vision_total_time_ms'] = (
+            time.perf_counter() - frame_started
+        ) * 1000.0
 
         with self.data['lock']:
             self.data['vision'] = est
@@ -271,5 +286,7 @@ class VisionRX:
                 self.detector.last_debug,
                 state=command.state.value,
                 command=command,
+                raw_detection=raw_detection,
+                total_time_ms=est['vision_total_time_ms'],
             )
             cv2.imwrite(f"_vision_{frame_id % 20:02d}.png", overlay)

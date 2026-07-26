@@ -1,4 +1,4 @@
-"""OpenCV/AI source selection with frame-count hysteresis."""
+"""Exclusive selection between OpenCV navigation and the existing AI policy."""
 
 from __future__ import annotations
 
@@ -7,65 +7,35 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-class VisionMode(str, enum.Enum):
+class GateNavigationMode(str, enum.Enum):
     OPENCV = "opencv"
-    AI = "ai"
-    HYBRID = "hybrid"
+    EXISTING_AI = "existing_ai"
+
+
+# Compatibility export retained for callers from the prior implementation.
+VisionMode = GateNavigationMode
 
 
 @dataclass(frozen=True)
 class ModeRouterConfig:
-    mode: VisionMode = VisionMode.OPENCV
-    confidence_threshold: float = 0.28
-    low_confidence_frames: int = 8
-    recovery_frames: int = 5
-    cooldown_frames: int = 20
+    mode: GateNavigationMode = GateNavigationMode.OPENCV
 
 
 class VisionModeRouter:
-    """Choose exactly one command source; never blend conflicting commands."""
+    """Choose one command owner; OpenCV and AI outputs are never blended."""
 
     def __init__(self, config: Optional[ModeRouterConfig] = None):
         self.config = config or ModeRouterConfig()
         self.active_source = (
-            "ai" if self.config.mode == VisionMode.AI else "opencv"
+            "ai"
+            if self.config.mode == GateNavigationMode.EXISTING_AI
+            else "opencv"
         )
-        self._low_count = 0
-        self._good_count = 0
-        self._cooldown = 0
 
-    def update(self, confidence: float, ai_available: bool) -> str:
-        mode = self.config.mode
-        if mode == VisionMode.OPENCV:
+    def update(self, confidence: float = 0.0, ai_available: bool = False) -> str:
+        del confidence
+        if self.config.mode == GateNavigationMode.OPENCV:
             self.active_source = "opencv"
-            return self.active_source
-        if mode == VisionMode.AI:
+        else:
             self.active_source = "ai" if ai_available else "safe"
-            return self.active_source
-
-        if self._cooldown > 0:
-            self._cooldown -= 1
-        good = confidence >= self.config.confidence_threshold
-        self._good_count = self._good_count + 1 if good else 0
-        self._low_count = self._low_count + 1 if not good else 0
-
-        if (
-            self.active_source == "opencv"
-            and ai_available
-            and self._cooldown == 0
-            and self._low_count >= self.config.low_confidence_frames
-        ):
-            self.active_source = "ai"
-            self._cooldown = self.config.cooldown_frames
-            self._good_count = 0
-        elif (
-            self.active_source == "ai"
-            and self._cooldown == 0
-            and self._good_count >= self.config.recovery_frames
-        ):
-            self.active_source = "opencv"
-            self._cooldown = self.config.cooldown_frames
-            self._low_count = 0
-        elif self.active_source == "ai" and not ai_available:
-            self.active_source = "opencv"
         return self.active_source

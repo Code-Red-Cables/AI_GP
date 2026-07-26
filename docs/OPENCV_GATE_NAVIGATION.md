@@ -35,15 +35,18 @@ runs.
 3. Two configurable hue ranges for the red/orange wrap at HSV hue 0/179.
 4. Configurable opening/closing morphology.
 5. `RETR_TREE` contour extraction and external-contour candidate generation.
-6. Rotated rectangles, child-hole search, polygon approximation, border-density
-   measurement, and partial-edge handling.
-7. Candidate confidence and nearest-gate selection.
+6. Child-opening contours, four-corner diagonal intersections, rotated
+   rectangles, Hough-line reconstruction, and edge-clipped partial-gate
+   reconstruction.
+7. Geometric, photometric, and timestamped tracker-consistency scoring.
 
-Confidence is 20% apparent size, 20% aspect quality, 10% rectangularity, 5%
-convex-hull quality, 25% visible inner opening, 10% plausible border density,
-and 10% four-corner quality.
-Filled orange rectangles receive a 0.45 penalty. Candidate selection adds a small
-size multiplier so the nearest of several nested race gates wins.
+Confidence is 8% apparent size, 11% aspect quality, 8% rectangularity, 5%
+convex-hull quality, 22% method/opening quality, 13% orange-border support, 10%
+opening-center clearance, 8% corner quality, and 15% temporal consistency.
+Single posts, filled objects, and unsupported centers receive explicit
+penalties. Final selection is 68% confidence, 23% temporal consistency, 6%
+image-center prior, and 3% opening-method quality, so the largest orange object
+does not automatically win.
 
 `GateDetection` reports pixel and normalized center, width/height, contour area,
 rotated angle, confidence, ordered TL/TR/BR/BL corners, approximate distance, and
@@ -57,15 +60,17 @@ at most 6 px RMS reprojection error. Otherwise it falls back to apparent size.
 
 ## Tracking and navigation
 
-`GateTracker` applies an EMA to center, size, angle, corners, and distance. It
-rejects normalized center jumps over 0.48, predicts through at most five missing
-frames with decaying confidence, then resets.
+`GateTracker` uses timestamped alpha-beta center/velocity filtering plus smoothed
+opening size and angle. It rejects configurable center and size jumps, supplies
+a non-mutating predicted hint for next-frame candidate scoring, predicts through
+at most five missing frames with decaying confidence, and then resets.
 
 `GateNavigator` owns six states:
 
 - `SEARCH`: slow forward creep and bounded yaw scan, biased toward the last side.
-- `ALIGN`: restricted forward speed while yaw/vertical/lateral errors are removed.
-- `APPROACH`: alignment/confidence/angle scale forward speed.
+- `TRACK`: confirm geometry and motion for several measured frames at low speed.
+- `ALIGN_AND_APPROACH`: remove yaw/vertical/lateral errors while alignment,
+  confidence, edge distance, center speed, and worsening error scale forward speed.
 - `COMMIT`: a short controlled forward burst with only small corrections.
 - `PASS_THROUGH`: keep moving after the close gate disappears from view.
 - `RECOVER`: stop forward motion and search locally before returning to `SEARCH`.
@@ -79,21 +84,13 @@ timers, deadbands, gains, command caps, slew rate, and low-pass alpha live in
 OpenCV only (the default):
 
 ```bash
-VISION_MODE=opencv python main.py
+GATE_NAVIGATION_MODE=opencv python main.py
 ```
 
-Hybrid with an existing AI policy:
+Existing AI policy only:
 
 ```bash
-VISION_MODE=hybrid \
-AI_POLICY_FACTORY=my_policy.adapter:create_policy \
-python main.py
-```
-
-AI only:
-
-```bash
-VISION_MODE=ai \
+GATE_NAVIGATION_MODE=existing_ai \
 AI_POLICY_FACTORY=my_policy.adapter:create_policy \
 python main.py
 ```
@@ -110,11 +107,11 @@ with `predict(frame_bgr, context)`. It must return physical values:
 }
 ```
 
-Hybrid switches to AI only after eight consecutive low-confidence OpenCV frames,
-then uses recovery-frame and cooldown hysteresis before returning. If no provider
-is configured, hybrid stays OpenCV; explicit AI mode uses safe hover. The
-controller checks action freshness, clips thrust/rates, slew-limits the result,
-and never sends OpenCV and AI commands on the same tick.
+The two modes are exclusive and their outputs are never blended. If
+`existing_ai` is selected without a provider, the router chooses safe hover.
+The controller checks action freshness, clips thrust/rates, and slew-limits the
+AI result. `VISION_MODE` remains only as a launch-script compatibility fallback;
+new configurations should use `GATE_NAVIGATION_MODE`.
 
 For safe simulator validation, set `DRY_RUN=True` in `main.py` before running.
 The repository currently ships with `DRY_RUN=False`.
@@ -126,24 +123,24 @@ The offline viewer accepts an image, directory, or video:
 ```bash
 python tools/offline_gate_viewer.py frames --save-dir debug_frames
 python tools/offline_gate_viewer.py flight.mp4 --video-out annotated.mp4
-python tools/offline_gate_viewer.py frame.jpg --show
+python tools/offline_gate_viewer.py frames --show --step
+python tools/offline_gate_viewer.py frame.jpg --tune-hsv --show-hsv
 ```
 
-Its three panels show raw input, HSV mask, and the annotated output. Overlays
-include accepted/rejected contours, bbox, corners, centers/errors, confidence,
-distance, angle, state, command, detector time, and FPS. `--save-dir` writes
-overlays/masks; `--video-out` records processed video.
+The four panels show original BGR, raw orange mask, cleaned mask, and annotated
+output; `--show-hsv` adds H/S/V channel panels. Overlays include
+accepted/rejected candidates, opening contour, corners, raw/tracked/predicted
+centers, errors, confidence, method, opening ratio, state, commands, detector
+time, total time, and effective FPS. `--step` uses space/n/right for next,
+p/left for previous, r to reprocess, and q/Escape to quit. `--tune-hsv` exposes
+both HSV ranges as trackbars and prints the final values. `--save-dir` writes
+the overlay plus raw and cleaned masks; `--video-out` records the panels.
 
-For threshold tuning:
-
-```bash
-python tools/hsv_tuner.py frame.jpg
-```
-
-Then update `DetectorConfig.hsv_ranges`. Important tuning values are:
+Important tuning values are:
 
 - `hsv_ranges`, especially saturation/value floors for lighting changes;
-- `min_contour_area` and `min_side_px` for distant gates/noise;
+- `min_contour_area`, `min_opening_area`, and minimum width/height for distant
+  gates versus noise;
 - morphology kernel sizes, keeping close small enough to preserve tiny openings;
 - `min_confidence` and the tracker confidence/jump/missing-frame limits;
 - navigation align/commit tolerances, gains, speed/rate caps, and commit timers;
@@ -155,16 +152,20 @@ Verified offline:
 
 - camera-frame geometry tests;
 - full detector→PnP/size→planner→MAVLink send smoke path;
-- 14 focused synthetic tests for segmentation, coordinates, shape rejection,
-  partial/rotated/multiple gates, PnP validation, tracking, signs/caps, states,
-  dropout behavior, and hybrid hysteresis;
+- 31 focused synthetic tests for segmentation, opening-center coordinates,
+  perspective/rotation/blur/lighting/clipping, broken sides, false-object
+  rejection, temporal selection, PnP validation, timestamped tracking, jump
+  rejection, signs/caps, all navigation transitions, dropout behavior, and
+  exclusive mode selection, plus one repository-frame regression test;
 - all Python files compile;
-- 12 repository simulator frames process at roughly 1–3 ms mean detector time on
-  the development machine; detections occur on the two frames containing visible
-  red gate pixels.
+- a warmed 240-frame replay averaged 1.182 ms detector and 0.012 ms tracker
+  (2.086 ms detector p95); a cold single pass over all 12 repository frames
+  averaged 5.17 ms detector and 5.28 ms total;
+- `f_13300.jpg` tiny outlined floor markers are rejected, while the real gate
+  opening in `f_14400.jpg` is detected by `inner_contour` at confidence 0.708.
 
 Not verified in this environment: a live simulator flight, AI inference (no
-checkpoint/provider), real hybrid handoff, and the final rate/thrust gains.
+checkpoint/provider), AI comparison, and the final rate/thrust gains.
 Remaining weaknesses are color sensitivity, ambiguous corner pose at severe
 occlusion, size-range bias when the opening is fragmented, and lack of optical
 flow. Recommended next steps are a labeled replay set with precision/recall
