@@ -10,6 +10,8 @@ def _env_bool(name, default=False):
 
 # ---- Flight controller ----
 HOVER_THRUST    = 0.25      # open-loop hover baseline (no baro in VQ2)
+TAKEOFF_THRUST  = 0.31      # short launch boost before settling to hover
+TAKEOFF_DURATION_S = 1.0
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
 KP_LEAN         = 0.10      # body velocity (m/s) → desired lean angle (rad)
 MAX_LEAN_RAD    = math.radians(25.0)

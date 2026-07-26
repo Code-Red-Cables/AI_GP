@@ -34,6 +34,7 @@ class Controller:
         self._ahrs = ComplementaryAHRS(AHRSConfig(alpha=0.95))
         self._last_imu_ts_us = None
         self._ahrs_ready = False
+        self._armed_at = None
 
     def _demo_attitude(self):
         """Update and return collect_demos.py's legal-telemetry AHRS state."""
@@ -126,6 +127,13 @@ class Controller:
         # Thrust: open-loop (no baro in VQ2, vz_now=0 always)
         # vd < 0 means climb → add thrust; vd > 0 means descend → reduce thrust
         thrust = config.HOVER_THRUST - vd * config.KP_THRUST
+        if (
+            telemetry_ok
+            and self._armed_at is not None
+            and time.monotonic() - self._armed_at
+            < config.TAKEOFF_DURATION_S
+        ):
+            thrust = max(thrust, config.TAKEOFF_THRUST)
         thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
 
         self.data['control_output'] = {
@@ -166,6 +174,7 @@ class Controller:
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0, 1, 0, 0, 0, 0, 0, 0,
         )
+        self._armed_at = time.monotonic()
 
     def send_sim_reset(self):
         self.conn.mav.command_long_send(

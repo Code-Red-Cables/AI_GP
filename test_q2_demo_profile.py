@@ -27,6 +27,9 @@ class _FakeMav:
     def set_attitude_target_send(self, *args):
         self.attitude_targets.append(args)
 
+    def command_long_send(self, *args):
+        pass
+
 
 class _FakeConnection:
     target_system = 1
@@ -41,8 +44,8 @@ class DemoNavigationProfileTests(unittest.TestCase):
         cfg = q2_demo_navigation_config()
         self.assertAlmostEqual(cfg.search_forward_mps, 0.0)
         self.assertAlmostEqual(cfg.maximum_approach_mps, 0.65)
-        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.18)
-        self.assertAlmostEqual(cfg.vertical_deadband, 0.10)
+        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.24)
+        self.assertAlmostEqual(cfg.vertical_deadband, 0.20)
         self.assertAlmostEqual(
             cfg.vertical_control_min_area_ratio,
             0.0,
@@ -207,12 +210,12 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator = GateNavigator(q2_demo_navigation_config())
         far = detection_at(ny=0.70, opening_width=35)
         _, far_vertical, _ = navigator._errors(far)
-        self.assertAlmostEqual(far_vertical, 0.42)
+        self.assertAlmostEqual(far_vertical, 0.26)
 
         close = detection_at(ny=0.60, opening_width=80)
         _, close_vertical, _ = navigator._errors(close)
-        # (0.60 - 0.18 target) - 0.10 framing deadband.
-        self.assertAlmostEqual(close_vertical, 0.32)
+        # (0.60 - 0.24 target) - 0.20 framing deadband.
+        self.assertAlmostEqual(close_vertical, 0.16)
 
     def test_gate_near_frame_edge_stops_forward_approach(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -301,6 +304,36 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertFalse(output['telemetry_ok'])
         self.assertAlmostEqual(output['thrust'], config.HOVER_THRUST)
         self.assertAlmostEqual(output['yaw_rate'], 0.0)
+
+    def test_arming_applies_bounded_takeoff_boost(self):
+        connection = _FakeConnection()
+        data = {
+            'attitude': {'yaw': 0.0},
+            'highres_imu': {
+                'xgyro': 0.0,
+                'ygyro': 0.0,
+                'zgyro': 0.0,
+                'xacc': 0.0,
+                'yacc': 0.0,
+                'zacc': -9.81,
+                'ts_us': 1_000_000,
+                'ts': time.time_ns(),
+            },
+            'planner_target': {
+                'vn': 0.0,
+                've': 0.0,
+                'vd': 0.4,
+                'yaw_rate': 0.0,
+            },
+        }
+        controller = Controller(connection, data, system_boot_ms=0)
+        controller.arm()
+        with patch('controller.time.sleep'):
+            controller.update()
+        self.assertAlmostEqual(
+            data['control_output']['thrust'],
+            config.TAKEOFF_THRUST,
+        )
 
     def test_controller_replays_saved_demo_pitch_commands(self):
         episode_path = (

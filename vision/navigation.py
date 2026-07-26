@@ -581,8 +581,8 @@ def q2_demo_navigation_config() -> NavigationConfig:
         center_deadband=0.0,
         # Hold the opening lower in the camera (drone higher in the opening)
         # and start correcting sooner to clear the first gate's bottom rail.
-        vertical_setpoint_normalized=2.0 * 0.59 - 1.0,
-        vertical_deadband=0.10,
+        vertical_setpoint_normalized=2.0 * 0.62 - 1.0,
+        vertical_deadband=0.20,
         # Distant gates still control altitude so they cannot drift out of the
         # top or bottom of the frame.
         vertical_control_min_area_ratio=0.0,

@@ -54,7 +54,7 @@ python main.py
    profile: reduced blind/track lean, progressive leveling from 0.8% opening
    area, and a short bounded braking command near 2.5%. This prevents the
    constant demo lean from accelerating through gate one too quickly to align
-   gate two. The gate target is held at 59% image height with a 10%-frame
+   gate two. The gate target is held at 62% image height with a 20%-frame
    vertical deadband. Altitude correction remains active even for distant
    gates, keeping the selected opening away from the top and bottom of the
    frame while retaining bottom-rail clearance. Horizontal gate capture favors
@@ -84,7 +84,8 @@ python main.py
    gain, while lateral requests use a stronger bank mapping for the Q2 gate
    spacing. Gate-navigation yaw is capped at 0.48 rad/s; body pitch and roll
    retain the demonstrated 1.05 rad/s safety cap. A stale-IMU watchdog
-   commands neutral hover.
+   commands neutral hover. Arming applies a one-second `0.31` takeoff boost,
+   then returns to the calibrated `0.25` hover baseline.
 
 The profile is grounded in the saved demonstration corpus: 105 inspected
 episodes contain a gate pass, with the original demo set passing its first gate
