@@ -306,6 +306,24 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertTrue(result.found)
         self.assertGreater(result.center_x, 400)
 
+    def test_14c_nested_next_gate_cannot_replace_active_gate(self):
+        nested = blank_frame()
+        add_gate(nested, (320, 180), 260, 24)
+        add_gate(nested, (325, 180), 100, 14)
+        detector = OrangeGateDetector()
+        active = detector.detect(nested)
+        self.assertTrue(active.found)
+        self.assertGreater(active.opening_width, 180)
+
+        next_gate_only = blank_frame()
+        add_gate(next_gate_only, (325, 180), 100, 14)
+        still_locked = detector.detect(next_gate_only, hint=active)
+
+        self.assertFalse(still_locked.found)
+        acquired_after_reset = detector.detect(next_gate_only)
+        self.assertTrue(acquired_after_reset.found)
+        self.assertLess(acquired_after_reset.opening_width, 100)
+
     def test_15_isolated_orange_post_is_rejected(self):
         image = blank_frame()
         cv2.rectangle(image, (310, 70), (330, 290), ORANGE, -1)

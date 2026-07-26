@@ -368,6 +368,7 @@ class GateTracker:
 def q2_demo_tracker_config() -> GateTrackerConfig:
     """Reject the post-pass false tracks observed in the Q2 FlightSim run."""
     return GateTrackerConfig(
+        maximum_size_change_ratio=0.40,
         minimum_seed_confidence=0.55,
         minimum_seed_area_ratio=0.004,
         maximum_seed_abs_horizontal=0.60,

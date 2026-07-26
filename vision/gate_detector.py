@@ -89,9 +89,9 @@ class GateVisionConfig:
     # disappears or becomes implausible. This prevents a farther off-axis gate
     # from stealing control for a few frames as contour areas fluctuate.
     target_lock_center_radius_normalized: float = 0.30
-    target_lock_min_area_ratio: float = 0.40
-    target_lock_max_area_ratio: float = 2.50
-    target_lock_min_confidence: float = 0.32
+    target_lock_min_area_ratio: float = 0.50
+    target_lock_max_area_ratio: float = 2.00
+    target_lock_min_confidence: float = 0.22
     gate_inner_width_m: float = cm.GATE_INNER_M
     focal_length_px: float = cm.FX
 
@@ -1484,12 +1484,29 @@ class OrangeGateDetector:
                     and candidate.confidence
                     >= self.config.target_lock_min_confidence
                 ):
-                    locked_candidates.append(candidate)
+                    association_cost = (
+                        center_distance
+                        / max(
+                            self.config.target_lock_center_radius_normalized,
+                            1e-6,
+                        )
+                        + 0.85 * abs(math.log(max(relative_area, 1e-9)))
+                        + 0.10 * (1.0 - candidate.confidence)
+                    )
+                    locked_candidates.append(
+                        (association_cost, candidate)
+                    )
             if locked_candidates:
-                selected = max(
+                selected = min(
                     locked_candidates,
-                    key=lambda candidate: candidate.score,
-                )
+                    key=lambda item: item[0],
+                )[1]
+            else:
+                # Do not silently hand control to a different visible gate.
+                # The tracker will predict this target through the short
+                # occlusion; race pass confirmation resets the identity lock
+                # before acquisition of the next gate.
+                selected = None
         timings = {
             "preprocess": (preprocess_done - start) * 1000.0,
             "mask_generation": (mask_done - preprocess_done) * 1000.0,
@@ -1675,6 +1692,7 @@ def draw_detection(
     raw_detection: Optional[GateDetection] = None,
     total_time_ms: Optional[float] = None,
     show_rejected_candidates: bool = True,
+    show_accepted_candidates: bool = True,
     show_mask_insets: bool = True,
 ) -> np.ndarray:
     """Render candidates, opening geometry, tracked target, state, and timing."""
@@ -1688,6 +1706,8 @@ def draw_detection(
     if debug:
         for item in debug.candidates:
             if not item.accepted and not show_rejected_candidates:
+                continue
+            if item.accepted and not show_accepted_candidates:
                 continue
             contour = _scaled_contour(item.outer_contour, debug.scale)
             color = (0, 145, 0) if item.accepted else (80, 80, 190)

@@ -429,6 +429,7 @@ class VisionRX:
                         command=command,
                         total_time_ms=total_ms,
                         show_rejected_candidates=False,
+                        show_accepted_candidates=False,
                         show_mask_insets=False,
                     )
                 except Exception as exc:

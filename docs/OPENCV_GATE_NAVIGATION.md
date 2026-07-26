@@ -65,6 +65,11 @@ python main.py
    four-corner rectangle rather than the irregular hull of every Hough
    endpoint, and the live overlay draws that quadrilateral directly instead
    of an axis-aligned enclosing box.
+   Candidate association is identity-locked by normalized center and apparent
+   opening size. A visible nested next gate cannot steal the target when its
+   confidence fluctuates; an unmatched frame becomes a short tracker
+   prediction, and only pass confirmation/reset authorizes acquisition of the
+   next gate.
    When a farther gate is visible, its horizontal direction is retained
    through the current gate pass. The pass-through controller first clears
    the frame without reusing the old gate's final correction, then begins a

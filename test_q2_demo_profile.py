@@ -173,6 +173,25 @@ class DemoNavigationProfileTests(unittest.TestCase):
             tracker.update(forward_gate, timestamp=1.0)
         )
 
+    def test_q2_tracker_rejects_nested_gate_size_hop(self):
+        tracker = GateTracker(q2_demo_tracker_config())
+        active = detection_at(
+            opening_width=150,
+            opening_height=140,
+            confidence=0.9,
+        )
+        tracker.update(active, timestamp=1.0)
+        nested_next = detection_at(
+            opening_width=105,
+            opening_height=98,
+            confidence=0.95,
+        )
+
+        result = tracker.update(nested_next, timestamp=1.1)
+
+        self.assertTrue(result.predicted)
+        self.assertGreater(result.opening_width, 140)
+
     def test_no_gate_stops_forward_flight_and_scans(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         command = navigator.update(None, 1.0)
