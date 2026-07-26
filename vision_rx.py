@@ -32,6 +32,7 @@ class VisionRX:
         )
         self._last_debug_t = 0.0
         self._last_state = None
+        self._display_enabled = config.VISION_DISPLAY
         if config.VISION_DEBUG:
             os.makedirs(config.VISION_DEBUG_DIR, exist_ok=True)
         self.thread = threading.Thread(target=self._vision_loop, daemon=False)
@@ -132,6 +133,62 @@ class VisionRX:
                     del frames[min(frames)]
         finally:
             sock.close()
+            if self._display_enabled:
+                try:
+                    cv2.destroyWindow('Q2 OpenCV vision')
+                except cv2.error:
+                    pass
+
+    @staticmethod
+    def build_display_frame(
+        annotated: np.ndarray,
+        cleaned_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Compose camera detection and binary segmentation panels."""
+        if cleaned_mask.shape[:2] != annotated.shape[:2]:
+            cleaned_mask = cv2.resize(
+                cleaned_mask,
+                (annotated.shape[1], annotated.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        mask_panel = cv2.cvtColor(cleaned_mask, cv2.COLOR_GRAY2BGR)
+        cv2.putText(
+            annotated,
+            'CAMERA + DETECTION',
+            (10, annotated.shape[0] - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            mask_panel,
+            'CLEANED ORANGE BITMASK',
+            (10, mask_panel.shape[0] - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.48,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+        return np.hstack((annotated, mask_panel))
+
+    def _show_display(
+        self,
+        annotated: np.ndarray,
+        cleaned_mask: np.ndarray,
+    ) -> None:
+        try:
+            display = self.build_display_frame(annotated, cleaned_mask)
+            cv2.imshow('Q2 OpenCV vision', display)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord('q'), 27):
+                self._display_enabled = False
+                cv2.destroyWindow('Q2 OpenCV vision')
+        except cv2.error as exc:
+            self._display_enabled = False
+            print(f'[VISION] live display disabled: {exc}', flush=True)
 
     # ------------------------------------------------------------------
     def process_frame(
@@ -213,12 +270,12 @@ class VisionRX:
             'total': total_ms,
         }
 
-        if (
+        should_save_debug = (
             config.VISION_DEBUG
             and time.time() - self._last_debug_t
             >= config.VISION_DEBUG_INTERVAL_S
-        ):
-            self._last_debug_t = time.time()
+        )
+        if self._display_enabled or should_save_debug:
             annotated = draw_detection(
                 img,
                 tracked,
@@ -227,6 +284,13 @@ class VisionRX:
                 command=command,
                 total_time_ms=total_ms,
             )
+            if self._display_enabled:
+                self._show_display(
+                    annotated.copy(),
+                    self.detector.last_debug.cleaned_mask,
+                )
+        if should_save_debug:
+            self._last_debug_t = time.time()
             cv2.imwrite(
                 os.path.join(
                     config.VISION_DEBUG_DIR,

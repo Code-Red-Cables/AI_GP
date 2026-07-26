@@ -48,14 +48,23 @@ def run_opencv():
     logger = components['logger']
 
     print('[MODE] opencv (Q2 rate controller)', flush=True)
-    print('Arming drone...', flush=True)
-    controller.arm()
+    if config.PERCEPTION_ONLY:
+        print(
+            '[SAFE] perception-only: not arming and not sending flight commands',
+            flush=True,
+        )
+    else:
+        print('Arming drone...', flush=True)
+        controller.arm()
     print('Control loop running -- Ctrl+C to exit', flush=True)
 
     try:
         while True:
             shared_data['planner_target'] = planner.compute_target(shared_data)
-            controller.update()
+            if config.PERCEPTION_ONLY:
+                time.sleep(1.0 / config.CONTROL_HZ)
+            else:
+                controller.update()
     except KeyboardInterrupt:
         pass
     finally:

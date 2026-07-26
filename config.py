@@ -67,6 +67,8 @@ VISION_UDP_IP             = '0.0.0.0'
 VISION_UDP_PORT           = 5600
 VISION_COMMAND_TIMEOUT_S  = 0.35
 VISION_DEBUG              = _env_bool('VISION_DEBUG', False)
+VISION_DISPLAY            = _env_bool('VISION_DISPLAY', False)
+PERCEPTION_ONLY           = _env_bool('PERCEPTION_ONLY', False)
 VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
 VISION_DEBUG_INTERVAL_S   = float(
     os.environ.get('VISION_DEBUG_INTERVAL_S', '5.0')

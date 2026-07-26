@@ -11,6 +11,7 @@ import numpy as np
 
 from gate_estimator import build_gate_object_points, estimate_gate
 from opencv_gate_planner import OpenCVGatePlanner
+from vision_rx import VisionRX
 from vision.gate_detector import (
     GateDetection,
     GateVisionConfig,
@@ -502,6 +503,12 @@ class ModeTests(unittest.TestCase):
         self.assertEqual(opencv.update(ai_available=True), "opencv")
         self.assertEqual(existing_ai.update(ai_available=True), "ai")
         self.assertEqual(existing_ai.update(ai_available=False), "safe")
+
+    def test_31b_live_display_contains_detection_and_mask_panels(self):
+        annotated = np.zeros((360, 640, 3), dtype=np.uint8)
+        mask = np.zeros((180, 320), dtype=np.uint8)
+        display = VisionRX.build_display_frame(annotated, mask)
+        self.assertEqual(display.shape, (360, 1280, 3))
 
 
 class RepositoryFrameTests(unittest.TestCase):

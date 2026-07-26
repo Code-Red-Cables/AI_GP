@@ -59,6 +59,19 @@ to PnP when reliable opening corners are available.
 Set `VISION_DEBUG=1` to save periodically annotated frames in
 `_vision_debug/`. This is off by default to avoid disk I/O in the race loop.
 
+For a safe live Windows view without arming or sending commands:
+
+```powershell
+$env:PERCEPTION_ONLY="1"
+$env:VISION_DISPLAY="1"
+.\.venv\Scripts\python.exe main.py
+```
+
+The live window shows the annotated camera frame beside the cleaned orange
+bitmask. Press `q` or Escape to close only the window, or `Ctrl+C` to stop the
+client. Reset the simulator before using perception-only mode so the vehicle is
+not left armed from an earlier run.
+
 Use the offline viewer without sending flight commands:
 
 ```bash
