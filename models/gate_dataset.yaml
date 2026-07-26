@@ -1,11 +1,10 @@
 # One-class Ultralytics detection dataset.
-# Expected repository layout:
+# Paths are relative to this YAML file. Expected repository layout:
 # datasets/gates/
 #   images/train/  images/val/
 #   labels/train/  labels/val/
-path: datasets/gates
-train: images/train
-val: images/val
+train: ../datasets/gates/images/train
+val: ../datasets/gates/images/val
 
 names:
   0: gate

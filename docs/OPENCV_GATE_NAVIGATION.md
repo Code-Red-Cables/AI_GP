@@ -174,8 +174,14 @@ overlapping gates. Install dependencies and train:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe tools\train_gate_yolo.py --init-dataset
 .\.venv\Scripts\python.exe tools\train_gate_yolo.py
 ```
+
+The initialization command creates empty train/validation image and label
+folders; it does not invent annotations. Add images and matching YOLO `.txt`
+labels before running the training command. Existing images under `frames/`
+are currently unlabeled.
 
 The training script uses generic pretrained weights only as a training
 starting point, then copies the custom `best.pt` to

@@ -20,6 +20,12 @@ datasets/gates/
   labels/val/
 ```
 
+Create those empty folders with:
+
+```powershell
+.\.venv\Scripts\python.exe tools\train_gate_yolo.py --init-dataset
+```
+
 Each label is standard YOLO detection format:
 
 ```text
@@ -27,7 +33,9 @@ Each label is standard YOLO detection format:
 ```
 
 Coordinates are normalized to `[0, 1]`. Label each physical gate separately,
-including gates that overlap in the same image.
+including gates that overlap in the same image. The repository's existing
+`frames/` images may be used as source material, but they are not currently
+labeled and cannot train YOLO by themselves.
 
 Train and install the resulting best weights:
 
