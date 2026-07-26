@@ -60,6 +60,7 @@ class YoloGateBox:
     confidence: float
     class_id: int = 0
     label: str = "gate"
+    source_index: int = -1
 
     @property
     def center(self) -> tuple[float, float]:
@@ -184,6 +185,7 @@ def detect_gates_yolo(
                 confidence=float(confidences[index]),
                 class_id=class_id,
                 label=names[class_id],
+                source_index=index,
             )
         )
     return detections

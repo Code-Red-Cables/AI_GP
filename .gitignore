@@ -24,7 +24,7 @@ AIGP_3385/
 # Old vision debug/capture output (regenerable)
 _vision_debug/
 frames/
-datasets/gates/
+datasets/
 logs/*.csv
 logs/*.txt
 

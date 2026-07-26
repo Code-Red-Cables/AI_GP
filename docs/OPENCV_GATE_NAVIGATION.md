@@ -25,16 +25,17 @@ Run OpenCV mode:
 python main.py
 ```
 
-Detector selection defaults to `auto`: it loads
-`models/gate_detector.pt` when trained custom weights exist, otherwise it
-prints a warning and preserves the established HSV detector. Generic COCO
-weights are never used for live gate inference.
+Detector selection defaults to `auto`. It prefers the learned four-corner
+pose model at `models/gate_pose.pt`, then the older box/HSV hybrid at
+`models/gate_detector.pt`, and finally prints a warning before using the
+established HSV detector. Generic COCO weights are never used for live gate
+inference.
 
-Require the hybrid detector on Windows:
+Require the four-corner pose detector on Windows:
 
 ```powershell
-$env:GATE_DETECTOR_BACKEND="yolo_hybrid"
-$env:YOLO_MODEL_PATH="models/gate_detector.pt"
+$env:GATE_DETECTOR_BACKEND="yolo_pose"
+$env:YOLO_POSE_MODEL_PATH="models/gate_pose.pt"
 .\.venv\Scripts\python.exe main.py
 ```
 
@@ -51,26 +52,24 @@ python main.py
 ## OpenCV data flow
 
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
-2. `YoloHybridGateDetector` runs one inference on that frame. Ultralytics is
+2. `YoloPoseGateDetector` runs one inference on that frame. Ultralytics is
    called with class-aware NMS (`agnostic_nms=False`) and a configurable
    default IoU threshold of `0.70`, preserving separately labeled overlapping
    gates when the trained model supports them. Acquisition selects the largest
    valid YOLO gate. While locked, overlap with the previous target is
    authoritative and center/size similarity breaks ties, preventing rapid
    switching between overlapping gates.
-3. Only the selected padded YOLO crop enters orange segmentation. The crop
-   reuses the calibrated Q2 HSV range and light one-pass opening/closing, with
-   no dilation. Contour hierarchy identifies a non-orange hole enclosed by the
-   orange frame. Its ordered `top_left`, `top_right`, `bottom_left`, and
-   `bottom_right` coordinates are translated from crop-local to full-image
-   pixels. The target center is the arithmetic mean of those four corners,
-   never the centroid of all orange pixels.
-   If corner extraction fails but YOLO still has the target, the selected
-   YOLO-box center is used temporarily. A short disappearance exposes the
-   previous-frame center for diagnostics while `GateTracker` performs its
-   bounded prediction. After the configured lock/fallback timeout, normal
-   search behavior resumes. Race pass confirmation resets both the box lock
-   and the existing tracker before the next gate is acquired.
+3. Each pose instance directly supplies its own four inner-opening keypoints:
+   top-left, top-right, bottom-left, and bottom-right. They are validated and
+   converted to the cyclic TL/TR/BR/BL order required by PnP. This avoids a
+   shared color contour entirely: overlapping gate pixels cannot be merged
+   into one geometry. The target center is the arithmetic mean of the four
+   corners. When one keypoint is temporarily unreliable, only that selected
+   instance's YOLO-box center is used as a bounded fallback. A short complete
+   disappearance uses the previous center; pass confirmation resets the pose
+   instance lock and tracker before the next gate is acquired.
+   The older `yolo_hybrid` backend remains available for detection-box models.
+   It runs orange opening extraction only inside the selected YOLO crop.
 4. With no custom model, `auto` mode uses `OrangeGateDetector`, which finds the
    flyable opening rather than the orange
    material centroid. Acquisition selects the largest valid opening in view.
@@ -165,33 +164,42 @@ The camera tilt and 640x360 pinhole model are centralized in
 `camera_model.py`. `gate_estimator.py` reports a size-based range and upgrades
 to PnP when reliable opening corners are available.
 
-## YOLO model and training
+## YOLO pose model and free local training
 
-No trained racing-gate weights are committed to this repository. Prepare a
-one-class YOLO detection dataset under `datasets/gates/` using the layout in
-`models/README.md`. Every physical gate must receive its own box, including
-overlapping gates. Install dependencies and train:
+No trained racing-gate weights are committed to Git. The downloaded Roboflow
+YOLOv8 keypoint export belongs at
+`datasets/AI_GP.v1i.yolov8/`; datasets and weights remain ignored because they
+are large/private. The dataset has four inner-opening points in the order
+top-left, top-right, bottom-left, bottom-right. Its `data.yaml` must contain:
+
+```yaml
+train: train/images
+val: valid/images
+kpt_shape: [4, 3]
+flip_idx: [1, 0, 3, 2]
+names: ['gate']
+```
+
+The corrected `flip_idx` is important: horizontal augmentation must swap the
+left and right corners. Train locally without a Roboflow API:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe tools\train_gate_yolo.py --init-dataset
-.\.venv\Scripts\python.exe tools\train_gate_yolo.py
+.\.venv\Scripts\python.exe tools\train_gate_pose.py
 ```
 
-The initialization command creates empty train/validation image and label
-folders; it does not invent annotations. Add images and matching YOLO `.txt`
-labels before running the training command. Existing images under `frames/`
-are currently unlabeled.
-
-The training script uses generic pretrained weights only as a training
-starting point, then copies the custom `best.pt` to
-`models/gate_detector.pt`. Live inference validates that the resulting model
-defines a class named `gate`.
+The trainer validates all image/label pairs before starting, fine-tunes
+`yolo26s-pose.pt`, and copies the resulting `best.pt` to
+`models/gate_pose.pt`. The pretrained file is only the starting point; live
+inference accepts only a one-class `gate` pose model with exactly four
+keypoints.
 
 Primary runtime tuning variables:
 
+- `YOLO_POSE_MODEL_PATH` (default `models/gate_pose.pt`)
 - `YOLO_MODEL_PATH` (default `models/gate_detector.pt`)
 - `YOLO_CONFIDENCE_THRESHOLD` (default `0.35`)
+- `YOLO_KEYPOINT_CONFIDENCE_THRESHOLD` (default `0.25`)
 - `YOLO_NMS_IOU_THRESHOLD` (default `0.70`)
 - `YOLO_TARGET_LOCK_SECONDS` (default `0.75`)
 - `YOLO_CROP_PADDING_PX` (default `14`)
@@ -223,10 +231,11 @@ $env:VISION_DISPLAY="1"
 The live window keeps the annotated camera full-size on the left and stacks
 two diagnostics on the right: the orange color mask and an accepted-target
 view containing only the orange gate geometry that may influence steering.
-In hybrid mode the overlay also shows every YOLO detection/confidence, the
-selected box, padded crop, four inner corners, calculated center, and center
-source (`inner_corners`, `yolo_box_fallback`, or
-`previous_frame_fallback`).
+In pose mode the overlay shows every separate pose instance, confidence, all
+four keypoints, the selected opening quadrilateral, calculated center, and
+center source (`pose_keypoints`, `pose_box_fallback`, or
+`previous_frame_fallback`). In hybrid mode it shows the equivalent selected
+box, padded crop, and color-extracted corners.
 Orange pixels in the mask are color candidates, not necessarily
 accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
 to stop the client. Reset the simulator before using perception-only mode so

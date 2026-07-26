@@ -54,13 +54,70 @@ def create_gate_detector():
         print('[VISION] detector=hsv (explicit legacy mode)', flush=True)
         return OrangeGateDetector(legacy_config)
 
-    model_path = Path(config.YOLO_MODEL_PATH)
-    if not model_path.is_absolute():
-        model_path = Path(__file__).resolve().parent / model_path
-    if not model_path.is_file():
+    repository_root = Path(__file__).resolve().parent
+
+    def resolved_model_path(configured_path):
+        model_path = Path(configured_path)
+        if not model_path.is_absolute():
+            model_path = repository_root / model_path
+        return model_path
+
+    pose_model_path = resolved_model_path(config.YOLO_POSE_MODEL_PATH)
+    box_model_path = resolved_model_path(config.YOLO_MODEL_PATH)
+    use_pose = backend == 'yolo_pose' or (
+        backend == 'auto' and pose_model_path.is_file()
+    )
+    if use_pose:
+        if not pose_model_path.is_file():
+            raise FileNotFoundError(
+                '[VISION] custom YOLO gate pose weights are missing at '
+                f'{pose_model_path}; run tools/train_gate_pose.py'
+            )
+        from vision.yolo_pose_gate_detector import (
+            PoseGateConfig,
+            YoloPoseGateDetector,
+        )
+
+        pose_config = PoseGateConfig(
+            model_path=str(pose_model_path),
+            gate_class_name=config.YOLO_GATE_CLASS_NAME,
+            confidence_threshold=config.YOLO_CONFIDENCE_THRESHOLD,
+            keypoint_confidence_threshold=(
+                config.YOLO_KEYPOINT_CONFIDENCE_THRESHOLD
+            ),
+            nms_iou_threshold=config.YOLO_NMS_IOU_THRESHOLD,
+            target_lock_seconds=config.YOLO_TARGET_LOCK_SECONDS,
+            minimum_gate_area_px=config.YOLO_MIN_GATE_AREA_PX,
+            maximum_outside_fraction=config.YOLO_MAX_OUTSIDE_FRACTION,
+            previous_center_frames=config.YOLO_PREVIOUS_CENTER_FRAMES,
+            inference_size=config.YOLO_INFERENCE_SIZE,
+            device=config.YOLO_DEVICE,
+            log_interval_s=config.YOLO_LOG_INTERVAL_S,
+            minimum_opening_area_px=config.GATE_MIN_CONTOUR_AREA,
+        )
+        try:
+            detector = YoloPoseGateDetector(pose_config)
+        except (ImportError, RuntimeError) as exc:
+            if backend == 'yolo_pose':
+                raise
+            print(
+                f'[VISION] YOLO pose unavailable ({exc}); trying fallback',
+                flush=True,
+            )
+        else:
+            print(
+                '[VISION] detector=yolo_pose '
+                f'model={pose_model_path} '
+                f'conf={config.YOLO_CONFIDENCE_THRESHOLD:.2f} '
+                'corners=4',
+                flush=True,
+            )
+            return detector
+
+    if not box_model_path.is_file():
         message = (
             '[VISION] custom YOLO gate weights are missing at '
-            f'{model_path}; place trained one-class weights there'
+            f'{box_model_path}; place trained one-class weights there'
         )
         if backend == 'yolo_hybrid':
             raise FileNotFoundError(message)
@@ -73,7 +130,7 @@ def create_gate_detector():
     )
 
     hybrid_config = HybridGateConfig(
-        model_path=str(model_path),
+        model_path=str(box_model_path),
         gate_class_name=config.YOLO_GATE_CLASS_NAME,
         confidence_threshold=config.YOLO_CONFIDENCE_THRESHOLD,
         nms_iou_threshold=config.YOLO_NMS_IOU_THRESHOLD,
@@ -100,7 +157,7 @@ def create_gate_detector():
         return OrangeGateDetector(legacy_config)
     print(
         '[VISION] detector=yolo_hybrid '
-        f'model={model_path} conf={config.YOLO_CONFIDENCE_THRESHOLD:.2f} '
+        f'model={box_model_path} conf={config.YOLO_CONFIDENCE_THRESHOLD:.2f} '
         f'iou={config.YOLO_NMS_IOU_THRESHOLD:.2f}',
         flush=True,
     )

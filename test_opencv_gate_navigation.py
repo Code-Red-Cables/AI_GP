@@ -727,6 +727,9 @@ class ModeTests(unittest.TestCase):
 class RepositoryFrameTests(unittest.TestCase):
     def test_32_floor_markers_rejected_and_real_gate_detected(self):
         frames = Path(__file__).resolve().parent / "frames"
+        required = (frames / "f_00004.png", frames / "f_00070.png")
+        if not all(path.is_file() for path in required):
+            self.skipTest("optional recorded frame fixtures are unavailable")
         detector = OrangeGateDetector()
         no_gate = detector.detect(
             cv2.imread(str(frames / "f_00004.png"), cv2.IMREAD_COLOR)

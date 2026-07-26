@@ -100,24 +100,32 @@ GATE_FRAME_CAPTURE_INTERVAL_S = float(
     os.environ.get('GATE_FRAME_CAPTURE_INTERVAL_S', '0.0')
 )
 
-# ``auto`` uses the custom YOLO model when it exists and otherwise prints an
-# explicit warning before preserving the established HSV detector. Set
-# ``yolo_hybrid`` to require the model and fail fast if weights/dependencies
-# are missing; set ``hsv`` to intentionally use the legacy global detector.
+# ``auto`` prefers the four-keypoint pose model, then the YOLO-box/HSV hybrid,
+# and finally prints an explicit warning before preserving the legacy HSV
+# detector. Explicit backends fail fast when their weights are missing.
 GATE_DETECTOR_BACKEND = os.environ.get(
     'GATE_DETECTOR_BACKEND', 'auto'
 ).strip().lower()
-if GATE_DETECTOR_BACKEND not in {'auto', 'yolo_hybrid', 'hsv'}:
+if GATE_DETECTOR_BACKEND not in {
+    'auto', 'yolo_pose', 'yolo_hybrid', 'hsv'
+}:
     raise ValueError(
-        'GATE_DETECTOR_BACKEND must be "auto", "yolo_hybrid", or "hsv"'
+        'GATE_DETECTOR_BACKEND must be "auto", "yolo_pose", '
+        '"yolo_hybrid", or "hsv"'
     )
 
+YOLO_POSE_MODEL_PATH = os.environ.get(
+    'YOLO_POSE_MODEL_PATH', 'models/gate_pose.pt'
+)
 YOLO_MODEL_PATH = os.environ.get(
     'YOLO_MODEL_PATH', 'models/gate_detector.pt'
 )
 YOLO_GATE_CLASS_NAME = os.environ.get('YOLO_GATE_CLASS_NAME', 'gate')
 YOLO_CONFIDENCE_THRESHOLD = float(
     os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.35')
+)
+YOLO_KEYPOINT_CONFIDENCE_THRESHOLD = float(
+    os.environ.get('YOLO_KEYPOINT_CONFIDENCE_THRESHOLD', '0.25')
 )
 YOLO_NMS_IOU_THRESHOLD = float(
     os.environ.get('YOLO_NMS_IOU_THRESHOLD', '0.70')

@@ -1,6 +1,36 @@
-# Custom gate detector weights
+# Custom gate model weights
 
-Place the trained one-class Ultralytics model here:
+The preferred model is the four-keypoint pose model:
+
+```text
+models/gate_pose.pt
+```
+
+Place the Roboflow YOLOv8 keypoint export at:
+
+```text
+datasets/AI_GP.v1i.yolov8/
+```
+
+Its four points are the inner opening corners in TL, TR, BL, BR order. Ensure
+`data.yaml` uses dataset-local paths and correct horizontal flip semantics:
+
+```yaml
+train: train/images
+val: valid/images
+kpt_shape: [4, 3]
+flip_idx: [1, 0, 3, 2]
+names: ['gate']
+```
+
+Train locally and install `models/gate_pose.pt`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe tools\train_gate_pose.py
+```
+
+The older bounding-box/HSV hybrid remains supported. Its weights go at:
 
 ```text
 models/gate_detector.pt

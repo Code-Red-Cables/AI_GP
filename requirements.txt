@@ -5,7 +5,7 @@ pymavlink
 #cv2
 opencv-python
 numpy
-ultralytics>=8.3.0
+ultralytics>=8.4.106
 
 # Debug
 matplotlib
