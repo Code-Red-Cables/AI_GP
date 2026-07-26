@@ -208,7 +208,11 @@ class VisionRX:
     ) -> np.ndarray:
         """Show only geometry accepted for steering, not rejected candidates."""
         target = np.zeros(shape, dtype=np.uint8)
-        if path_detection is not None and path_detection.mask is not None:
+        if (
+            path_detection is not None
+            and path_detection.found
+            and path_detection.mask is not None
+        ):
             path_mask = path_detection.mask
             if path_mask.shape[:2] != target.shape[:2]:
                 path_mask = cv2.resize(
