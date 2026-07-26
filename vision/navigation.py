@@ -85,6 +85,14 @@ class NavigationConfig:
     path_max_right_mps: float = 0.0
     path_max_yaw_rate_rps: float = 0.0
     path_blend_with_gate: float = 0.20
+    path_pass_through_delay_s: float = 0.0
+    path_pass_through_weight: float = 0.0
+    next_gate_minimum_primary_area_ratio: float = 1.0
+    next_gate_maximum_primary_horizontal: float = 0.0
+    next_gate_lateral_kp: float = 0.0
+    next_gate_yaw_kp: float = 0.0
+    next_gate_max_right_mps: float = 0.0
+    next_gate_max_yaw_rate_rps: float = 0.0
 
 
 @dataclass
@@ -256,6 +264,7 @@ class GateNavigator:
         detection: Optional[GateDetection],
         now: float,
         path: Optional[object] = None,
+        next_gate_horizontal: Optional[float] = None,
     ) -> NavigationCommand:
         cfg = self.config
         dt = self._dt(now)
@@ -388,16 +397,61 @@ class GateNavigator:
                 0.55 * cfg.search_yaw_rate_rps * self._last_direction
             )
 
+        next_gate_usable = bool(
+            usable
+            and detection is not None
+            and next_gate_horizontal is not None
+            and detection.opening_area_ratio
+            >= cfg.next_gate_minimum_primary_area_ratio
+            and abs(detection.normalized_x)
+            <= cfg.next_gate_maximum_primary_horizontal
+            and self.state
+            in (NavigationState.TRACK, NavigationState.ALIGN_AND_APPROACH)
+        )
+        if next_gate_usable:
+            lookahead = float(np.clip(next_gate_horizontal, -1.0, 1.0))
+            proximity = float(
+                np.clip(
+                    detection.opening_area_ratio
+                    / max(cfg.commit_opening_area_ratio, 1e-6),
+                    0.0,
+                    1.0,
+                )
+            )
+            desired[1] += proximity * float(
+                np.clip(
+                    cfg.next_gate_lateral_kp * lookahead,
+                    -cfg.next_gate_max_right_mps,
+                    cfg.next_gate_max_right_mps,
+                )
+            )
+            desired[3] += proximity * float(
+                np.clip(
+                    cfg.next_gate_yaw_kp * lookahead,
+                    -cfg.next_gate_max_yaw_rate_rps,
+                    cfg.next_gate_max_yaw_rate_rps,
+                )
+            )
+
         path_found = bool(
             path is not None
             and getattr(path, 'found', False)
             and getattr(path, 'confidence', 0.0)
             >= cfg.path_minimum_confidence
         )
-        path_assist_allowed = self.state not in (
-            NavigationState.COMMIT,
-            NavigationState.PASS_THROUGH,
-        )
+        path_assist_allowed = self.state != NavigationState.COMMIT
+        path_weight = cfg.path_blend_with_gate if usable else 1.0
+        if self.state == NavigationState.PASS_THROUGH:
+            pass_elapsed = (
+                0.0
+                if self._state_since is None
+                else max(0.0, now - self._state_since)
+            )
+            path_assist_allowed = bool(
+                cfg.path_pass_through_weight > 0.0
+                and pass_elapsed >= cfg.path_pass_through_delay_s
+            )
+            path_weight = cfg.path_pass_through_weight
         if path_found and path_assist_allowed and (
             cfg.path_lateral_kp != 0.0 or cfg.path_yaw_kp != 0.0
         ):
@@ -410,7 +464,6 @@ class GateNavigator:
                     1.0,
                 )
             )
-            path_weight = cfg.path_blend_with_gate if usable else 1.0
             desired[1] += path_weight * float(
                 np.clip(
                     cfg.path_lateral_kp * path_error,
@@ -454,8 +507,8 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # The recorded first pass peaked at 6.49% frame opening area before
         # dropout. Commit earlier, while the centered opening is still measured,
         # instead of falling into recovery and acquiring background orange.
-        commit_opening_area_ratio=0.035,
-        commit_alignment_tolerance=0.25,
+        commit_opening_area_ratio=0.030,
+        commit_alignment_tolerance=0.40,
         commit_stable_frames=1,
         commit_max_center_speed=2.0,
         commit_max_size_rate=100.0,
@@ -491,5 +544,13 @@ def q2_demo_navigation_config() -> NavigationConfig:
         path_yaw_kp=0.80,
         path_max_right_mps=0.60,
         path_max_yaw_rate_rps=0.35,
-        path_blend_with_gate=0.20,
+        path_blend_with_gate=0.35,
+        path_pass_through_delay_s=0.15,
+        path_pass_through_weight=0.65,
+        next_gate_minimum_primary_area_ratio=0.008,
+        next_gate_maximum_primary_horizontal=0.18,
+        next_gate_lateral_kp=0.50,
+        next_gate_yaw_kp=0.65,
+        next_gate_max_right_mps=0.25,
+        next_gate_max_yaw_rate_rps=0.25,
     )

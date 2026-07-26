@@ -45,8 +45,8 @@ class DemoNavigationProfileTests(unittest.TestCase):
         )
         self.assertAlmostEqual(cfg.horizontal_yaw_kp, 2.4)
         self.assertAlmostEqual(cfg.max_yaw_rate_rps, 1.05)
-        self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.035)
-        self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.25)
+        self.assertAlmostEqual(cfg.commit_opening_area_ratio, 0.030)
+        self.assertAlmostEqual(cfg.commit_alignment_tolerance, 0.40)
 
     def test_recorded_close_gate_enters_commit_before_dropout(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -59,7 +59,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator.update(far, 1.1)
         navigator.update(far, 1.2)
         close = detection_at(
-            ny=-0.35,
+            ny=-0.46,
             opening_width=100,
             opening_height=82,
             stable_frames=1,

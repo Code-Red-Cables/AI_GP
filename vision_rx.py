@@ -11,10 +11,63 @@ import numpy as np
 
 import config
 from gate_estimator import estimate_gate
-from vision.gate_detector import OrangeGateDetector, draw_detection
+from vision.gate_detector import (
+    DetectorDebug,
+    GateDetection,
+    OrangeGateDetector,
+    draw_detection,
+)
 from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
 from vision.path_detector import BluePathDetection, BluePathDetector, draw_blue_path
+
+
+def course_lookahead_horizontal(
+    primary: GateDetection,
+    debug: DetectorDebug,
+) -> float | None:
+    """Find a smaller supported gate visible beyond the active gate."""
+    if primary is None or not primary.found:
+        return None
+    height, width = debug.cleaned_mask.shape[:2]
+    if width <= 0 or height <= 0:
+        return None
+    scale = max(float(debug.scale), 1e-9)
+    primary_x = primary.center_x * scale
+    primary_y = primary.center_y * scale
+    candidates = []
+    for item in debug.candidates:
+        if (
+            not item.accepted
+            or item.confidence < 0.45
+            or item.features.get('supported_sides', 0.0) < 3.0
+        ):
+            continue
+        center_x, center_y = item.center
+        separation = np.hypot(
+            (center_x - primary_x) / width,
+            (center_y - primary_y) / height,
+        )
+        if separation < 0.12:
+            continue
+        normalized_x = (center_x - width / 2.0) / (width / 2.0)
+        normalized_y = (center_y - height / 2.0) / (height / 2.0)
+        bbox_area_ratio = (
+            item.bbox[2] * item.bbox[3] / float(width * height)
+        )
+        if (
+            bbox_area_ratio < 0.0015
+            or abs(normalized_x) > 0.85
+            or normalized_y > 0.65
+        ):
+            continue
+        candidates.append(
+            (
+                item.confidence + 0.10 * min(1.0, bbox_area_ratio / 0.02),
+                float(normalized_x),
+            )
+        )
+    return max(candidates)[1] if candidates else None
 
 
 class VisionRX:
@@ -286,8 +339,14 @@ class VisionRX:
         path_detection = self.path_detector.detect(
             img, timestamp=monotonic_now
         )
+        next_gate_horizontal = course_lookahead_horizontal(
+            measured, self.detector.last_debug
+        )
         command = self.navigator.update(
-            tracked, monotonic_now, path=path_detection
+            tracked,
+            monotonic_now,
+            path=path_detection,
+            next_gate_horizontal=next_gate_horizontal,
         )
         state = command.state.value
         self._log_state(state)
@@ -338,6 +397,7 @@ class VisionRX:
             'path_confidence': path_detection.confidence,
             'path_offset': path_detection.normalized_offset,
             'path_heading': path_detection.normalized_heading,
+            'next_gate_horizontal': next_gate_horizontal,
         }
         path_data = {
             'ts': timestamp_ns,

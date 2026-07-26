@@ -22,7 +22,9 @@ class BluePathConfig:
     hough_threshold: int = 18
     minimum_abs_dx: float = 8.0
     minimum_abs_dy: float = 10.0
-    minimum_lane_width_ratio: float = 0.22
+    # Near a gate, the course rails are visible only through the opening and
+    # can narrow to roughly 8-10% of the frame before the next turn.
+    minimum_lane_width_ratio: float = 0.06
     maximum_lane_width_ratio: float = 1.60
     ema_alpha: float = 0.42
     prediction_frames: int = 4

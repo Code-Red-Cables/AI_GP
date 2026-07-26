@@ -42,6 +42,17 @@ class BluePathDetectorTests(unittest.TestCase):
         detection = BluePathDetector().detect(frame)
         self.assertFalse(detection.found)
 
+    def test_narrow_path_visible_through_gate_is_detected(self):
+        frame = np.zeros((360, 640, 3), dtype=np.uint8)
+        cyan = (255, 180, 0)
+        cv2.line(frame, (285, 359), (310, 150), cyan, 7)
+        cv2.line(frame, (355, 359), (330, 150), cyan, 7)
+        detection = BluePathDetector().detect(frame)
+        self.assertTrue(detection.found)
+        self.assertAlmostEqual(
+            detection.normalized_offset, 0.0, delta=0.08
+        )
+
 
 class BluePathNavigationTests(unittest.TestCase):
     @staticmethod
@@ -83,6 +94,46 @@ class BluePathNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(command.right_mps, 0.0)
         self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
 
+    def test_path_assist_resumes_early_during_pass_through(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        navigator.state = NavigationState.PASS_THROUGH
+        navigator._state_since = 1.0
+        early = navigator.update(None, 1.10, path=self.right_path())
+        self.assertAlmostEqual(early.right_mps, 0.0)
+        active = navigator.update(None, 1.20, path=self.right_path())
+        self.assertGreater(active.right_mps, 0.0)
+        self.assertGreater(active.yaw_rate_rps, 0.0)
+
+    def test_visible_next_gate_adds_bounded_early_turn(self):
+        cfg = q2_demo_navigation_config()
+        primary = detection_at(
+            nx=0.0,
+            ny=-0.20,
+            opening_width=55,
+            opening_height=40,
+            stable_frames=5,
+        )
+        without = GateNavigator(cfg)
+        without.update(primary, 1.0)
+        without.update(primary, 1.1)
+        base = without.update(primary, 1.2)
+        with_lookahead = GateNavigator(cfg)
+        with_lookahead.update(primary, 1.0)
+        with_lookahead.update(primary, 1.1)
+        anticipated = with_lookahead.update(
+            primary, 1.2, next_gate_horizontal=0.50
+        )
+        self.assertGreater(anticipated.right_mps, base.right_mps)
+        self.assertGreater(
+            anticipated.yaw_rate_rps, base.yaw_rate_rps
+        )
+        self.assertLessEqual(
+            anticipated.right_mps, cfg.next_gate_max_right_mps
+        )
+        self.assertLessEqual(
+            anticipated.yaw_rate_rps,
+            cfg.next_gate_max_yaw_rate_rps,
+        )
     def test_accepted_target_panel_contains_path(self):
         path = BluePathDetector().detect(path_frame())
         panel = VisionRX.build_accepted_target_frame(

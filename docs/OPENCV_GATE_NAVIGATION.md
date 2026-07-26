@@ -55,10 +55,15 @@ python main.py
    the gate opening reaches the demonstrated close-range size.
    The blue path supplies bounded lateral/yaw assistance, at only 20% strength
    while a usable orange gate is visible, so the flyable gate stays primary.
-   Path assistance is suspended during gate commit and pass-through.
+   Path assistance is suspended during gate commit, then resumes at bounded
+   strength 150 ms into pass-through so the drone can anticipate the turn
+   toward the next gate without clipping the current gate frame.
    The Q2 close-gate threshold is calibrated below the measured first-gate
    peak, ensuring the controller commits through the opening before it drops
    out of view.
+   When another fully supported gate is already visible beyond a centered,
+   nearby active gate, a separately bounded look-ahead term begins the next
+   turn early. It cannot override primary-gate alignment.
 6. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
 7. `Controller` reuses the demonstration AHRS from
