@@ -72,6 +72,8 @@ class Logger:
         imu  = d.get('highres_imu')     or {}
         ctrl = d.get('control_output')  or {}
         gate = d.get('gate_detection')
+        nav  = d.get('navigation')      or {}
+        vis  = d.get('vision')          or {}
         tel  = d.get('teleop_cmd')      or {}
         tgt  = d.get('planner_target')  or {}
 
@@ -109,6 +111,16 @@ class Logger:
             'gate_v':         self._f(gate['center_px'][1], 1) if gate else 'nan',
             'gate_conf':      self._f(gate['confidence'],   3) if gate else 'nan',
             'gate_area':      self._f(gate['area_px'],      0) if gate else 'nan',
+            'gate_method':    gate.get('method', 'none') if gate else 'none',
+            'gate_predicted': str(int(bool(gate and gate.get('predicted')))),
+            'gate_range':     self._f(vis.get('range_m')),
+            # OpenCV body-frame navigator output
+            'nav_state':      nav.get('state', 'none'),
+            'nav_fwd':        self._f(nav.get('forward_mps')),
+            'nav_right':      self._f(nav.get('right_mps')),
+            'nav_down':       self._f(nav.get('down_mps')),
+            'nav_yaw_rate':   self._f(nav.get('yaw_rate_rps')),
+            'nav_align_err':  self._f(nav.get('alignment_error')),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
             # teleop inputs

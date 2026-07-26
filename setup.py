@@ -23,8 +23,12 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     ts_loop    = TimeSync.create_timesync(sim_conn, shared_data)
     vision_rx  = VisionRX(shared_data)
 
-    # Planner selection
-    if config.USE_GATE_CHASER:
+    # Planner selection. Racing modes are exclusive; OpenCV never blends with
+    # Dreamer output. existing_ai is handled before this function in main.py.
+    if config.GATE_NAVIGATION_MODE == 'opencv':
+        from opencv_gate_planner import OpenCVGatePlanner
+        planner = OpenCVGatePlanner()
+    elif config.USE_GATE_CHASER:
         from gate_chaser import GateChaserPlanner
         planner = GateChaserPlanner()
     elif config.USE_TELEOP:

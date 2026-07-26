@@ -1,376 +1,1424 @@
-"""Gate detection: HSV threshold -> contour -> square (see PLAN.md 8.2).
+"""Deterministic orange gate-opening detection.
 
-Round One is a high-contrast, *desaturated* environment, so the flyable gate is
-the salient saturated/bright object. The detector masks that color, finds the
-gate's square frame (a square annulus), and reports the inner opening's center,
-corners, bounding box, area and a heuristic confidence.
+The live receiver decodes JPEG frames with ``cv2.IMREAD_COLOR``, therefore the
+normal input is BGR. Image-space signs are:
 
-`detect_gate()` is pure (frame in -> detection out, no disk writes). The optional
-`draw_detection()` helper and the `__main__` self-test handle any visualization.
+* normalized_x: -1 left, 0 centre, +1 right.
+* normalized_y: -1 top, 0 centre, +1 bottom.
+
+The target is the centre of the *opening*, never the centroid of orange pixels.
 """
 
+from __future__ import annotations
+
+import math
 import sys
-from dataclasses import dataclass
-from typing import Optional
+import time
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Optional, Sequence
 
 import cv2
 import numpy as np
 
-# --------------------------------------------------------------------------- #
-# HSV thresholds.
-#
-# Configured for glowing red/orange gates using a two-piece mask to handle
-# the OpenCV hue wrap-around at 180/0.
-#
-# Saturation floor raised 0 -> 60 (2026-07-24): with S_min=0 any bright *gray*
-# pixel (OpenCV maps gray to H=0, S=0) fell inside the first hue band, so lit
-# girders/buildings leaked into the mask. The gate frame body is saturated red;
-# only its bloom halo is desaturated, and we don't need the halo.
-# --------------------------------------------------------------------------- #
-LOWER_HSV = (0, 60, 80)
-UPPER_HSV = (15, 255, 255)
-LOWER_HSV2 = (170, 60, 80)
-UPPER_HSV2 = (180, 255, 255)
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import camera_model as cm
 
-# Default tuning knobs. Any of these (incl. the HSV thresholds above) may be
-# overridden per-call via the `cfg` dict so callers/tests can pass their own.
-DEFAULT_CFG = {
-    "lower_hsv": LOWER_HSV,
-    "upper_hsv": UPPER_HSV,
-    "lower_hsv2": LOWER_HSV2,
-    "upper_hsv2": UPPER_HSV2,
-    "kernel_size": 5,        # morphology kernel (odd, small)
-    "min_area": 400.0,       # area floor in px for a candidate contour
-    "min_extent": 0.15,      # contour_area / bbox_area floor (frame is an annulus).
-                             # Loosened 0.30 -> 0.15 so a gate still CLIPPED by the frame
-                             # edge (how the lower next-gate first appears as we descend
-                             # toward it) isn't rejected for being a partial shape.
-    "approx_eps_frac": 0.04, # approxPolyDP epsilon as fraction of perimeter
-    # Anti-reward-hack gates (2026-07-24): the training run learned to dive at red
-    # banners/signs because the score is area-dominated and any solid red blob won.
-    # A real gate is an ANNULUS — require the inner hole (the flyable opening) and a
-    # roughly square outer bbox so solid strips (banners, pillars) are rejected.
-    # The hole is only required for LARGE candidates: at distance the gate's glow
-    # bloom fills its opening (measured on frames/: no mask hole below ~2.5% of the
-    # frame), and a small solid blob can't sustain the "dive at red stuff" exploit —
-    # detection drops the moment it grows past the threshold without an opening.
-    "require_hole": True,        # enforce the annulus test on large candidates
-    "hole_min_bbox_frac": 0.025, # bbox area / frame area above which the hole is mandatory
-    "min_squareness": 0.35,  # outer bbox aspect floor (1.0 = square); banners are ~0.1-0.3
-    # Light pre-blur (2026-07-26): denoises the HSV mask so thin/aliased ring pixels
-    # threshold consistently frame-to-frame. Odd kernel; 0/1 disables.
-    "blur_ksize": 3,
-    # Next-gate handoff (2026-07-26): when the current gate fills the frame (we are at
-    # threading range) the guidance center should transfer THROUGH the aperture to the
-    # next gate visible inside the hole, so approach guidance is continuous across the
-    # pass instead of dying when gate 1 exits the frame.
-    "handoff_bbox_frac": 0.30,   # bbox/frame above which we look through the hole (0 = off)
-}
+
+@dataclass(frozen=True)
+class GateVisionConfig:
+    """Central configuration for segmentation and all candidate strategies."""
+
+    hsv_ranges: tuple[tuple[tuple[int, int, int], tuple[int, int, int]], ...] = (
+        ((0, 55, 75), (18, 255, 255)),
+        ((165, 55, 75), (179, 255, 255)),
+    )
+    input_format: str = "BGR"
+    process_width: Optional[int] = None
+    blur_kernel: int = 3
+    opening_kernel_size: int = 3
+    closing_kernel_size: int = 3
+    opening_iterations: int = 1
+    closing_iterations: int = 1
+    dilation_iterations: int = 0
+
+    min_contour_area: float = 45.0
+    min_opening_area: float = 12.0
+    min_gate_width: float = 5.0
+    min_gate_height: float = 5.0
+    # Below seven pixels the saved simulator floor markers become
+    # indistinguishable from tiny outlined gates; a real 1.5 m opening remains
+    # larger than this throughout the configured useful range.
+    min_opening_width: float = 7.0
+    min_opening_height: float = 7.0
+    min_aspect_ratio: float = 0.35
+    max_aspect_ratio: float = 2.8
+    polygon_epsilon_ratio: float = 0.035
+    min_confidence: float = 0.22
+    maximum_candidates: int = 30
+    # When a near gate fills the frame, prefer a supported gate candidate
+    # visible through its opening so guidance hands off continuously.
+    handoff_bbox_area_ratio: float = 0.30
+
+    estimated_opening_scale: float = 0.72
+    minimum_supported_sides: int = 3
+    minimum_side_coverage: float = 0.16
+    maximum_center_orange_fraction: float = 0.42
+    filled_object_density: float = 0.72
+
+    enable_line_reconstruction: bool = True
+    hough_threshold: int = 20
+    hough_min_line_fraction: float = 0.055
+    hough_max_line_gap: int = 14
+    hough_angle_tolerance_degrees: float = 20.0
+
+    temporal_center_sigma: float = 0.38
+    temporal_size_sigma: float = 0.75
+    temporal_angle_sigma_degrees: float = 40.0
+    gate_inner_width_m: float = cm.GATE_INNER_M
+    focal_length_px: float = cm.FX
+
+
+# Compatibility name retained for existing imports.
+DetectorConfig = GateVisionConfig
+
+
+@dataclass
+class CandidateDebug:
+    outer_contour: np.ndarray
+    opening_contour: Optional[np.ndarray]
+    accepted: bool
+    score: float
+    confidence: float
+    reason: str
+    method: str
+    center: tuple[float, float]
+    bbox: tuple[int, int, int, int]
+    features: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def contour(self) -> np.ndarray:
+        return self.outer_contour
+
+
+@dataclass
+class DetectorDebug:
+    raw_mask: np.ndarray
+    cleaned_mask: np.ndarray
+    hsv: Optional[np.ndarray] = None
+    candidates: list[CandidateDebug] = field(default_factory=list)
+    selected_contour: Optional[np.ndarray] = None
+    selected_opening_contour: Optional[np.ndarray] = None
+    raw_center: Optional[tuple[float, float]] = None
+    scale: float = 1.0
+    timings_ms: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def mask(self) -> np.ndarray:
+        return self.cleaned_mask
 
 
 @dataclass
 class GateDetection:
-    center_px: tuple          # (u, v) float, center of the gate opening
-    corners_px: list | None   # 4 ordered (u,v) points TL,TR,BR,BL of the inner square, or None
-    bbox_px: tuple            # (x, y, w, h)
-    area_px: float            # contour/opening area in pixels
-    confidence: float         # 0..1 heuristic
+    found: bool = False
+    center_x: float = 0.0
+    center_y: float = 0.0
+    normalized_x: float = 0.0
+    normalized_y: float = 0.0
+    opening_width: float = 0.0
+    opening_height: float = 0.0
+    apparent_area: float = 0.0
+    angle_degrees: float = 0.0
+    confidence: float = 0.0
+    corners: Optional[np.ndarray] = None
+    method: str = "none"
+    corners_reliable: bool = False
+    distance_m: Optional[float] = None
+    pnp_reprojection_error: Optional[float] = None
+    pnp_rvec: Optional[np.ndarray] = None
+    pnp_tvec: Optional[np.ndarray] = None
+    predicted: bool = False
+    missing_frames: int = 0
+    frame_width: int = 0
+    frame_height: int = 0
+    bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
+    timestamp: Optional[float] = None
+    velocity_x: float = 0.0
+    velocity_y: float = 0.0
+    size_rate: float = 0.0
+    stable_frames: int = 0
+
+    # Compatibility aliases used by the existing estimator/planner.
+    @property
+    def width(self) -> float:
+        return self.opening_width
+
+    @property
+    def height(self) -> float:
+        return self.opening_height
+
+    @property
+    def area(self) -> float:
+        return self.apparent_area
+
+    @property
+    def angle(self) -> float:
+        return self.angle_degrees
+
+    @property
+    def center_px(self) -> tuple[float, float]:
+        return (self.center_x, self.center_y)
+
+    @property
+    def corners_px(self) -> Optional[list[tuple[float, float]]]:
+        if self.corners is None:
+            return None
+        return [tuple(float(v) for v in point) for point in self.corners]
+
+    @property
+    def bbox_px(self) -> tuple[int, int, int, int]:
+        return self.bbox
+
+    @property
+    def area_px(self) -> float:
+        return self.apparent_area
+
+    @property
+    def opening_area_ratio(self) -> float:
+        frame_area = self.frame_width * self.frame_height
+        if frame_area <= 0:
+            return 0.0
+        return self.opening_width * self.opening_height / frame_area
+
+    @property
+    def opening_width_ratio(self) -> float:
+        return (
+            self.opening_width / self.frame_width
+            if self.frame_width > 0
+            else 0.0
+        )
+
+    @property
+    def opening_height_ratio(self) -> float:
+        return (
+            self.opening_height / self.frame_height
+            if self.frame_height > 0
+            else 0.0
+        )
+
+
+@dataclass
+class _Candidate:
+    outer_contour: np.ndarray
+    opening_contour: Optional[np.ndarray]
+    center: tuple[float, float]
+    opening_width: float
+    opening_height: float
+    outer_width: float
+    outer_height: float
+    angle: float
+    bbox: tuple[int, int, int, int]
+    corners: Optional[np.ndarray]
+    corners_reliable: bool
+    method: str
+    confidence: float
+    score: float
+    features: dict[str, float]
+
+
+def normalized_image_coordinates(
+    center_x: float, center_y: float, width: int, height: int
+) -> tuple[float, float]:
+    """Return normalized image coordinates with +x right and +y down."""
+    if width <= 0 or height <= 0:
+        return 0.0, 0.0
+    nx = (float(center_x) - width / 2.0) / (width / 2.0)
+    ny = (float(center_y) - height / 2.0) / (height / 2.0)
+    return float(np.clip(nx, -1.0, 1.0)), float(np.clip(ny, -1.0, 1.0))
+
+
+def order_corners(points: np.ndarray) -> np.ndarray:
+    """Order four points TL, TR, BR, BL using a cyclic centroid ordering."""
+    pts = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    cyclic = pts[np.argsort(angles, kind="stable")]
+    start = int(np.argmin(cyclic.sum(axis=1)))
+    return np.roll(cyclic, -start, axis=0).astype(np.float32)
+
+
+_order_corners = order_corners
+
+
+def quadrilateral_diagonal_center(corners: np.ndarray) -> tuple[float, float]:
+    """Intersect TL-BR and TR-BL; fall back to their mean if nearly parallel."""
+    pts = order_corners(corners).astype(np.float64)
+    p, r = pts[0], pts[2] - pts[0]
+    q, s = pts[1], pts[3] - pts[1]
+    cross = r[0] * s[1] - r[1] * s[0]
+    if abs(cross) < 1e-8:
+        center = pts.mean(axis=0)
+    else:
+        qp = q - p
+        t = (qp[0] * s[1] - qp[1] * s[0]) / cross
+        center = p + t * r
+    return float(center[0]), float(center[1])
+
+
+def _contour_center(contour: np.ndarray) -> Optional[tuple[float, float]]:
+    moments = cv2.moments(contour)
+    if abs(moments["m00"]) < 1e-8:
+        return None
+    return (
+        float(moments["m10"] / moments["m00"]),
+        float(moments["m01"] / moments["m00"]),
+    )
+
+
+def _angle_delta(a: float, b: float) -> float:
+    return abs((a - b + 90.0) % 180.0 - 90.0)
+
+
+def _rect_angle(rect: tuple) -> float:
+    (_, _), (width, height), raw = rect
+    angle = float(raw + (90.0 if width < height else 0.0))
+    angle = (angle + 90.0) % 180.0 - 90.0
+    return 0.0 if abs(angle) >= 89.0 else angle
+
+
+def _edge_lengths(corners: np.ndarray) -> tuple[float, float]:
+    pts = order_corners(corners)
+    horizontal = 0.5 * (
+        np.linalg.norm(pts[1] - pts[0]) + np.linalg.norm(pts[2] - pts[3])
+    )
+    vertical = 0.5 * (
+        np.linalg.norm(pts[3] - pts[0]) + np.linalg.norm(pts[2] - pts[1])
+    )
+    return float(horizontal), float(vertical)
+
+
+def _corner_angle_quality(corners: Optional[np.ndarray]) -> float:
+    """Score four cyclic corner angles; 1 is rectangular, 0 is degenerate."""
+    if corners is None:
+        return 0.0
+    points = order_corners(corners).astype(np.float64)
+    absolute_cosines = []
+    for index in range(4):
+        previous = points[(index - 1) % 4] - points[index]
+        following = points[(index + 1) % 4] - points[index]
+        denominator = np.linalg.norm(previous) * np.linalg.norm(following)
+        if denominator <= 1e-8:
+            return 0.0
+        absolute_cosines.append(
+            abs(float(np.dot(previous, following) / denominator))
+        )
+    return float(np.clip(1.0 - np.mean(absolute_cosines), 0.0, 1.0))
+
+
+class OrangeGateDetector:
+    """Multiple-strategy detector whose output target is the gate opening."""
+
+    METHOD_PRIOR = {
+        "inner_contour": 1.00,
+        "quadrilateral": 0.82,
+        "line_reconstruction": 0.68,
+        "partial_gate": 0.58,
+        "rotated_rectangle": 0.48,
+    }
+
+    def __init__(self, config: Optional[GateVisionConfig] = None):
+        self.config = config or GateVisionConfig()
+        self.last_debug: Optional[DetectorDebug] = None
+
+    def _to_bgr(self, frame: np.ndarray) -> np.ndarray:
+        fmt = self.config.input_format.upper()
+        if frame.ndim == 2:
+            return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        if fmt == "BGR":
+            return frame
+        conversions = {
+            "RGB": cv2.COLOR_RGB2BGR,
+            "BGRA": cv2.COLOR_BGRA2BGR,
+            "RGBA": cv2.COLOR_RGBA2BGR,
+        }
+        if fmt not in conversions:
+            raise ValueError(f"unsupported input_format {self.config.input_format!r}")
+        return cv2.cvtColor(frame, conversions[fmt])
+
+    def _preprocess(self, frame: np.ndarray) -> tuple[np.ndarray, float]:
+        bgr = self._to_bgr(frame)
+        scale = 1.0
+        if self.config.process_width and bgr.shape[1] > self.config.process_width:
+            scale = self.config.process_width / float(bgr.shape[1])
+            bgr = cv2.resize(
+                bgr,
+                (self.config.process_width, max(1, round(bgr.shape[0] * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        kernel = max(1, int(self.config.blur_kernel))
+        kernel += 1 - kernel % 2
+        if kernel > 1:
+            bgr = cv2.GaussianBlur(bgr, (kernel, kernel), 0)
+        return bgr, scale
+
+    def _segment(self, bgr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+        raw = np.zeros(hsv.shape[:2], dtype=np.uint8)
+        for lower, upper in self.config.hsv_ranges:
+            raw = cv2.bitwise_or(
+                raw,
+                cv2.inRange(
+                    hsv,
+                    np.asarray(lower, dtype=np.uint8),
+                    np.asarray(upper, dtype=np.uint8),
+                ),
+            )
+        cleaned = raw.copy()
+        operations = (
+            (
+                cv2.MORPH_OPEN,
+                self.config.opening_kernel_size,
+                self.config.opening_iterations,
+            ),
+            (
+                cv2.MORPH_CLOSE,
+                self.config.closing_kernel_size,
+                self.config.closing_iterations,
+            ),
+        )
+        for operation, size, iterations in operations:
+            size = max(1, int(size))
+            if size > 1 and iterations > 0:
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+                cleaned = cv2.morphologyEx(
+                    cleaned, operation, kernel, iterations=int(iterations)
+                )
+        if self.config.dilation_iterations > 0:
+            cleaned = cv2.dilate(
+                cleaned, None, iterations=int(self.config.dilation_iterations)
+            )
+        return hsv, raw, cleaned
+
+    @staticmethod
+    def _children(
+        index: int, contours: Sequence[np.ndarray], hierarchy: np.ndarray
+    ):
+        child = int(hierarchy[index][2])
+        while child != -1:
+            yield contours[child]
+            child = int(hierarchy[child][0])
+
+    def _border_support(
+        self, mask: np.ndarray, corners: np.ndarray
+    ) -> tuple[list[float], float]:
+        ordered = order_corners(corners)
+        width, height = _edge_lengths(ordered)
+        warp_width = int(np.clip(round(width), 16, 360))
+        warp_height = int(np.clip(round(height), 16, 360))
+        destination = np.array(
+            [
+                [0, 0],
+                [warp_width - 1, 0],
+                [warp_width - 1, warp_height - 1],
+                [0, warp_height - 1],
+            ],
+            dtype=np.float32,
+        )
+        transform = cv2.getPerspectiveTransform(ordered, destination)
+        warped = cv2.warpPerspective(mask, transform, (warp_width, warp_height))
+        band = max(2, round(min(warp_width, warp_height) * 0.16))
+        strips = (
+            warped[:band, :],
+            warped[-band:, :],
+            warped[:, :band],
+            warped[:, -band:],
+        )
+        coverage = [float(np.count_nonzero(side) / max(1, side.size)) for side in strips]
+        center = warped[band:-band, band:-band]
+        center_orange = (
+            float(np.count_nonzero(center) / center.size) if center.size else 1.0
+        )
+        return coverage, center_orange
+
+    def _partial_center(
+        self,
+        bbox: tuple[int, int, int, int],
+        frame_shape: tuple[int, int],
+        estimated_side: float,
+    ) -> tuple[float, float]:
+        x, y, width, height = bbox
+        frame_height, frame_width = frame_shape
+        cx, cy = x + width / 2.0, y + height / 2.0
+        if x <= 1:
+            cx = x + width - estimated_side / 2.0
+        elif x + width >= frame_width - 1:
+            cx = x + estimated_side / 2.0
+        if y <= 1:
+            cy = y + height - estimated_side / 2.0
+        elif y + height >= frame_height - 1:
+            cy = y + estimated_side / 2.0
+        return cx, cy
+
+    def _temporal_features(
+        self,
+        center: tuple[float, float],
+        width: float,
+        height: float,
+        angle: float,
+        frame_shape: tuple[int, int],
+        hint: Optional[GateDetection],
+    ) -> tuple[float, float, float, float]:
+        frame_height, frame_width = frame_shape
+        nx, ny = normalized_image_coordinates(
+            center[0], center[1], frame_width, frame_height
+        )
+        center_prior = math.exp(-math.hypot(nx, ny) / 1.25)
+        if hint is None or not hint.found:
+            return 0.55, 0.55, 0.55, center_prior
+        distance = math.hypot(nx - hint.normalized_x, ny - hint.normalized_y)
+        center_quality = math.exp(
+            -distance / max(self.config.temporal_center_sigma, 1e-6)
+        )
+        new_area = max(width * height, 1.0)
+        old_area = max(hint.opening_width * hint.opening_height, 1.0)
+        size_quality = math.exp(
+            -abs(math.log(new_area / old_area))
+            / max(self.config.temporal_size_sigma, 1e-6)
+        )
+        angle_quality = math.exp(
+            -_angle_delta(angle, hint.angle_degrees)
+            / max(self.config.temporal_angle_sigma_degrees, 1e-6)
+        )
+        return center_quality, size_quality, angle_quality, center_prior
+
+    def _finalize_candidate(
+        self,
+        *,
+        outer: np.ndarray,
+        opening: Optional[np.ndarray],
+        center: tuple[float, float],
+        opening_width: float,
+        opening_height: float,
+        outer_width: float,
+        outer_height: float,
+        angle: float,
+        bbox: tuple[int, int, int, int],
+        corners: Optional[np.ndarray],
+        corners_reliable: bool,
+        method: str,
+        mask: np.ndarray,
+        contour_area: float,
+        rectangularity: float,
+        convexity: float,
+        hint: Optional[GateDetection],
+    ) -> tuple[Optional[_Candidate], CandidateDebug]:
+        cfg = self.config
+        outer_corners = order_corners(cv2.boxPoints(cv2.minAreaRect(outer)))
+        coverage, center_orange = self._border_support(mask, outer_corners)
+        supported_sides = sum(
+            value >= cfg.minimum_side_coverage for value in coverage
+        )
+        # A disconnected three-sided frame has no child opening contour and a
+        # low filled-area ratio.  Treat its fitted rectangle as an explicit
+        # missing-side reconstruction so downstream logs expose what happened.
+        if (
+            method == "rotated_rectangle"
+            and supported_sides >= cfg.minimum_supported_sides
+            and rectangularity < 0.55
+        ):
+            method = "line_reconstruction"
+        border_quality = float(np.mean(np.clip(np.asarray(coverage) / 0.55, 0, 1)))
+        center_clear = 1.0 - center_orange
+        aspect_quality = min(outer_width, outer_height) / max(
+            outer_width, outer_height, 1e-6
+        )
+        frame_area = float(mask.shape[0] * mask.shape[1])
+        size_quality = float(
+            np.clip(math.sqrt(max(contour_area, 1.0) / frame_area) / 0.16, 0, 1)
+        )
+        opening_quality = self.METHOD_PRIOR[method]
+        corner_angles = _corner_angle_quality(corners)
+        corner_quality = (
+            0.55 + 0.45 * corner_angles
+            if corners_reliable
+            else (0.55 if corners is not None else 0.0)
+        )
+        temporal_center, temporal_size, temporal_angle, center_prior = (
+            self._temporal_features(
+                center,
+                opening_width,
+                opening_height,
+                angle,
+                mask.shape,
+                hint,
+            )
+        )
+        temporal_quality = (
+            0.55 * temporal_center + 0.30 * temporal_size + 0.15 * temporal_angle
+        )
+        features = {
+            "size": size_quality,
+            "aspect": aspect_quality,
+            "rectangularity": rectangularity,
+            "convexity": convexity,
+            "opening": opening_quality,
+            "border": border_quality,
+            "center_clear": center_clear,
+            "corners": corner_quality,
+            "corner_angles": corner_angles,
+            "temporal": temporal_quality,
+            "center_prior": center_prior,
+            "supported_sides": float(supported_sides),
+        }
+        confidence = (
+            0.08 * size_quality
+            + 0.11 * aspect_quality
+            + 0.08 * rectangularity
+            + 0.05 * convexity
+            + 0.22 * opening_quality
+            + 0.13 * border_quality
+            + 0.10 * center_clear
+            + 0.08 * corner_quality
+            + 0.15 * temporal_quality
+        )
+
+        orange_density = float(
+            np.count_nonzero(mask[bbox[1] : bbox[1] + bbox[3], bbox[0] : bbox[0] + bbox[2]])
+            / max(1, bbox[2] * bbox[3])
+        )
+        reason = "accepted"
+        opening_aspect = opening_width / max(opening_height, 1e-6)
+        if (
+            opening_width < cfg.min_opening_width
+            or opening_height < cfg.min_opening_height
+        ):
+            confidence -= 0.65
+            reason = "tiny_opening"
+        elif not (
+            cfg.min_aspect_ratio <= opening_aspect <= cfg.max_aspect_ratio
+        ):
+            confidence -= 0.45
+            reason = "implausible_opening"
+        if supported_sides < 2:
+            confidence -= 0.55
+            reason = "single_post"
+        if center_orange > cfg.maximum_center_orange_fraction:
+            # A valid opening may contain a farther concentric gate.  That is
+            # useful race-course geometry, not evidence that the nearer frame
+            # is a filled false positive.
+            confidence -= 0.12 if opening is not None else 0.45
+            reason = "center_on_orange"
+        if opening is None and orange_density >= cfg.filled_object_density:
+            confidence -= 0.55
+            reason = "filled"
+        confidence = float(np.clip(confidence, 0.0, 1.0))
+        score = float(
+            np.clip(
+                0.68 * confidence
+                + 0.23 * temporal_quality
+                + 0.06 * center_prior
+                + 0.03 * opening_quality,
+                0.0,
+                1.0,
+            )
+        )
+        debug = CandidateDebug(
+            outer,
+            opening,
+            confidence >= cfg.min_confidence,
+            score,
+            confidence,
+            reason,
+            method,
+            center,
+            bbox,
+            features,
+        )
+        if confidence < cfg.min_confidence:
+            return None, debug
+        return (
+            _Candidate(
+                outer,
+                opening,
+                center,
+                opening_width,
+                opening_height,
+                outer_width,
+                outer_height,
+                angle,
+                bbox,
+                corners,
+                corners_reliable,
+                method,
+                confidence,
+                score,
+                features,
+            ),
+            debug,
+        )
+
+    def _contour_candidate(
+        self,
+        index: int,
+        contour: np.ndarray,
+        contours: Sequence[np.ndarray],
+        hierarchy: np.ndarray,
+        mask: np.ndarray,
+        hint: Optional[GateDetection],
+    ) -> tuple[Optional[_Candidate], CandidateDebug]:
+        cfg = self.config
+        area = float(cv2.contourArea(contour))
+        x, y, bbox_width, bbox_height = cv2.boundingRect(contour)
+        bbox = (int(x), int(y), int(bbox_width), int(bbox_height))
+        empty_debug = CandidateDebug(
+            contour, None, False, 0.0, 0.0, "tiny_area", "none", (0.0, 0.0), bbox
+        )
+        if area < cfg.min_contour_area:
+            return None, empty_debug
+
+        rect = cv2.minAreaRect(contour)
+        (_, _), (rect_width, rect_height), _ = rect
+        if (
+            rect_width < cfg.min_gate_width
+            or rect_height < cfg.min_gate_height
+            or rect_width <= 0
+            or rect_height <= 0
+        ):
+            empty_debug.reason = "tiny_side"
+            return None, empty_debug
+        ratio = rect_width / max(rect_height, 1e-6)
+        if not (cfg.min_aspect_ratio <= ratio <= cfg.max_aspect_ratio):
+            empty_debug.reason = "single_post"
+            return None, empty_debug
+
+        rect_area = max(rect_width * rect_height, 1.0)
+        rectangularity = float(np.clip(area / rect_area, 0.0, 1.0))
+        hull_area = max(float(cv2.contourArea(cv2.convexHull(contour))), 1.0)
+        convexity = float(np.clip(area / hull_area, 0.0, 1.0))
+        angle = _rect_angle(rect)
+
+        children = [
+            child
+            for child in self._children(index, contours, hierarchy)
+            if cv2.contourArea(child) >= cfg.min_opening_area
+        ]
+        opening = max(children, key=cv2.contourArea) if children else None
+        if opening is not None:
+            opening_center = _contour_center(opening)
+            opening_rect = cv2.minAreaRect(opening)
+            (_, _), (opening_width, opening_height), _ = opening_rect
+            perimeter = cv2.arcLength(opening, True)
+            approx = cv2.approxPolyDP(
+                opening, cfg.polygon_epsilon_ratio * perimeter, True
+            )
+            reliable = len(approx) == 4 and cv2.isContourConvex(approx)
+            corners = (
+                order_corners(approx.reshape(4, 2))
+                if reliable
+                else order_corners(cv2.boxPoints(opening_rect))
+            )
+            center = opening_center or quadrilateral_diagonal_center(corners)
+            return self._finalize_candidate(
+                outer=contour,
+                opening=opening,
+                center=center,
+                opening_width=float(opening_width),
+                opening_height=float(opening_height),
+                outer_width=float(rect_width),
+                outer_height=float(rect_height),
+                angle=angle,
+                bbox=bbox,
+                corners=corners,
+                corners_reliable=reliable,
+                method="inner_contour",
+                mask=mask,
+                contour_area=area,
+                rectangularity=rectangularity,
+                convexity=convexity,
+                hint=hint,
+            )
+
+        perimeter = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(
+            contour, cfg.polygon_epsilon_ratio * perimeter, True
+        )
+        touches_edge = (
+            x <= 1
+            or y <= 1
+            or x + bbox_width >= mask.shape[1] - 1
+            or y + bbox_height >= mask.shape[0] - 1
+        )
+        method = "rotated_rectangle"
+        outer_corners = order_corners(cv2.boxPoints(rect))
+        center = (float(rect[0][0]), float(rect[0][1]))
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            outer_corners = order_corners(approx.reshape(4, 2))
+            center = quadrilateral_diagonal_center(outer_corners)
+            method = "quadrilateral"
+        elif touches_edge:
+            estimated_side = max(rect_width, rect_height, bbox_width, bbox_height)
+            center = self._partial_center(bbox, mask.shape, estimated_side)
+            method = "partial_gate"
+            if hint is not None and hint.found:
+                hint_center = (
+                    (hint.normalized_x + 1.0) * mask.shape[1] / 2.0,
+                    (hint.normalized_y + 1.0) * mask.shape[0] / 2.0,
+                )
+                center = (
+                    0.65 * center[0] + 0.35 * hint_center[0],
+                    0.65 * center[1] + 0.35 * hint_center[1],
+                )
+
+        scale = cfg.estimated_opening_scale
+        opening_width = rect_width * scale
+        opening_height = rect_height * scale
+        center_array = np.asarray(center, dtype=np.float32)
+        corners = center_array + scale * (outer_corners - center_array)
+        return self._finalize_candidate(
+            outer=contour,
+            opening=None,
+            center=center,
+            opening_width=float(opening_width),
+            opening_height=float(opening_height),
+            outer_width=float(rect_width),
+            outer_height=float(rect_height),
+            angle=angle,
+            bbox=bbox,
+            corners=np.asarray(corners, dtype=np.float32),
+            corners_reliable=False,
+            method=method,
+            mask=mask,
+            contour_area=area,
+            rectangularity=rectangularity,
+            convexity=convexity,
+            hint=hint,
+        )
+
+    @staticmethod
+    def _line_angle_difference(angle: float, reference: float) -> float:
+        return abs((angle - reference + 90.0) % 180.0 - 90.0)
+
+    def _line_candidate(
+        self, mask: np.ndarray, hint: Optional[GateDetection]
+    ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
+        cfg = self.config
+        edges = cv2.Canny(mask, 60, 160)
+        minimum_length = max(
+            6, round(min(mask.shape) * cfg.hough_min_line_fraction)
+        )
+        lines = cv2.HoughLinesP(
+            edges,
+            1,
+            np.pi / 180.0,
+            cfg.hough_threshold,
+            minLineLength=minimum_length,
+            maxLineGap=cfg.hough_max_line_gap,
+        )
+        if lines is None or len(lines) < 3:
+            return None, None
+
+        records = []
+        for raw in lines[:, 0]:
+            x1, y1, x2, y2 = (float(value) for value in raw)
+            length = math.hypot(x2 - x1, y2 - y1)
+            angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
+            midpoint = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+            if hint is not None and hint.found:
+                hx = (hint.normalized_x + 1.0) * mask.shape[1] / 2.0
+                hy = (hint.normalized_y + 1.0) * mask.shape[0] / 2.0
+                radius = 1.8 * max(hint.opening_width, hint.opening_height, 20.0)
+                if math.hypot(midpoint[0] - hx, midpoint[1] - hy) > radius:
+                    continue
+            records.append((raw.astype(np.float32), length, angle))
+        if len(records) < 3:
+            return None, None
+        dominant = max(records, key=lambda item: item[1])[2]
+        tolerance = cfg.hough_angle_tolerance_degrees
+        parallel = [
+            item
+            for item in records
+            if self._line_angle_difference(item[2], dominant) <= tolerance
+        ]
+        perpendicular = [
+            item
+            for item in records
+            if abs(self._line_angle_difference(item[2], dominant) - 90.0)
+            <= tolerance
+        ]
+        if not parallel or not perpendicular or len(parallel) + len(perpendicular) < 3:
+            return None, None
+
+        used = parallel + perpendicular
+        points = np.array(
+            [
+                [[line[0][0], line[0][1]], [line[0][2], line[0][3]]]
+                for line in used
+            ]
+        )
+        points = points.reshape(-1, 2).astype(np.float32)
+        rect = cv2.minAreaRect(points)
+        (_, _), (width, height), _ = rect
+        if (
+            width < cfg.min_gate_width
+            or height < cfg.min_gate_height
+            or not (
+                cfg.min_aspect_ratio
+                <= width / max(height, 1e-6)
+                <= cfg.max_aspect_ratio
+            )
+        ):
+            return None, None
+        corners = order_corners(cv2.boxPoints(rect))
+        center = quadrilateral_diagonal_center(corners)
+        contour = cv2.convexHull(points.reshape(-1, 1, 2))
+        x, y, bbox_width, bbox_height = cv2.boundingRect(contour)
+        bbox = (x, y, bbox_width, bbox_height)
+        area = max(float(cv2.contourArea(contour)), 1.0)
+        candidate, debug = self._finalize_candidate(
+            outer=contour,
+            opening=None,
+            center=center,
+            opening_width=float(width * cfg.estimated_opening_scale),
+            opening_height=float(height * cfg.estimated_opening_scale),
+            outer_width=float(width),
+            outer_height=float(height),
+            angle=_rect_angle(rect),
+            bbox=bbox,
+            corners=(
+                np.asarray(center, dtype=np.float32)
+                + cfg.estimated_opening_scale
+                * (corners - np.asarray(center, dtype=np.float32))
+            ),
+            corners_reliable=False,
+            method="line_reconstruction",
+            mask=mask,
+            contour_area=area,
+            rectangularity=1.0,
+            convexity=1.0,
+            hint=hint,
+        )
+        return candidate, debug
+
+    def detect(
+        self,
+        frame: np.ndarray,
+        hint: Optional[GateDetection] = None,
+        timestamp: Optional[float] = None,
+    ) -> GateDetection:
+        """Detect the best supported gate opening in one frame."""
+        start = time.perf_counter()
+        if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
+            empty = np.zeros((1, 1), dtype=np.uint8)
+            self.last_debug = DetectorDebug(empty, empty)
+            return GateDetection(timestamp=timestamp)
+
+        original_height, original_width = frame.shape[:2]
+        bgr, scale = self._preprocess(frame)
+        preprocess_done = time.perf_counter()
+        hsv, raw_mask, cleaned_mask = self._segment(bgr)
+        mask_done = time.perf_counter()
+        contours, hierarchy_raw = cv2.findContours(
+            cleaned_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours_done = time.perf_counter()
+
+        candidates: list[_Candidate] = []
+        debug_candidates: list[CandidateDebug] = []
+        if hierarchy_raw is not None:
+            hierarchy = hierarchy_raw[0]
+
+            def is_orange_outer_boundary(index: int) -> bool:
+                # RETR_TREE alternates orange-object boundaries (even depth)
+                # and their dark openings (odd depth). Include a farther gate
+                # nested inside a nearer gate's opening for handoff scoring.
+                depth = 0
+                parent = int(hierarchy[index][3])
+                while parent != -1:
+                    depth += 1
+                    parent = int(hierarchy[parent][3])
+                return depth % 2 == 0
+
+            outer_indices = [
+                index
+                for index in range(len(contours))
+                if is_orange_outer_boundary(index)
+            ]
+            outer_indices.sort(
+                key=lambda index: cv2.contourArea(contours[index]), reverse=True
+            )
+            for index in outer_indices[: self.config.maximum_candidates]:
+                candidate, debug = self._contour_candidate(
+                    index,
+                    contours[index],
+                    contours,
+                    hierarchy,
+                    cleaned_mask,
+                    hint,
+                )
+                debug_candidates.append(debug)
+                if candidate is not None:
+                    candidates.append(candidate)
+        contour_scoring_done = time.perf_counter()
+
+        strong_contour = max(
+            (candidate.confidence for candidate in candidates), default=0.0
+        )
+        if (
+            self.config.enable_line_reconstruction
+            and strong_contour < 0.55
+        ):
+            line_candidate, line_debug = self._line_candidate(cleaned_mask, hint)
+            if line_debug is not None:
+                debug_candidates.append(line_debug)
+            if line_candidate is not None:
+                candidates.append(line_candidate)
+        line_done = time.perf_counter()
+
+        selected = max(candidates, key=lambda candidate: candidate.score, default=None)
+        if (
+            selected is not None
+            and selected.opening_contour is not None
+            and selected.bbox[2] * selected.bbox[3]
+            >= self.config.handoff_bbox_area_ratio
+            * cleaned_mask.shape[0]
+            * cleaned_mask.shape[1]
+        ):
+            through_opening = [
+                candidate
+                for candidate in candidates
+                if candidate is not selected
+                and cv2.pointPolygonTest(
+                    selected.opening_contour,
+                    candidate.center,
+                    False,
+                )
+                >= 0
+                and candidate.bbox[2] * candidate.bbox[3]
+                < selected.bbox[2] * selected.bbox[3]
+            ]
+            if through_opening:
+                selected = max(
+                    through_opening,
+                    key=lambda candidate: candidate.score,
+                )
+        timings = {
+            "preprocess": (preprocess_done - start) * 1000.0,
+            "mask_generation": (mask_done - preprocess_done) * 1000.0,
+            "contours": (contours_done - mask_done) * 1000.0,
+            "candidate_scoring": (contour_scoring_done - contours_done) * 1000.0,
+            "line_reconstruction": (line_done - contour_scoring_done) * 1000.0,
+            "total": (line_done - start) * 1000.0,
+        }
+        self.last_debug = DetectorDebug(
+            raw_mask=raw_mask,
+            cleaned_mask=cleaned_mask,
+            hsv=hsv,
+            candidates=debug_candidates,
+            selected_contour=selected.outer_contour if selected else None,
+            selected_opening_contour=selected.opening_contour if selected else None,
+            raw_center=selected.center if selected else None,
+            scale=scale,
+            timings_ms=timings,
+        )
+        if selected is None:
+            return GateDetection(
+                frame_width=original_width,
+                frame_height=original_height,
+                timestamp=timestamp,
+            )
+
+        inverse_scale = 1.0 / scale
+        center_x = selected.center[0] * inverse_scale
+        center_y = selected.center[1] * inverse_scale
+        opening_width = selected.opening_width * inverse_scale
+        opening_height = selected.opening_height * inverse_scale
+        corners = (
+            selected.corners * inverse_scale
+            if selected.corners is not None
+            else None
+        )
+        x, y, width, height = selected.bbox
+        bbox = tuple(
+            int(round(value * inverse_scale)) for value in (x, y, width, height)
+        )
+        normalized_x, normalized_y = normalized_image_coordinates(
+            center_x, center_y, original_width, original_height
+        )
+        focal = self.config.focal_length_px / scale
+        apparent_side = max(opening_width, opening_height, 1.0)
+        distance = focal * self.config.gate_inner_width_m / apparent_side
+        return GateDetection(
+            found=True,
+            center_x=center_x,
+            center_y=center_y,
+            normalized_x=normalized_x,
+            normalized_y=normalized_y,
+            opening_width=opening_width,
+            opening_height=opening_height,
+            apparent_area=opening_width * opening_height,
+            angle_degrees=selected.angle,
+            confidence=selected.confidence,
+            corners=corners,
+            method=selected.method,
+            corners_reliable=selected.corners_reliable,
+            distance_m=float(distance),
+            frame_width=original_width,
+            frame_height=original_height,
+            bbox=bbox,
+            timestamp=timestamp,
+        )
+
+
+def _legacy_config(cfg: Optional[dict]) -> GateVisionConfig:
+    if not cfg:
+        return GateVisionConfig()
+    ranges = []
+    if cfg.get("lower_hsv") is not None and cfg.get("upper_hsv") is not None:
+        ranges.append((tuple(cfg["lower_hsv"]), tuple(cfg["upper_hsv"])))
+    if cfg.get("lower_hsv2") is not None and cfg.get("upper_hsv2") is not None:
+        ranges.append((tuple(cfg["lower_hsv2"]), tuple(cfg["upper_hsv2"])))
+    base = GateVisionConfig()
+    kernel = int(cfg.get("kernel_size", base.opening_kernel_size))
+    return replace(
+        base,
+        hsv_ranges=tuple(ranges) or base.hsv_ranges,
+        opening_kernel_size=kernel,
+        closing_kernel_size=kernel,
+        min_contour_area=float(cfg.get("min_area", base.min_contour_area)),
+        polygon_epsilon_ratio=float(
+            cfg.get("approx_eps_frac", base.polygon_epsilon_ratio)
+        ),
+        blur_kernel=int(cfg.get("blur_ksize", base.blur_kernel)),
+        handoff_bbox_area_ratio=float(
+            cfg.get(
+                "handoff_bbox_frac",
+                base.handoff_bbox_area_ratio,
+            )
+        ),
+    )
 
 
 def _make_cfg(cfg: Optional[dict]) -> dict:
-    """Merge a caller-supplied override dict over the module defaults."""
-    merged = dict(DEFAULT_CFG)
+    """Compatibility dictionary for Q2 debug/training utilities."""
+    base = GateVisionConfig()
+    first = base.hsv_ranges[0]
+    second = base.hsv_ranges[1] if len(base.hsv_ranges) > 1 else (None, None)
+    merged = {
+        "lower_hsv": first[0],
+        "upper_hsv": first[1],
+        "lower_hsv2": second[0],
+        "upper_hsv2": second[1],
+        "kernel_size": base.opening_kernel_size,
+        "min_area": base.min_contour_area,
+        "approx_eps_frac": base.polygon_epsilon_ratio,
+        "blur_ksize": base.blur_kernel,
+        "handoff_bbox_frac": base.handoff_bbox_area_ratio,
+    }
     if cfg:
         merged.update(cfg)
     return merged
 
 
 def _build_mask(hsv: np.ndarray, cfg: dict) -> np.ndarray:
-    """inRange (+ optional wrapped-hue range) then open/close morphology."""
-    lower = np.array(cfg["lower_hsv"], dtype=np.uint8)
-    upper = np.array(cfg["upper_hsv"], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower, upper)
-
-    if cfg["lower_hsv2"] is not None and cfg["upper_hsv2"] is not None:
-        lower2 = np.array(cfg["lower_hsv2"], dtype=np.uint8)
-        upper2 = np.array(cfg["upper_hsv2"], dtype=np.uint8)
-        mask = cv2.bitwise_or(mask, cv2.inRange(hsv, lower2, upper2))
-
-    k = max(1, int(cfg["kernel_size"]))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    """Compatibility mask builder for tools that already hold an HSV image."""
+    config = _legacy_config(_make_cfg(cfg))
+    mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    for lower, upper in config.hsv_ranges:
+        mask = cv2.bitwise_or(
+            mask,
+            cv2.inRange(
+                hsv,
+                np.asarray(lower, dtype=np.uint8),
+                np.asarray(upper, dtype=np.uint8),
+            ),
+        )
+    operations = (
+        (
+            cv2.MORPH_OPEN,
+            config.opening_kernel_size,
+            config.opening_iterations,
+        ),
+        (
+            cv2.MORPH_CLOSE,
+            config.closing_kernel_size,
+            config.closing_iterations,
+        ),
+    )
+    for operation, size, iterations in operations:
+        if size > 1 and iterations > 0:
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+            mask = cv2.morphologyEx(
+                mask, operation, kernel, iterations=int(iterations)
+            )
     return mask
 
 
-def _squareness(w: float, h: float) -> float:
-    """1.0 for a perfect square bbox, decaying toward 0 as the aspect departs."""
-    if w <= 0 or h <= 0:
-        return 0.0
-    aspect = min(w, h) / max(w, h)  # 0..1, 1 == square
-    return aspect
+def detect_gate(
+    bgr: np.ndarray, cfg: Optional[dict] = None
+) -> Optional[GateDetection]:
+    """Legacy wrapper returning ``None`` when no gate is found."""
+    detection = OrangeGateDetector(_legacy_config(cfg)).detect(bgr)
+    return detection if detection.found else None
 
 
-def _centroid(contour: np.ndarray) -> Optional[tuple]:
-    m = cv2.moments(contour)
-    if m["m00"] <= 0:
-        return None
-    return (m["m10"] / m["m00"], m["m01"] / m["m00"])
+def _scaled_contour(contour: np.ndarray, scale: float) -> np.ndarray:
+    if scale == 1.0:
+        return contour
+    return np.round(contour.astype(np.float32) / scale).astype(np.int32)
 
 
-def _order_corners(pts: np.ndarray) -> list:
-    """Order 4 points as TL, TR, BR, BL using the sum/diff trick."""
-    pts = pts.reshape(-1, 2).astype(np.float32)
-    s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).reshape(-1)
-    tl = pts[np.argmin(s)]
-    br = pts[np.argmax(s)]
-    tr = pts[np.argmin(d)]
-    bl = pts[np.argmax(d)]
-    return [tuple(tl), tuple(tr), tuple(br), tuple(bl)]
-
-
-def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDetection]:
-    """Detect the racing gate in a BGR frame.
-
-    Returns a GateDetection for the best gate candidate, or None if nothing
-    passes the area / squareness / extent filters. Pure: no disk writes.
-    """
-    if bgr is None or bgr.size == 0:
-        return None
-
-    cfg = _make_cfg(cfg)
-
-    bk = int(cfg.get("blur_ksize", 0) or 0)
-    if bk >= 3:
-        if bk % 2 == 0:
-            bk += 1
-        bgr = cv2.GaussianBlur(bgr, (bk, bk), 0)
-
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    mask = _build_mask(hsv, cfg)
-
-    # RETR_CCOMP gives a 2-level hierarchy: outer boundaries + their holes, so we
-    # can recover the gate's inner opening contour.
-    contours, hierarchy = cv2.findContours(
-        mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+def draw_detection(
+    bgr: np.ndarray,
+    detection: Optional[GateDetection],
+    debug: Optional[DetectorDebug] = None,
+    state: Optional[str] = None,
+    command: Optional[object] = None,
+    raw_detection: Optional[GateDetection] = None,
+    total_time_ms: Optional[float] = None,
+) -> np.ndarray:
+    """Render candidates, opening geometry, tracked target, state, and timing."""
+    output = bgr.copy()
+    height, width = output.shape[:2]
+    image_center = (width // 2, height // 2)
+    cv2.drawMarker(
+        output, image_center, (255, 255, 0), cv2.MARKER_CROSS, 22, 1
     )
-    if not contours or hierarchy is None:
-        return None
-    hierarchy = hierarchy[0]  # shape (N, 4): [next, prev, first_child, parent]
 
-    min_area = float(cfg["min_area"])
-    min_extent = float(cfg["min_extent"])
-    min_square = float(cfg["min_squareness"])
-    require_hole = bool(cfg["require_hole"])
-    frame_px = float(bgr.shape[0] * bgr.shape[1])
-    hole_min_bbox = float(cfg["hole_min_bbox_frac"]) * frame_px
+    if debug:
+        for item in debug.candidates:
+            contour = _scaled_contour(item.outer_contour, debug.scale)
+            color = (0, 145, 0) if item.accepted else (80, 80, 190)
+            cv2.drawContours(output, [contour], -1, color, 1)
+            x, y, _, _ = item.bbox
+            label_point = (
+                int(x / debug.scale),
+                max(12, int(y / debug.scale)),
+            )
+            cv2.putText(
+                output,
+                (
+                    f"{item.method}:{item.confidence:.2f}"
+                    if item.accepted
+                    else f"reject:{item.reason}"
+                ),
+                label_point,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.32,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
+        if debug.selected_opening_contour is not None:
+            opening = _scaled_contour(
+                debug.selected_opening_contour, debug.scale
+            )
+            cv2.drawContours(output, [opening], -1, (255, 180, 0), 2)
+        if debug.selected_contour is not None:
+            selected_outer = _scaled_contour(
+                debug.selected_contour, debug.scale
+            )
+            cv2.drawContours(output, [selected_outer], -1, (40, 255, 40), 3)
 
-    candidates = []  # (score, index, inner_contour_or_None, inner_area, bbox)
-    for i, cnt in enumerate(contours):
-        # Only consider outer contours (no parent) as the gate frame body.
-        if hierarchy[i][3] != -1:
-            continue
+        # Live VisionRX writes only this overlay, so keep compact mask insets here
+        # as well as the larger panels in the offline viewer.
+        inset_width = min(120, max(24, (width - 12) // 2))
+        inset_height = max(
+            1,
+            min(max(1, height - 4), max(18, round(inset_width * height / width))),
+        )
+        for inset_index, (mask, label) in enumerate(
+            ((debug.raw_mask, "RAW"), (debug.cleaned_mask, "CLEAN"))
+        ):
+            inset = cv2.resize(
+                mask,
+                (inset_width, inset_height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            inset = cv2.cvtColor(inset, cv2.COLOR_GRAY2BGR)
+            x0 = width - (2 - inset_index) * (inset_width + 4)
+            y0 = height - inset_height - 4
+            output[y0 : y0 + inset_height, x0 : x0 + inset_width] = inset
+            cv2.putText(
+                output,
+                label,
+                (x0 + 3, y0 + 13),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.35,
+                (0, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
 
-        area = cv2.contourArea(cnt)
-        if area < min_area:
-            continue
+    if raw_detection is not None and raw_detection.found:
+        raw_center = (
+            int(round(raw_detection.center_x)),
+            int(round(raw_detection.center_y)),
+        )
+        cv2.drawMarker(
+            output, raw_center, (0, 165, 255), cv2.MARKER_TILTED_CROSS, 12, 2
+        )
+        cv2.putText(
+            output,
+            "RAW",
+            (raw_center[0] + 5, raw_center[1] - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 165, 255),
+            1,
+        )
 
-        x, y, w, h = cv2.boundingRect(cnt)
-        bbox_area = float(w * h)
-        if bbox_area <= 0:
-            continue
-
-        square = _squareness(w, h)
-        if square < min_square:
-            continue  # solid red strips (banners, pillars) are far from square
-
-        extent = area / bbox_area
-        if extent < min_extent:
-            continue
-
-        # A real gate is an annulus: it must enclose an inner hole (the flyable
-        # opening). Solid red blobs — banners, signs, glow patches — have no hole
-        # and are rejected here, which is what stops the "approach the biggest red
-        # thing" reward exploit.
-        inner, inner_area = None, -1.0
-        j = hierarchy[i][2]  # first child
-        while j != -1:
-            a = cv2.contourArea(contours[j])
-            if a > inner_area:
-                inner_area = a
-                inner = contours[j]
-            j = hierarchy[j][0]  # next sibling
-        has_hole = inner is not None and inner_area >= max(1.0, 0.05 * min_area)
-        if require_hole and bbox_area >= hole_min_bbox and not has_hole:
-            continue
-
-        # Prefer the NEAREST gate. The course is a tunnel of concentric gates (see the
-        # FPV frame 2026-06-06): several are visible at once, receding to a vanishing
-        # point. We fly the closest one first, and it is the largest in the image. The
-        # old score ranked on squareness*fill ONLY (no size term despite the comment), so
-        # a distant gate viewed dead-on could out-score the nearer one that is bigger but
-        # slightly perspective-skewed/clipped — the detector then flipped between gates
-        # frame to frame, which showed up as the range bouncing ~16m <-> ~21m in the logs.
-        # Make AREA the dominant term (nearest wins) while still requiring squareness/fill.
-        score = area * (0.5 + 0.5 * square) * (0.5 + 0.5 * extent)
-        candidates.append((score, i, inner if has_hole else None, inner_area, (x, y, w, h)))
-
-    if not candidates:
-        return None
-
-    best = max(candidates, key=lambda c: c[0])
-
-    # Next-gate handoff: at threading range the current gate fills the frame; if the
-    # next gate is visible THROUGH its hole, report that one so the guidance center
-    # transfers through the aperture instead of dying when the near ring exits view.
-    handoff_frac = float(cfg.get("handoff_bbox_frac", 0.0) or 0.0)
-    _, _, b_inner, _, (bx, by, bw, bh) = best
-    if handoff_frac > 0 and b_inner is not None and bw * bh >= handoff_frac * frame_px:
-        hx, hy, hw, hh = cv2.boundingRect(b_inner)
-        through = []
-        for c in candidates:
-            if c is best:
-                continue
-            cx0, cy0, cw0, ch0 = c[4]
-            ccx, ccy = cx0 + cw0 / 2.0, cy0 + ch0 / 2.0
-            if hx <= ccx <= hx + hw and hy <= ccy <= hy + hh:
-                through.append(c)
-        if through:
-            best = max(through, key=lambda c: c[0])
-
-    _, idx, inner, inner_area, _ = best
-    outer = contours[idx]
-    x, y, w, h = cv2.boundingRect(outer)
-    bbox_px = (int(x), int(y), int(w), int(h))
-
-    # Prefer the inner-hole contour (the flyable opening) for center/area/corners.
-    if inner is not None:
-        center = _centroid(inner)
-        area_px = float(inner_area)
-        opening_contour = inner
+    if detection is None or not detection.found:
+        cv2.putText(
+            output, "NO GATE", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2
+        )
     else:
-        center = _centroid(outer)
-        area_px = float(cv2.contourArea(outer))
-        opening_contour = None
+        x, y, bbox_width, bbox_height = detection.bbox
+        cv2.rectangle(
+            output, (x, y), (x + bbox_width, y + bbox_height), (0, 255, 0), 2
+        )
+        tracked_center = (
+            int(round(detection.center_x)),
+            int(round(detection.center_y)),
+        )
+        marker_color = (0, 255, 255) if detection.predicted else (0, 0, 255)
+        cv2.circle(output, tracked_center, 5, marker_color, -1)
+        cv2.putText(
+            output,
+            "PRED" if detection.predicted else "TRACK",
+            (tracked_center[0] + 6, tracked_center[1] + 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            marker_color,
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.line(output, image_center, tracked_center, (0, 255, 255), 1)
+        if detection.corners is not None:
+            corners = np.round(detection.corners).astype(np.int32)
+            cv2.polylines(output, [corners], True, (255, 0, 255), 2)
+            for label, point in zip(("TL", "TR", "BR", "BL"), corners):
+                cv2.putText(
+                    output,
+                    label,
+                    tuple(point),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.34,
+                    (255, 0, 255),
+                    1,
+                )
+        if detection.pnp_rvec is not None and detection.pnp_tvec is not None:
+            cv2.drawFrameAxes(
+                output,
+                cm.K,
+                None,
+                detection.pnp_rvec,
+                detection.pnp_tvec,
+                0.5,
+                2,
+            )
+        distance = (
+            "?" if detection.distance_m is None else f"{detection.distance_m:.1f}m"
+        )
+        prediction = " PRED" if detection.predicted else ""
+        cv2.putText(
+            output,
+            (
+                f"{detection.method}{prediction} conf={detection.confidence:.2f} "
+                f"d={distance} area={detection.opening_area_ratio:.3f}"
+            ),
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.46,
+            (0, 255, 0),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            output,
+            (
+                f"err=({detection.normalized_x:+.2f},{detection.normalized_y:+.2f}) "
+                f"vel=({detection.velocity_x:+.2f},{detection.velocity_y:+.2f})"
+            ),
+            (10, 44),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.44,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
-    if center is None:
-        # Degenerate moments; fall back to bbox center.
-        center = (x + w / 2.0, y + h / 2.0)
-
-    # Upgrade path: approximate the inner opening to an ordered 4-point quad.
-    corners_px = None
-    if opening_contour is not None:
-        peri = cv2.arcLength(opening_contour, True)
-        eps = float(cfg["approx_eps_frac"]) * peri
-        approx = cv2.approxPolyDP(opening_contour, eps, True)
-        if len(approx) == 4:
-            corners_px = _order_corners(approx)
-
-    # Confidence: squareness of the opening's bbox combined with how much of the
-    # frame it fills (relative area), clamped to 0..1.
-    ow, oh = w, h
-    if opening_contour is not None:
-        _, _, ow, oh = cv2.boundingRect(opening_contour)
-    square = _squareness(ow, oh)
-    frame_px = float(bgr.shape[0] * bgr.shape[1])
-    rel_area = area_px / frame_px if frame_px > 0 else 0.0
-    # Saturate the relative-area term; a gate filling ~15% of the frame is plenty.
-    rel_term = min(1.0, rel_area / 0.15)
-    confidence = float(np.clip(0.6 * square + 0.4 * rel_term, 0.0, 1.0))
-
-    return GateDetection(
-        center_px=(float(center[0]), float(center[1])),
-        corners_px=corners_px,
-        bbox_px=bbox_px,
-        area_px=area_px,
-        confidence=confidence,
-    )
-
-
-def draw_detection(bgr: np.ndarray, det: Optional[GateDetection]) -> np.ndarray:
-    """Return an annotated COPY of `bgr` (bbox, center, corners, confidence)."""
-    out = bgr.copy()
-    if det is None:
-        cv2.putText(out, "no gate", (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (0, 0, 255), 2, cv2.LINE_AA)
-        return out
-
-    x, y, w, h = det.bbox_px
-    cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-    u, v = int(round(det.center_px[0])), int(round(det.center_px[1]))
-    cv2.circle(out, (u, v), 5, (0, 0, 255), -1)
-
-    if det.corners_px is not None:
-        labels = ("TL", "TR", "BR", "BL")
-        for (cx, cy), label in zip(det.corners_px, labels):
-            cx, cy = int(round(cx)), int(round(cy))
-            cv2.circle(out, (cx, cy), 4, (255, 0, 255), -1)
-            cv2.putText(out, label, (cx + 4, cy - 4), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.4, (255, 0, 255), 1, cv2.LINE_AA)
-
-    cv2.putText(out, f"conf {det.confidence:.2f}", (x, max(20, y - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-    return out
+    text_y = 64
+    if state:
+        cv2.putText(
+            output,
+            f"state={state}",
+            (10, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.46,
+            (255, 255, 255),
+            1,
+        )
+        text_y += 19
+    if command is not None:
+        cv2.putText(
+            output,
+            (
+                f"cmd f={getattr(command, 'forward_mps', 0):+.2f} "
+                f"r={getattr(command, 'right_mps', 0):+.2f} "
+                f"d={getattr(command, 'down_mps', 0):+.2f} "
+                f"yaw={getattr(command, 'yaw_rate_rps', 0):+.2f}"
+            ),
+            (10, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.43,
+            (255, 255, 255),
+            1,
+        )
+        text_y += 19
+    if debug and debug.timings_ms:
+        detector_total = debug.timings_ms.get("total", 0.0)
+        total = total_time_ms if total_time_ms is not None else detector_total
+        fps = 1000.0 / total if total > 0 else 0.0
+        cv2.putText(
+            output,
+            (
+                f"detector={detector_total:.2f}ms "
+                f"total={total:.2f}ms ({fps:.1f} fps)"
+            ),
+            (10, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.43,
+            (255, 255, 255),
+            1,
+        )
+    return output
 
 
-def _synthesize_test_image() -> tuple:
-    """Build a 640x360 desaturated-gray frame with a bright colored square frame.
-
-    Returns (image_bgr, cfg) where cfg's HSV thresholds match the painted color
-    so the self-test exercises the full pipeline without real sim frames.
-    """
-    h, w = 360, 640
-    img = np.full((h, w, 3), 110, dtype=np.uint8)  # near-neutral gray background
-
-    # Slight desaturated texture so the background is not perfectly flat.
-    noise = np.random.randint(-8, 8, (h, w, 3), dtype=np.int16)
-    img = np.clip(img.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-
-    cx, cy = w // 2, h // 2  # (320, 180)
-    outer = 200
-    inner = 120
-    color = (40, 200, 60)  # bright green (BGR), saturated -> stands out
-
-    # Draw the outer filled square, then punch the inner hole back to background.
-    o0 = (cx - outer // 2, cy - outer // 2)
-    o1 = (cx + outer // 2, cy + outer // 2)
-    cv2.rectangle(img, o0, o1, color, thickness=-1)
-    i0 = (cx - inner // 2, cy - inner // 2)
-    i1 = (cx + inner // 2, cy + inner // 2)
-    cv2.rectangle(img, i0, i1, (110, 110, 110), thickness=-1)
-
-    # HSV thresholds tuned to the synthetic green: bright + saturated.
-    cfg = {
-        "lower_hsv": (40, 80, 80),
-        "upper_hsv": (80, 255, 255),
-        "lower_hsv2": None,
-        "upper_hsv2": None,
-    }
-    return img, cfg
+def _synthesize_test_image() -> tuple[np.ndarray, dict]:
+    image = np.full((360, 640, 3), 60, dtype=np.uint8)
+    cv2.rectangle(image, (230, 90), (410, 270), (0, 100, 255), 24)
+    return image, {}
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        path = sys.argv[1]
-        frame = cv2.imread(path)
-        if frame is None:
-            print(f"Failed to read image: {path}")
-            sys.exit(1)
-        cfg = None  # use module thresholds for real frames
-        print(f"Loaded {path} ({frame.shape[1]}x{frame.shape[0]})")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("image", nargs="?")
+    parser.add_argument("--output", default="_detect_debug.png")
+    args = parser.parse_args()
+    if args.image:
+        source = cv2.imread(args.image, cv2.IMREAD_COLOR)
+        if source is None:
+            raise SystemExit(f"failed to read {args.image}")
     else:
-        frame, cfg = _synthesize_test_image()
-        print("No image given; synthesized a 640x360 test frame with a gate.")
-
-    det = detect_gate(frame, cfg)
-    print("Detection:", det)
-
-    overlay = draw_detection(frame, det)
-    out_path = "_detect_debug.png"
-    cv2.imwrite(out_path, overlay)
-    print(f"Wrote overlay to {out_path}")
-
-    if det is None:
-        sys.exit(2)
+        source, _ = _synthesize_test_image()
+    detector = OrangeGateDetector()
+    result = detector.detect(source)
+    cv2.imwrite(
+        args.output,
+        draw_detection(source, result, detector.last_debug, raw_detection=result),
+    )
+    print(result)
+    print(detector.last_debug.timings_ms if detector.last_debug else {})

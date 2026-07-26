@@ -1,3 +1,5 @@
+"""Receive Q2 camera datagrams and publish tracked OpenCV navigation."""
+
 import os
 import socket
 import struct
@@ -7,21 +9,31 @@ import time
 import cv2
 import numpy as np
 
-from vision.gate_detector import detect_gate, draw_detection
-
-SIM_SERVER_UDP_IP   = '0.0.0.0'
-SIM_SERVER_UDP_PORT = 5600
-
-DEBUG_DIR      = '_vision_debug'
-DEBUG_INTERVAL = 5.0   # save an annotated debug frame at most once per N seconds
+import camera_model as cm
+import config
+from gate_estimator import estimate_gate
+from vision.gate_detector import OrangeGateDetector, draw_detection
+from vision.gate_tracker import GateTracker
+from vision.navigation import GateNavigator, NavigationConfig
 
 
 class VisionRX:
 
     def __init__(self, data):
         self.data = data
+        self.detector = OrangeGateDetector()
+        self.tracker = GateTracker()
+        body_forward_v = cm.project(cm.body_to_cam((1.0, 0.0, 0.0)))[1]
+        body_forward_normalized_y = 2.0 * body_forward_v / cm.HEIGHT - 1.0
+        self.navigator = GateNavigator(
+            NavigationConfig(
+                vertical_setpoint_normalized=body_forward_normalized_y
+            )
+        )
         self._last_debug_t = 0.0
-        os.makedirs(DEBUG_DIR, exist_ok=True)
+        self._last_state = None
+        if config.VISION_DEBUG:
+            os.makedirs(config.VISION_DEBUG_DIR, exist_ok=True)
         self.thread = threading.Thread(target=self._vision_loop, daemon=False)
         self.is_running = True
         self.thread.start()
@@ -30,73 +42,195 @@ class VisionRX:
         self.is_running = False
         return self.thread
 
+    def _log_state(self, state):
+        if state == self._last_state:
+            return
+        log_event = self.data.get('log_event')
+        if log_event:
+            log_event('VISION_STATE', state)
+        self._last_state = state
+
     # ------------------------------------------------------------------
     def _vision_loop(self):
         header_fmt = '<IHHIIQ'
-        header_sz  = struct.calcsize(header_fmt)
-        frames     = {}
+        header_sz = struct.calcsize(header_fmt)
+        frames = {}
+        latest_complete_id = -1
+        latest_complete_sim_time = -1
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind((SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT))
-        sock.settimeout(1.0)
+        sock.bind((config.VISION_UDP_IP, config.VISION_UDP_PORT))
+        sock.settimeout(0.2)
         print('[VISION] listening for camera frames...', flush=True)
 
-        while self.is_running:
-            try:
-                packet, _ = sock.recvfrom(65536)
-            except socket.timeout:
-                continue
+        try:
+            while self.is_running:
+                try:
+                    packet, _ = sock.recvfrom(65536)
+                except socket.timeout:
+                    continue
+                if len(packet) < header_sz:
+                    continue
 
-            header  = packet[:header_sz]
-            payload = packet[header_sz:]
-            frame_id, chunk_id, total_chunks, jpeg_size, payload_size, sim_time_ns = \
-                struct.unpack(header_fmt, header)
+                header = packet[:header_sz]
+                payload = packet[header_sz:]
+                (
+                    frame_id,
+                    chunk_id,
+                    total_chunks,
+                    jpeg_size,
+                    payload_size,
+                    sim_time_ns,
+                ) = struct.unpack(header_fmt, header)
+                if payload_size != len(payload) or chunk_id >= total_chunks:
+                    continue
+                if (
+                    frame_id <= latest_complete_id
+                    and sim_time_ns <= latest_complete_sim_time
+                ):
+                    continue
 
-            if frame_id not in frames:
-                frames[frame_id] = {'chunks': {}, 'total': total_chunks}
-            frames[frame_id]['chunks'][chunk_id] = payload
+                entry = frames.setdefault(
+                    frame_id,
+                    {
+                        'chunks': {},
+                        'total': total_chunks,
+                        'jpeg_size': jpeg_size,
+                        'sim_time_ns': sim_time_ns,
+                    },
+                )
+                entry['chunks'][chunk_id] = payload
 
-            if len(frames[frame_id]['chunks']) == total_chunks:
-                jpeg = bytearray()
-                ok   = True
-                for i in range(total_chunks):
-                    if i not in frames[frame_id]['chunks']:
-                        ok = False
-                        break
-                    jpeg.extend(frames[frame_id]['chunks'][i])
+                if len(entry['chunks']) == entry['total']:
+                    try:
+                        jpeg = b''.join(
+                            entry['chunks'][index]
+                            for index in range(entry['total'])
+                        )
+                    except KeyError:
+                        jpeg = b''
+                    if len(jpeg) == entry['jpeg_size']:
+                        image = cv2.imdecode(
+                            np.frombuffer(jpeg, dtype=np.uint8),
+                            cv2.IMREAD_COLOR,
+                        )
+                        if image is not None:
+                            self.process_frame(
+                                frame_id,
+                                image,
+                                sim_time_ns=entry['sim_time_ns'],
+                            )
+                            latest_complete_id = frame_id
+                            latest_complete_sim_time = sim_time_ns
+                    del frames[frame_id]
 
-                if ok:
-                    arr   = np.frombuffer(jpeg, dtype=np.uint8)
-                    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                    if image is not None:
-                        self.process_frame(frame_id, image)
+                    # Process the newest complete frame, not queued old frames.
+                    for old_id in [key for key in frames if key < frame_id]:
+                        del frames[old_id]
 
-                del frames[frame_id]
-
-            # Prune stale incomplete frames
-            if len(frames) > 30:
-                del frames[min(frames)]
+                if len(frames) > 30:
+                    del frames[min(frames)]
+        finally:
+            sock.close()
 
     # ------------------------------------------------------------------
-    def process_frame(self, frame_id: int, img: np.ndarray):
-        det = detect_gate(img)
+    def process_frame(
+        self,
+        frame_id: int,
+        img: np.ndarray,
+        sim_time_ns: int | None = None,
+    ):
+        started = time.perf_counter()
+        monotonic_now = time.monotonic()
+        timestamp_ns = time.time_ns()
 
-        if det is not None:
-            self.data['gate_detection'] = {
-                'center_px':  det.center_px,
-                'corners_px': det.corners_px,
-                'bbox_px':    det.bbox_px,
-                'area_px':    det.area_px,
-                'confidence': det.confidence,
-                'frame_id':   frame_id,
-                'ts':         time.time_ns(),
+        hint = self.tracker.hint(monotonic_now)
+        measured = self.detector.detect(
+            img,
+            hint=hint,
+            timestamp=monotonic_now,
+        )
+        tracked = self.tracker.update(
+            measured if measured.found else None,
+            timestamp=monotonic_now,
+        )
+        command = self.navigator.update(tracked, monotonic_now)
+        state = command.state.value
+        self._log_state(state)
+
+        gate_detection = None
+        if tracked is not None and tracked.found:
+            gate_detection = {
+                'center_px': tracked.center_px,
+                'corners_px': tracked.corners_px,
+                'bbox_px': tracked.bbox_px,
+                'area_px': tracked.area_px,
+                'confidence': tracked.confidence,
+                'method': tracked.method,
+                'predicted': tracked.predicted,
+                'frame_id': frame_id,
+                'ts': timestamp_ns,
             }
-        else:
-            self.data['gate_detection'] = None
 
-        # Periodic debug image
-        now = time.time()
-        if (now - self._last_debug_t) >= DEBUG_INTERVAL:
-            self._last_debug_t = now
-            annotated = draw_detection(img, det)
-            cv2.imwrite(os.path.join(DEBUG_DIR, f'frame_{frame_id:06d}.jpg'), annotated)
+        attitude = self.data.get('attitude')
+        position = self.data.get('local_position_ned')
+        position_ned = None
+        if position:
+            position_ned = (
+                position.get('x', 0.0),
+                position.get('y', 0.0),
+                position.get('z', 0.0),
+            )
+        gate_estimate = estimate_gate(
+            tracked,
+            attitude=attitude,
+            position_ned=position_ned,
+            ts=timestamp_ns,
+        )
+
+        navigation = {
+            'ts': timestamp_ns,
+            'sim_time_ns': sim_time_ns,
+            'frame_id': frame_id,
+            'forward_mps': command.forward_mps,
+            'right_mps': command.right_mps,
+            'down_mps': command.down_mps,
+            'yaw_rate_rps': command.yaw_rate_rps,
+            'state': state,
+            'confidence': command.confidence,
+            'predicted': command.predicted,
+            'alignment_error': command.alignment_error,
+        }
+        total_ms = (time.perf_counter() - started) * 1000.0
+
+        # Each value is replaced atomically so readers never see a partial dict.
+        self.data['gate_detection'] = gate_detection
+        self.data['vision'] = gate_estimate
+        self.data['navigation'] = navigation
+        self.data['vision_timings_ms'] = {
+            **self.detector.last_debug.timings_ms,
+            'tracker': self.tracker.last_update_ms,
+            'total': total_ms,
+        }
+
+        if (
+            config.VISION_DEBUG
+            and time.time() - self._last_debug_t
+            >= config.VISION_DEBUG_INTERVAL_S
+        ):
+            self._last_debug_t = time.time()
+            annotated = draw_detection(
+                img,
+                tracked,
+                debug=self.detector.last_debug,
+                state=state,
+                command=command,
+                total_time_ms=total_ms,
+            )
+            cv2.imwrite(
+                os.path.join(
+                    config.VISION_DEBUG_DIR,
+                    f'frame_{frame_id:06d}.jpg',
+                ),
+                annotated,
+            )
