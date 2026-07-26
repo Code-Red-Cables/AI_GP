@@ -420,6 +420,30 @@ class DetectorRobustnessTests(unittest.TestCase):
             all(candidate.bbox[2] < 220 for candidate in candidates)
         )
 
+    def test_19f_line_reconstruction_splits_overlapping_gate_boxes(self):
+        mask = np.zeros(FRAME_SIZE, dtype=np.uint8)
+        cv2.rectangle(mask, (100, 80), (310, 290), 255, 9)
+        cv2.rectangle(mask, (260, 110), (430, 280), 255, 9)
+
+        candidates = [
+            candidate
+            for candidate, _ in OrangeGateDetector()._line_candidates(
+                mask, None
+            )
+            if candidate is not None
+        ]
+
+        self.assertGreaterEqual(len(candidates), 2)
+        self.assertTrue(
+            any(abs(candidate.center[0] - 205) < 20 for candidate in candidates)
+        )
+        self.assertTrue(
+            any(abs(candidate.center[0] - 345) < 20 for candidate in candidates)
+        )
+        self.assertTrue(
+            all(candidate.bbox[2] < 260 for candidate in candidates)
+        )
+
 
 class TrackerTests(unittest.TestCase):
     def test_20_timestamped_velocity_and_short_dropout(self):

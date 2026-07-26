@@ -53,9 +53,11 @@ python main.py
    box from that opening—not from the parent orange contour—so the combined
    component is never reported or displayed as one gate.
    Hough-line fallback segments are spatially clustered before rectangle
-   fitting, producing separate candidates for separate gates. Each cluster
-   must satisfy the same single-opening aspect limits; an implausible aspect
-   is a hard rejection rather than merely a confidence penalty.
+   fitting. Within each cluster, opposing rail pairs form separate rectangle
+   hypotheses, so even overlapping projected gates cannot become one union
+   box. Each hypothesis must satisfy the same single-opening aspect limits;
+   an implausible aspect is a hard rejection rather than merely a confidence
+   penalty.
    When a farther gate is visible, its horizontal direction is retained
    through the current gate pass. The pass-through controller first clears
    the frame without reusing the old gate's final correction, then begins a

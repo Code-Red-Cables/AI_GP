@@ -78,6 +78,8 @@ class GateVisionConfig:
     hough_max_line_gap: int = 14
     hough_angle_tolerance_degrees: float = 20.0
     hough_cluster_gap_fraction: float = 0.075
+    hough_rectangle_min_line_coverage: float = 0.68
+    hough_rectangle_max_lines_per_axis: int = 14
 
     temporal_center_sigma: float = 0.38
     temporal_size_sigma: float = 0.75
@@ -1043,6 +1045,188 @@ class OrangeGateDetector:
         )
         return candidate, debug
 
+    def _rectangle_line_groups(self, records):
+        """Build individual rectangle hypotheses inside one line cluster.
+
+        Spatial clustering alone cannot separate two gates whose projected
+        rectangles overlap. In the dominant gate-aligned coordinate system,
+        pair opposing horizontal and vertical rails only when each observed
+        segment covers most of the proposed side.
+        """
+        if len(records) < 4:
+            return []
+        cfg = self.config
+        dominant = max(records, key=lambda item: item[1])[2]
+        radians = math.radians(dominant)
+        along = np.array([math.cos(radians), math.sin(radians)])
+        across = np.array([-along[1], along[0]])
+        tolerance = cfg.hough_angle_tolerance_degrees
+        along_lines = []
+        across_lines = []
+        for record in records:
+            raw, length, angle = record
+            points = np.asarray(raw, dtype=np.float64).reshape(2, 2)
+            along_values = points @ along
+            across_values = points @ across
+            difference = self._line_angle_difference(angle, dominant)
+            if difference <= tolerance:
+                along_lines.append(
+                    (
+                        float(np.mean(across_values)),
+                        float(np.min(along_values)),
+                        float(np.max(along_values)),
+                        length,
+                        record,
+                    )
+                )
+            elif abs(difference - 90.0) <= tolerance:
+                across_lines.append(
+                    (
+                        float(np.mean(along_values)),
+                        float(np.min(across_values)),
+                        float(np.max(across_values)),
+                        length,
+                        record,
+                    )
+                )
+        limit = max(4, int(cfg.hough_rectangle_max_lines_per_axis))
+        along_lines = sorted(
+            along_lines, key=lambda item: item[3], reverse=True
+        )[:limit]
+        across_lines = sorted(
+            across_lines, key=lambda item: item[3], reverse=True
+        )[:limit]
+        if len(along_lines) < 2 or len(across_lines) < 2:
+            return []
+
+        def opposing_pairs(lines, minimum_separation):
+            pairs = []
+            for left_index, left in enumerate(lines):
+                for right in lines[left_index + 1 :]:
+                    separation = abs(right[0] - left[0])
+                    if separation < minimum_separation:
+                        continue
+                    overlap = max(
+                        0.0,
+                        min(left[2], right[2])
+                        - max(left[1], right[1]),
+                    )
+                    shorter = max(
+                        1e-6,
+                        min(left[2] - left[1], right[2] - right[1]),
+                    )
+                    if overlap / shorter >= 0.45:
+                        pairs.append((left, right))
+            return pairs
+
+        along_pairs = opposing_pairs(along_lines, cfg.min_gate_height)
+        across_pairs = opposing_pairs(across_lines, cfg.min_gate_width)
+        minimum_coverage = cfg.hough_rectangle_min_line_coverage
+        hypotheses = []
+        seen = set()
+        for top, bottom in along_pairs:
+            across_start, across_end = sorted((top[0], bottom[0]))
+            height = across_end - across_start
+            for left, right in across_pairs:
+                along_start, along_end = sorted((left[0], right[0]))
+                width = along_end - along_start
+                if width < cfg.min_gate_width or height < cfg.min_gate_height:
+                    continue
+
+                def coverage(line, start, end):
+                    overlap = max(
+                        0.0,
+                        min(line[2], end) - max(line[1], start),
+                    )
+                    return overlap / max(end - start, 1e-6)
+
+                side_coverages = (
+                    coverage(top, along_start, along_end),
+                    coverage(bottom, along_start, along_end),
+                    coverage(left, across_start, across_end),
+                    coverage(right, across_start, across_end),
+                )
+                if min(side_coverages) < minimum_coverage:
+                    continue
+                key = tuple(
+                    sorted(id(line[4]) for line in (top, bottom, left, right))
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                hypotheses.append(
+                    [top[4], bottom[4], left[4], right[4]]
+                )
+        return hypotheses
+
+    @staticmethod
+    def _bbox_iou(
+        left: tuple[int, int, int, int],
+        right: tuple[int, int, int, int],
+    ) -> float:
+        lx, ly, lw, lh = left
+        rx, ry, rw, rh = right
+        intersection_width = max(
+            0, min(lx + lw, rx + rw) - max(lx, rx)
+        )
+        intersection_height = max(
+            0, min(ly + lh, ry + rh) - max(ly, ry)
+        )
+        intersection = intersection_width * intersection_height
+        union = lw * lh + rw * rh - intersection
+        return float(intersection / max(union, 1))
+
+    def _deduplicate_line_results(self, results):
+        valid = [
+            (candidate, debug)
+            for candidate, debug in results
+            if candidate is not None
+        ]
+        valid.sort(
+            key=lambda item: (
+                item[0].score,
+                item[0].bbox[2] * item[0].bbox[3],
+            ),
+            reverse=True,
+        )
+        kept = []
+        for item in valid:
+            if any(
+                self._bbox_iou(item[0].bbox, other[0].bbox) >= 0.72
+                for other in kept
+            ):
+                continue
+            kept.append(item)
+        if kept:
+            return kept
+        return results[:1]
+
+    def _has_distinct_line_rectangles(self, results) -> bool:
+        candidates = [
+            candidate
+            for candidate, _ in results
+            if candidate is not None
+        ]
+        for left_index, left in enumerate(candidates):
+            for right in candidates[left_index + 1 :]:
+                center_distance = math.hypot(
+                    left.center[0] - right.center[0],
+                    left.center[1] - right.center[1],
+                )
+                smaller_span = max(
+                    1.0,
+                    min(
+                        max(left.bbox[2], left.bbox[3]),
+                        max(right.bbox[2], right.bbox[3]),
+                    ),
+                )
+                if (
+                    center_distance >= 0.30 * smaller_span
+                    and self._bbox_iou(left.bbox, right.bbox) <= 0.55
+                ):
+                    return True
+        return False
+
     def _line_candidates(
         self, mask: np.ndarray, hint: Optional[GateDetection]
     ) -> list[tuple[Optional[_Candidate], Optional[CandidateDebug]]]:
@@ -1072,10 +1256,24 @@ class OrangeGateDetector:
             8.0,
             min(mask.shape) * cfg.hough_cluster_gap_fraction,
         )
-        return [
-            self._line_candidate_from_records(cluster, mask, hint)
-            for cluster in self._cluster_line_records(records, gap)
-        ]
+        results = []
+        for cluster in self._cluster_line_records(records, gap):
+            rectangle_groups = self._rectangle_line_groups(cluster)
+            if rectangle_groups:
+                rectangle_results = self._deduplicate_line_results([
+                    self._line_candidate_from_records(group, mask, hint)
+                    for group in rectangle_groups
+                ])
+                if self._has_distinct_line_rectangles(rectangle_results):
+                    results.extend(rectangle_results)
+                    continue
+            # One set of near-concentric rail hypotheses is still one gate.
+            # Preserve the full cluster so a broken side or internal marking
+            # cannot crop its box down to only part of the opening.
+            results.append(
+                self._line_candidate_from_records(cluster, mask, hint)
+            )
+        return self._deduplicate_line_results(results)
 
     def _line_candidate(
         self, mask: np.ndarray, hint: Optional[GateDetection]
