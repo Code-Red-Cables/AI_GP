@@ -444,6 +444,23 @@ class DetectorRobustnessTests(unittest.TestCase):
             all(candidate.bbox[2] < 260 for candidate in candidates)
         )
 
+    def test_19g_white_gate_letter_is_not_an_opening(self):
+        frame = np.full((*FRAME_SIZE, 3), ORANGE, dtype=np.uint8)
+        cv2.putText(
+            frame,
+            "A",
+            (175, 285),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            8.0,
+            (255, 255, 255),
+            35,
+            cv2.LINE_AA,
+        )
+
+        result = OrangeGateDetector().detect(frame)
+
+        self.assertFalse(result.found)
+
 
 class TrackerTests(unittest.TestCase):
     def test_20_timestamped_velocity_and_short_dropout(self):
@@ -474,6 +491,23 @@ class TrackerTests(unittest.TestCase):
         result = tracker.update(detection_at(opening_width=200), 1.1)
         self.assertTrue(result.predicted)
         self.assertLess(result.opening_width, 100)
+
+    def test_22b_close_edge_gate_does_not_shrink_to_logo(self):
+        tracker = GateTracker(
+            GateTrackerConfig(maximum_size_change_ratio=3.0)
+        )
+        close_gate = detection_at(nx=-0.60, opening_width=220)
+        tracker.update(close_gate, 1.0)
+        logo_sized_fragment = detection_at(
+            nx=-0.60,
+            opening_width=150,
+            confidence=0.9,
+        )
+
+        result = tracker.update(logo_sized_fragment, 1.1)
+
+        self.assertTrue(result.predicted)
+        self.assertAlmostEqual(result.opening_width, 220)
 
 
 def navigator_for_tests(**overrides):

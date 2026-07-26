@@ -57,7 +57,11 @@ python main.py
    hypotheses, so even overlapping projected gates cannot become one union
    box. Each hypothesis must satisfy the same single-opening aspect limits;
    an implausible aspect is a hard rejection rather than merely a confidence
-   penalty.
+   penalty. Candidate interiors are also checked in HSV space: a mostly bright,
+   neutral non-orange region is gate lettering, not an opening. When the
+   tracked gate reaches a frame edge, a sudden apparent shrink is treated as
+   clipping and the last full geometry is predicted instead of resizing onto
+   a logo or rail fragment.
    When a farther gate is visible, its horizontal direction is retained
    through the current gate pass. The pass-through controller first clears
    the frame without reusing the old gate's final correction, then begins a

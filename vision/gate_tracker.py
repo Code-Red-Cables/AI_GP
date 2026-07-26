@@ -27,6 +27,9 @@ class GateTrackerConfig:
     maximum_dt_seconds: float = 0.20
     stable_center_residual: float = 0.055
     stable_size_change_ratio: float = 0.14
+    near_gate_minimum_area_ratio: float = 0.020
+    near_edge_margin_fraction: float = 0.04
+    maximum_near_edge_shrink_fraction: float = 0.15
     # Optional seed gate prevents a new track from latching onto tiny side
     # signs/posts after the previously approached gate leaves the frame.
     minimum_seed_confidence: float = 0.0
@@ -100,6 +103,24 @@ class GateTracker:
     def _angle_blend(old: float, new: float, alpha: float) -> float:
         delta = (new - old + 90.0) % 180.0 - 90.0
         return old + alpha * delta
+
+    @staticmethod
+    def _near_frame_edge(
+        detection: GateDetection, margin_fraction: float
+    ) -> bool:
+        if detection.frame_width <= 0 or detection.frame_height <= 0:
+            return False
+        x, y, width, height = detection.bbox
+        horizontal_margin = detection.frame_width * margin_fraction
+        vertical_margin = detection.frame_height * margin_fraction
+        return bool(
+            x <= horizontal_margin
+            or y <= vertical_margin
+            or x + width
+            >= detection.frame_width - horizontal_margin
+            or y + height
+            >= detection.frame_height - vertical_margin
+        )
 
     def hint(self, timestamp: Optional[float] = None) -> Optional[GateDetection]:
         """Return a non-mutating predicted association hint for candidate scoring."""
@@ -239,9 +260,30 @@ class GateTracker:
         new_area = max(detection.opening_width * detection.opening_height, 1.0)
         area_ratio = new_area / old_area
         size_change = max(area_ratio, 1.0 / area_ratio) - 1.0
+        edge_limited_close_gate = bool(
+            previous.opening_area_ratio
+            >= self.config.near_gate_minimum_area_ratio
+            and (
+                self._near_frame_edge(
+                    previous, self.config.near_edge_margin_fraction
+                )
+                or self._near_frame_edge(
+                    detection, self.config.near_edge_margin_fraction
+                )
+            )
+        )
+        unexpected_close_gate_shrink = bool(
+            new_area
+            < old_area
+            * (1.0 - self.config.maximum_near_edge_shrink_fraction)
+        )
         if (
             center_jump > self.config.maximum_center_jump_ratio
             or size_change > self.config.maximum_size_change_ratio
+            or (
+                edge_limited_close_gate
+                and unexpected_close_gate_shrink
+            )
         ):
             result = self._prediction(now)
             self.last_update_ms = (time.perf_counter() - started) * 1000.0

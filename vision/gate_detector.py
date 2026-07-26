@@ -67,6 +67,7 @@ class GateVisionConfig:
     minimum_supported_sides: int = 3
     minimum_side_coverage: float = 0.16
     maximum_center_orange_fraction: float = 0.42
+    maximum_bright_neutral_opening_fraction: float = 0.55
     filled_object_density: float = 0.72
     compound_child_area_fraction: float = 0.18
     single_opening_min_aspect_ratio: float = 0.50
@@ -528,6 +529,7 @@ class OrangeGateDetector:
         rectangularity: float,
         convexity: float,
         hint: Optional[GateDetection],
+        hsv: Optional[np.ndarray] = None,
     ) -> tuple[Optional[_Candidate], CandidateDebug]:
         cfg = self.config
         outer_corners = order_corners(cv2.boxPoints(cv2.minAreaRect(outer)))
@@ -587,6 +589,29 @@ class OrangeGateDetector:
             "center_prior": center_prior,
             "supported_sides": float(supported_sides),
         }
+        bright_neutral_opening = 0.0
+        if hsv is not None and corners is not None:
+            opening_region = np.zeros(mask.shape, dtype=np.uint8)
+            opening_polygon = np.round(
+                order_corners(corners)
+            ).astype(np.int32)
+            opening_polygon[:, 0] = np.clip(
+                opening_polygon[:, 0], 0, mask.shape[1] - 1
+            )
+            opening_polygon[:, 1] = np.clip(
+                opening_polygon[:, 1], 0, mask.shape[0] - 1
+            )
+            cv2.fillConvexPoly(opening_region, opening_polygon, 255)
+            non_orange_opening = (opening_region > 0) & (mask == 0)
+            if np.count_nonzero(non_orange_opening) >= 20:
+                opening_pixels = hsv[non_orange_opening]
+                bright_neutral_opening = float(
+                    np.mean(
+                        (opening_pixels[:, 1] <= 80)
+                        & (opening_pixels[:, 2] >= 180)
+                    )
+                )
+        features["bright_neutral_opening"] = bright_neutral_opening
         confidence = (
             0.08 * size_quality
             + 0.11 * aspect_quality
@@ -605,6 +630,10 @@ class OrangeGateDetector:
         )
         reason = "accepted"
         opening_geometry_valid = True
+        opening_appearance_valid = (
+            bright_neutral_opening
+            <= cfg.maximum_bright_neutral_opening_fraction
+        )
         opening_aspect = opening_width / max(opening_height, 1e-6)
         if (
             opening_width < cfg.min_opening_width
@@ -621,6 +650,8 @@ class OrangeGateDetector:
             confidence -= 0.45
             reason = "implausible_opening"
             opening_geometry_valid = False
+        if not opening_appearance_valid:
+            confidence -= 0.75
         if supported_sides < 2:
             confidence -= 0.55
             reason = "single_post"
@@ -633,6 +664,8 @@ class OrangeGateDetector:
         if opening is None and orange_density >= cfg.filled_object_density:
             confidence -= 0.55
             reason = "filled"
+        if not opening_appearance_valid:
+            reason = "bright_text_opening"
         confidence = float(np.clip(confidence, 0.0, 1.0))
         score = float(
             np.clip(
@@ -647,7 +680,11 @@ class OrangeGateDetector:
         debug = CandidateDebug(
             outer,
             opening,
-            confidence >= cfg.min_confidence and opening_geometry_valid,
+            (
+                confidence >= cfg.min_confidence
+                and opening_geometry_valid
+                and opening_appearance_valid
+            ),
             score,
             confidence,
             reason,
@@ -656,7 +693,11 @@ class OrangeGateDetector:
             bbox,
             features,
         )
-        if confidence < cfg.min_confidence or not opening_geometry_valid:
+        if (
+            confidence < cfg.min_confidence
+            or not opening_geometry_valid
+            or not opening_appearance_valid
+        ):
             return None, debug
         return (
             _Candidate(
@@ -687,6 +728,7 @@ class OrangeGateDetector:
         hierarchy: np.ndarray,
         mask: np.ndarray,
         hint: Optional[GateDetection],
+        hsv: Optional[np.ndarray] = None,
     ) -> tuple[Optional[_Candidate], CandidateDebug]:
         cfg = self.config
         area = float(cv2.contourArea(contour))
@@ -845,6 +887,7 @@ class OrangeGateDetector:
                 rectangularity=rectangularity,
                 convexity=convexity,
                 hint=hint,
+                hsv=hsv,
             )
             # Scoring for a normal gate still uses its measured parent frame,
             # but consumers and overlays must never receive that union contour.
@@ -909,6 +952,7 @@ class OrangeGateDetector:
             rectangularity=rectangularity,
             convexity=convexity,
             hint=hint,
+            hsv=hsv,
         )
 
     @staticmethod
@@ -975,6 +1019,7 @@ class OrangeGateDetector:
         records,
         mask: np.ndarray,
         hint: Optional[GateDetection],
+        hsv: Optional[np.ndarray] = None,
     ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
         cfg = self.config
         dominant = max(records, key=lambda item: item[1])[2]
@@ -1042,6 +1087,7 @@ class OrangeGateDetector:
             rectangularity=1.0,
             convexity=1.0,
             hint=hint,
+            hsv=hsv,
         )
         return candidate, debug
 
@@ -1228,7 +1274,10 @@ class OrangeGateDetector:
         return False
 
     def _line_candidates(
-        self, mask: np.ndarray, hint: Optional[GateDetection]
+        self,
+        mask: np.ndarray,
+        hint: Optional[GateDetection],
+        hsv: Optional[np.ndarray] = None,
     ) -> list[tuple[Optional[_Candidate], Optional[CandidateDebug]]]:
         cfg = self.config
         edges = cv2.Canny(mask, 60, 160)
@@ -1261,7 +1310,9 @@ class OrangeGateDetector:
             rectangle_groups = self._rectangle_line_groups(cluster)
             if rectangle_groups:
                 rectangle_results = self._deduplicate_line_results([
-                    self._line_candidate_from_records(group, mask, hint)
+                    self._line_candidate_from_records(
+                        group, mask, hint, hsv=hsv
+                    )
                     for group in rectangle_groups
                 ])
                 if self._has_distinct_line_rectangles(rectangle_results):
@@ -1271,15 +1322,20 @@ class OrangeGateDetector:
             # Preserve the full cluster so a broken side or internal marking
             # cannot crop its box down to only part of the opening.
             results.append(
-                self._line_candidate_from_records(cluster, mask, hint)
+                self._line_candidate_from_records(
+                    cluster, mask, hint, hsv=hsv
+                )
             )
         return self._deduplicate_line_results(results)
 
     def _line_candidate(
-        self, mask: np.ndarray, hint: Optional[GateDetection]
+        self,
+        mask: np.ndarray,
+        hint: Optional[GateDetection],
+        hsv: Optional[np.ndarray] = None,
     ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
         """Compatibility helper returning the best spatial line cluster."""
-        results = self._line_candidates(mask, hint)
+        results = self._line_candidates(mask, hint, hsv=hsv)
         valid = [
             (candidate, debug)
             for candidate, debug in results
@@ -1360,6 +1416,7 @@ class OrangeGateDetector:
                     hierarchy,
                     cleaned_mask,
                     hint,
+                    hsv=hsv,
                 )
                 debug_candidates.append(debug)
                 if candidate is not None:
@@ -1374,7 +1431,7 @@ class OrangeGateDetector:
             and strong_contour < 0.55
         ):
             for line_candidate, line_debug in self._line_candidates(
-                cleaned_mask, hint
+                cleaned_mask, hint, hsv=hsv
             ):
                 if line_debug is not None:
                     debug_candidates.append(line_debug)
