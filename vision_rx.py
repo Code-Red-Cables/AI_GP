@@ -26,6 +26,7 @@ class VisionRX:
         self._last_debug_t = 0.0
         self._last_state = None
         self._display_enabled = config.VISION_DISPLAY
+        self._overlay_enabled = True
         if config.VISION_DEBUG:
             os.makedirs(config.VISION_DEBUG_DIR, exist_ok=True)
         self.thread = threading.Thread(target=self._vision_loop, daemon=False)
@@ -269,14 +270,35 @@ class VisionRX:
             >= config.VISION_DEBUG_INTERVAL_S
         )
         if self._display_enabled or should_save_debug:
-            annotated = draw_detection(
-                img,
-                tracked,
-                debug=self.detector.last_debug,
-                state=state,
-                command=command,
-                total_time_ms=total_ms,
-            )
+            annotated = img.copy()
+            if self._overlay_enabled:
+                try:
+                    annotated = draw_detection(
+                        img,
+                        tracked,
+                        debug=self.detector.last_debug,
+                        state=state,
+                        command=command,
+                        total_time_ms=total_ms,
+                    )
+                except Exception as exc:
+                    self._overlay_enabled = False
+                    print(
+                        '[VISION] annotation disabled; detection continues: '
+                        f'{type(exc).__name__}: {exc}',
+                        flush=True,
+                    )
+            if not self._overlay_enabled:
+                cv2.putText(
+                    annotated,
+                    'ANNOTATION DISABLED - DETECTION STILL RUNNING',
+                    (10, 24),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.48,
+                    (0, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
             if self._display_enabled:
                 self._show_display(
                     annotated.copy(),

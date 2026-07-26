@@ -13,12 +13,15 @@ from gate_estimator import build_gate_object_points, estimate_gate
 from opencv_gate_planner import OpenCVGatePlanner
 from vision_rx import VisionRX
 from vision.gate_detector import (
+    CandidateDebug,
+    DetectorDebug,
     GateDetection,
     GateVisionConfig,
     OrangeGateDetector,
     normalized_image_coordinates,
     order_corners,
     quadrilateral_diagonal_center,
+    draw_detection,
 )
 from vision.gate_tracker import GateTracker, GateTrackerConfig
 from vision.mode_router import (
@@ -242,6 +245,42 @@ class DetectorRobustnessTests(unittest.TestCase):
 
         np.testing.assert_array_equal(normalized_windows, segments)
         np.testing.assert_array_equal(normalized_singleton, segments)
+
+    def test_12c_debug_overlay_ignores_empty_cross_platform_contours(self):
+        mask = np.zeros(FRAME_SIZE, dtype=np.uint8)
+        debug = DetectorDebug(
+            raw_mask=mask,
+            cleaned_mask=mask,
+            candidates=[
+                CandidateDebug(
+                    outer_contour=np.empty((0, 2), dtype=np.float32),
+                    opening_contour=None,
+                    accepted=False,
+                    score=0.0,
+                    confidence=0.0,
+                    reason='empty',
+                    method='none',
+                    center=(0.0, 0.0),
+                    bbox=(0, 0, 0, 0),
+                ),
+                CandidateDebug(
+                    outer_contour=np.array(
+                        [[10.0, 10.0], [30.0, 10.0], [20.0, 30.0]],
+                        dtype=np.float32,
+                    ),
+                    opening_contour=None,
+                    accepted=True,
+                    score=0.5,
+                    confidence=0.5,
+                    reason='accepted',
+                    method='line_reconstruction',
+                    center=(20.0, 20.0),
+                    bbox=(10, 10, 20, 20),
+                ),
+            ],
+        )
+        overlay = draw_detection(blank_frame(), None, debug=debug)
+        self.assertEqual(overlay.shape, (*FRAME_SIZE, 3))
 
     def test_13_multiple_orange_objects_rejects_filled_floor_marking(self):
         image = synthetic_gate(center=(210, 160), size=110, thickness=16)

@@ -1179,9 +1179,19 @@ def detect_gate(
 
 
 def _scaled_contour(contour: np.ndarray, scale: float) -> np.ndarray:
-    if scale == 1.0:
-        return contour
-    return np.round(contour.astype(np.float32) / scale).astype(np.int32)
+    """Normalize any OpenCV contour wrapper shape to contiguous N x 1 x 2."""
+    array = np.asarray(contour)
+    if array.size < 2 or array.size % 2:
+        return np.empty((0, 1, 2), dtype=np.int32)
+    points = array.reshape(-1, 2).astype(np.float64)
+    points = points[np.all(np.isfinite(points), axis=1)]
+    if not len(points):
+        return np.empty((0, 1, 2), dtype=np.int32)
+    return np.ascontiguousarray(
+        np.round(points / max(float(scale), 1e-9))
+        .astype(np.int32)
+        .reshape(-1, 1, 2)
+    )
 
 
 def draw_detection(
@@ -1205,7 +1215,8 @@ def draw_detection(
         for item in debug.candidates:
             contour = _scaled_contour(item.outer_contour, debug.scale)
             color = (0, 145, 0) if item.accepted else (80, 80, 190)
-            cv2.drawContours(output, [contour], -1, color, 1)
+            if len(contour):
+                cv2.drawContours(output, [contour], -1, color, 1)
             x, y, _, _ = item.bbox
             label_point = (
                 int(x / debug.scale),
@@ -1229,12 +1240,20 @@ def draw_detection(
             opening = _scaled_contour(
                 debug.selected_opening_contour, debug.scale
             )
-            cv2.drawContours(output, [opening], -1, (255, 180, 0), 2)
+            if len(opening):
+                cv2.drawContours(output, [opening], -1, (255, 180, 0), 2)
         if debug.selected_contour is not None:
             selected_outer = _scaled_contour(
                 debug.selected_contour, debug.scale
             )
-            cv2.drawContours(output, [selected_outer], -1, (40, 255, 40), 3)
+            if len(selected_outer):
+                cv2.drawContours(
+                    output,
+                    [selected_outer],
+                    -1,
+                    (40, 255, 40),
+                    3,
+                )
 
         # Live VisionRX writes only this overlay, so keep compact mask insets here
         # as well as the larger panels in the offline viewer.
