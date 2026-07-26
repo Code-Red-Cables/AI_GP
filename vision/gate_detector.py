@@ -799,6 +799,19 @@ class OrangeGateDetector:
     def _line_angle_difference(angle: float, reference: float) -> float:
         return abs((angle - reference + 90.0) % 180.0 - 90.0)
 
+    @staticmethod
+    def _normalize_hough_lines(lines: np.ndarray) -> np.ndarray:
+        """Return Hough segments as N x 4 on every OpenCV platform.
+
+        OpenCV wheels have returned both N x 1 x 4 and N x 4 arrays for
+        HoughLinesP. Flattening only the singleton dimensions avoids coupling
+        the detector to a platform-specific wrapper shape.
+        """
+        array = np.asarray(lines)
+        if array.size == 0 or array.size % 4:
+            return np.empty((0, 4), dtype=np.float32)
+        return array.reshape(-1, 4)
+
     def _line_candidate(
         self, mask: np.ndarray, hint: Optional[GateDetection]
     ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
@@ -815,11 +828,14 @@ class OrangeGateDetector:
             minLineLength=minimum_length,
             maxLineGap=cfg.hough_max_line_gap,
         )
-        if lines is None or len(lines) < 3:
+        if lines is None:
+            return None, None
+        segments = self._normalize_hough_lines(lines)
+        if len(segments) < 3:
             return None, None
 
         records = []
-        for raw in lines[:, 0]:
+        for raw in segments:
             x1, y1, x2, y2 = (float(value) for value in raw)
             length = math.hypot(x2 - x1, y2 - y1)
             angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0

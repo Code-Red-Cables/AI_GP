@@ -224,6 +224,24 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertTrue(result.found)
         self.assertAlmostEqual(result.center_x, 320, delta=10)
 
+    def test_12b_hough_line_shapes_are_platform_independent(self):
+        segments = np.array(
+            [[10, 20, 30, 40], [50, 60, 70, 80], [90, 10, 20, 30]],
+            dtype=np.int32,
+        )
+        windows_shape = segments.copy()
+        singleton_shape = segments[:, np.newaxis, :]
+
+        normalized_windows = self.detector._normalize_hough_lines(
+            windows_shape
+        )
+        normalized_singleton = self.detector._normalize_hough_lines(
+            singleton_shape
+        )
+
+        np.testing.assert_array_equal(normalized_windows, segments)
+        np.testing.assert_array_equal(normalized_singleton, segments)
+
     def test_13_multiple_orange_objects_rejects_filled_floor_marking(self):
         image = synthetic_gate(center=(210, 160), size=110, thickness=16)
         cv2.rectangle(image, (350, 240), (630, 350), ORANGE, -1)
