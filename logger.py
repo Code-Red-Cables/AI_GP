@@ -73,6 +73,7 @@ class Logger:
         ctrl = d.get('control_output')  or {}
         gate = d.get('gate_detection')
         nav  = d.get('navigation')      or {}
+        path = d.get('path_detection') or {}
         vis  = d.get('vision')          or {}
         tel  = d.get('teleop_cmd')      or {}
         tgt  = d.get('planner_target')  or {}
@@ -121,6 +122,11 @@ class Logger:
             'nav_down':       self._f(nav.get('down_mps')),
             'nav_yaw_rate':   self._f(nav.get('yaw_rate_rps')),
             'nav_align_err':  self._f(nav.get('alignment_error')),
+            # lower-image blue course-lane detector
+            'path_found':     str(int(bool(path.get('found')))),
+            'path_conf':      self._f(path.get('confidence')),
+            'path_offset':    self._f(path.get('offset')),
+            'path_heading':   self._f(path.get('heading')),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
             # teleop inputs

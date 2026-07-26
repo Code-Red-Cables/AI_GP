@@ -14,6 +14,7 @@ from gate_estimator import estimate_gate
 from vision.gate_detector import OrangeGateDetector, draw_detection
 from vision.gate_tracker import GateTracker
 from vision.navigation import GateNavigator, q2_demo_navigation_config
+from vision.path_detector import BluePathDetection, BluePathDetector, draw_blue_path
 
 
 class VisionRX:
@@ -21,6 +22,7 @@ class VisionRX:
     def __init__(self, data):
         self.data = data
         self.detector = OrangeGateDetector()
+        self.path_detector = BluePathDetector()
         self.tracker = GateTracker()
         self.navigator = GateNavigator(q2_demo_navigation_config())
         self._last_debug_t = 0.0
@@ -137,8 +139,9 @@ class VisionRX:
     def build_display_frame(
         annotated: np.ndarray,
         cleaned_mask: np.ndarray,
+        accepted_targets: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Compose camera detection and binary segmentation panels."""
+        """Compose camera, orange segmentation, and accepted-target panels."""
         if cleaned_mask.shape[:2] != annotated.shape[:2]:
             cleaned_mask = cv2.resize(
                 cleaned_mask,
@@ -146,6 +149,18 @@ class VisionRX:
                 interpolation=cv2.INTER_NEAREST,
             )
         mask_panel = cv2.cvtColor(cleaned_mask, cv2.COLOR_GRAY2BGR)
+        if accepted_targets is None:
+            accepted_targets = np.zeros_like(annotated)
+        elif accepted_targets.shape[:2] != annotated.shape[:2]:
+            accepted_targets = cv2.resize(
+                accepted_targets,
+                (annotated.shape[1], annotated.shape[0]),
+                interpolation=cv2.INTER_NEAREST,
+            )
+        if accepted_targets.ndim == 2:
+            accepted_targets = cv2.cvtColor(
+                accepted_targets, cv2.COLOR_GRAY2BGR
+            )
         cv2.putText(
             annotated,
             'CAMERA + DETECTION',
@@ -156,25 +171,84 @@ class VisionRX:
             1,
             cv2.LINE_AA,
         )
-        cv2.putText(
-            mask_panel,
-            'CLEANED ORANGE BITMASK',
-            (10, mask_panel.shape[0] - 12),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.48,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
-        return np.hstack((annotated, mask_panel))
+        upper_height = annotated.shape[0] // 2
+        lower_height = annotated.shape[0] - upper_height
+        diagnostics = []
+        for panel, label, panel_height in (
+            (mask_panel, 'ORANGE COLOR MASK', upper_height),
+            (
+                accepted_targets,
+                'ACCEPTED GATE + BLUE PATH',
+                lower_height,
+            ),
+        ):
+            panel = cv2.resize(
+                panel,
+                (annotated.shape[1], panel_height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            cv2.putText(
+                panel,
+                label,
+                (10, panel.shape[0] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.43,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            diagnostics.append(panel)
+        return np.hstack((annotated, np.vstack(diagnostics)))
+
+    @staticmethod
+    def build_accepted_target_frame(
+        shape: tuple[int, ...],
+        gate_detection,
+        path_detection: BluePathDetection | None,
+    ) -> np.ndarray:
+        """Show only geometry accepted for steering, not rejected candidates."""
+        target = np.zeros(shape, dtype=np.uint8)
+        if path_detection is not None and path_detection.mask is not None:
+            path_mask = path_detection.mask
+            if path_mask.shape[:2] != target.shape[:2]:
+                path_mask = cv2.resize(
+                    path_mask,
+                    (target.shape[1], target.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+            target[path_mask > 0] = (80, 45, 0)
+        draw_blue_path(target, path_detection)
+
+        if gate_detection is not None and gate_detection.found:
+            if gate_detection.corners is not None:
+                corners = np.round(
+                    gate_detection.corners
+                ).astype(np.int32).reshape(-1, 2)
+                if len(corners) >= 3:
+                    cv2.polylines(
+                        target, [corners], True, (0, 255, 0), 3, cv2.LINE_AA
+                    )
+            else:
+                x, y, width, height = gate_detection.bbox
+                cv2.rectangle(
+                    target,
+                    (x, y),
+                    (x + width, y + height),
+                    (0, 255, 0),
+                    3,
+                )
+        return target
 
     def _show_display(
         self,
         annotated: np.ndarray,
         cleaned_mask: np.ndarray,
+        accepted_targets: np.ndarray,
     ) -> None:
         try:
-            display = self.build_display_frame(annotated, cleaned_mask)
+            display = self.build_display_frame(
+                annotated, cleaned_mask, accepted_targets
+            )
             cv2.imshow('Q2 OpenCV vision', display)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), 27):
@@ -205,7 +279,12 @@ class VisionRX:
             measured if measured.found else None,
             timestamp=monotonic_now,
         )
-        command = self.navigator.update(tracked, monotonic_now)
+        path_detection = self.path_detector.detect(
+            img, timestamp=monotonic_now
+        )
+        command = self.navigator.update(
+            tracked, monotonic_now, path=path_detection
+        )
         state = command.state.value
         self._log_state(state)
 
@@ -251,6 +330,20 @@ class VisionRX:
             'confidence': command.confidence,
             'predicted': command.predicted,
             'alignment_error': command.alignment_error,
+            'path_found': path_detection.found,
+            'path_confidence': path_detection.confidence,
+            'path_offset': path_detection.normalized_offset,
+            'path_heading': path_detection.normalized_heading,
+        }
+        path_data = {
+            'ts': timestamp_ns,
+            'frame_id': frame_id,
+            'found': path_detection.found,
+            'confidence': path_detection.confidence,
+            'offset': path_detection.normalized_offset,
+            'heading': path_detection.normalized_heading,
+            'predicted': path_detection.predicted,
+            'segments': path_detection.segment_count,
         }
         total_ms = (time.perf_counter() - started) * 1000.0
 
@@ -258,8 +351,10 @@ class VisionRX:
         self.data['gate_detection'] = gate_detection
         self.data['vision'] = gate_estimate
         self.data['navigation'] = navigation
+        self.data['path_detection'] = path_data
         self.data['vision_timings_ms'] = {
             **self.detector.last_debug.timings_ms,
+            'path': self.path_detector.last_time_ms,
             'tracker': self.tracker.last_update_ms,
             'total': total_ms,
         }
@@ -280,6 +375,11 @@ class VisionRX:
                         state=state,
                         command=command,
                         total_time_ms=total_ms,
+                        show_rejected_candidates=False,
+                        show_mask_insets=False,
+                    )
+                    annotated = draw_blue_path(
+                        annotated, path_detection
                     )
                 except Exception as exc:
                     self._overlay_enabled = False
@@ -300,9 +400,15 @@ class VisionRX:
                     cv2.LINE_AA,
                 )
             if self._display_enabled:
+                accepted_targets = self.build_accepted_target_frame(
+                    annotated.shape,
+                    tracked,
+                    path_detection,
+                )
                 self._show_display(
                     annotated.copy(),
                     self.detector.last_debug.cleaned_mask,
+                    accepted_targets,
                 )
         if should_save_debug:
             self._last_debug_t = time.time()

@@ -1202,6 +1202,8 @@ def draw_detection(
     command: Optional[object] = None,
     raw_detection: Optional[GateDetection] = None,
     total_time_ms: Optional[float] = None,
+    show_rejected_candidates: bool = True,
+    show_mask_insets: bool = True,
 ) -> np.ndarray:
     """Render candidates, opening geometry, tracked target, state, and timing."""
     output = bgr.copy()
@@ -1213,6 +1215,8 @@ def draw_detection(
 
     if debug:
         for item in debug.candidates:
+            if not item.accepted and not show_rejected_candidates:
+                continue
             contour = _scaled_contour(item.outer_contour, debug.scale)
             color = (0, 145, 0) if item.accepted else (80, 80, 190)
             if len(contour):
@@ -1255,35 +1259,38 @@ def draw_detection(
                     3,
                 )
 
-        # Live VisionRX writes only this overlay, so keep compact mask insets here
-        # as well as the larger panels in the offline viewer.
-        inset_width = min(120, max(24, (width - 12) // 2))
-        inset_height = max(
-            1,
-            min(max(1, height - 4), max(18, round(inset_width * height / width))),
-        )
-        for inset_index, (mask, label) in enumerate(
-            ((debug.raw_mask, "RAW"), (debug.cleaned_mask, "CLEAN"))
-        ):
-            inset = cv2.resize(
-                mask,
-                (inset_width, inset_height),
-                interpolation=cv2.INTER_NEAREST,
-            )
-            inset = cv2.cvtColor(inset, cv2.COLOR_GRAY2BGR)
-            x0 = width - (2 - inset_index) * (inset_width + 4)
-            y0 = height - inset_height - 4
-            output[y0 : y0 + inset_height, x0 : x0 + inset_width] = inset
-            cv2.putText(
-                output,
-                label,
-                (x0 + 3, y0 + 13),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (0, 255, 255),
+        if show_mask_insets:
+            # Offline diagnostics retain compact raw/clean mask previews.
+            inset_width = min(120, max(24, (width - 12) // 2))
+            inset_height = max(
                 1,
-                cv2.LINE_AA,
+                min(
+                    max(1, height - 4),
+                    max(18, round(inset_width * height / width)),
+                ),
             )
+            for inset_index, (mask, label) in enumerate(
+                ((debug.raw_mask, "RAW"), (debug.cleaned_mask, "CLEAN"))
+            ):
+                inset = cv2.resize(
+                    mask,
+                    (inset_width, inset_height),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+                inset = cv2.cvtColor(inset, cv2.COLOR_GRAY2BGR)
+                x0 = width - (2 - inset_index) * (inset_width + 4)
+                y0 = height - inset_height - 4
+                output[y0 : y0 + inset_height, x0 : x0 + inset_width] = inset
+                cv2.putText(
+                    output,
+                    label,
+                    (x0 + 3, y0 + 13),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.35,
+                    (0, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
     if raw_detection is not None and raw_detection.found:
         raw_center = (

@@ -75,6 +75,17 @@ class NavigationConfig:
     max_yaw_acceleration: float = math.radians(180.0)
     command_lpf_alpha: float = 0.48
 
+    # Optional blue-lane assist. Zero gains keep the generic navigator's
+    # historical behavior; q2_demo_navigation_config enables conservative
+    # centering while keeping the orange gate authoritative.
+    path_minimum_confidence: float = 0.25
+    path_heading_weight: float = 0.60
+    path_lateral_kp: float = 0.0
+    path_yaw_kp: float = 0.0
+    path_max_right_mps: float = 0.0
+    path_max_yaw_rate_rps: float = 0.0
+    path_blend_with_gate: float = 0.20
+
 
 @dataclass
 class NavigationCommand:
@@ -241,7 +252,10 @@ class GateNavigator:
         ) * quality
 
     def update(
-        self, detection: Optional[GateDetection], now: float
+        self,
+        detection: Optional[GateDetection],
+        now: float,
+        path: Optional[object] = None,
     ) -> NavigationCommand:
         cfg = self.config
         dt = self._dt(now)
@@ -374,6 +388,44 @@ class GateNavigator:
                 0.55 * cfg.search_yaw_rate_rps * self._last_direction
             )
 
+        path_found = bool(
+            path is not None
+            and getattr(path, 'found', False)
+            and getattr(path, 'confidence', 0.0)
+            >= cfg.path_minimum_confidence
+        )
+        path_assist_allowed = self.state not in (
+            NavigationState.COMMIT,
+            NavigationState.PASS_THROUGH,
+        )
+        if path_found and path_assist_allowed and (
+            cfg.path_lateral_kp != 0.0 or cfg.path_yaw_kp != 0.0
+        ):
+            path_error = float(
+                np.clip(
+                    getattr(path, 'normalized_offset', 0.0)
+                    + cfg.path_heading_weight
+                    * getattr(path, 'normalized_heading', 0.0),
+                    -1.0,
+                    1.0,
+                )
+            )
+            path_weight = cfg.path_blend_with_gate if usable else 1.0
+            desired[1] += path_weight * float(
+                np.clip(
+                    cfg.path_lateral_kp * path_error,
+                    -cfg.path_max_right_mps,
+                    cfg.path_max_right_mps,
+                )
+            )
+            desired[3] += path_weight * float(
+                np.clip(
+                    cfg.path_yaw_kp * path_error,
+                    -cfg.path_max_yaw_rate_rps,
+                    cfg.path_max_yaw_rate_rps,
+                )
+            )
+
         conditioned = self._condition(desired, dt)
         self._last_update = now
         self._previous_alignment_error = alignment_error
@@ -425,4 +477,11 @@ def q2_demo_navigation_config() -> NavigationConfig:
         max_yaw_acceleration=100.0,
         command_lpf_alpha=1.0,
         track_alignment_scale=1.0,
+        path_minimum_confidence=0.30,
+        path_heading_weight=0.60,
+        path_lateral_kp=1.0,
+        path_yaw_kp=0.80,
+        path_max_right_mps=0.60,
+        path_max_yaw_rate_rps=0.35,
+        path_blend_with_gate=0.20,
     )

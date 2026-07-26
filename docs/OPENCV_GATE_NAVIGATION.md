@@ -42,15 +42,21 @@ python main.py
    material centroid.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames.
-4. `GateNavigator` moves through `SEARCH`, `TRACK`,
+4. `BluePathDetector` uses only the lower 60% of the image and requires
+   converging left/right cyan lane boundaries. It estimates a smoothed lane
+   center and heading; isolated blue objects are not accepted as a path.
+5. `GateNavigator` moves through `SEARCH`, `TRACK`,
    `ALIGN_AND_APPROACH`, `COMMIT`, `PASS_THROUGH`, and `RECOVER`.
    Its deployed gains come from `collect_demos.py` and
    `StabilizedController`: constant 1.0 m/s approach, gate target at 58% image
    height, a 30%-frame vertical deadband, and vertical correction only after
    the gate opening reaches the demonstrated close-range size.
-5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
+   The blue path supplies bounded lateral/yaw assistance, at only 20% strength
+   while a usable orange gate is visible, so the flyable gate stays primary.
+   Path assistance is suspended during gate commit and pass-through.
+6. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
-6. `Controller` reuses the demonstration AHRS from
+7. `Controller` reuses the demonstration AHRS from
    `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
    attitude gains and inverted rate axes, and caps all rates at 1.05 rad/s. A
    stale-IMU watchdog commands neutral hover.
@@ -76,10 +82,13 @@ $env:VISION_DISPLAY="1"
 .\.venv\Scripts\python.exe main.py
 ```
 
-The live window shows the annotated camera frame beside the cleaned orange
-bitmask. Press `q` or Escape to close only the window, or `Ctrl+C` to stop the
-client. Reset the simulator before using perception-only mode so the vehicle is
-not left armed from an earlier run.
+The live window keeps the annotated camera full-size on the left and stacks
+two diagnostics on the right: the orange color mask and an accepted-target
+view containing only the gate and blue path geometry that may influence
+steering. Orange pixels in the mask are color candidates, not necessarily
+accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
+to stop the client. Reset the simulator before using perception-only mode so
+the vehicle is not left armed from an earlier run.
 
 Use the offline viewer without sending flight commands:
 
