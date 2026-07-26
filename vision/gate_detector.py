@@ -77,6 +77,7 @@ class GateVisionConfig:
     hough_min_line_fraction: float = 0.055
     hough_max_line_gap: int = 14
     hough_angle_tolerance_degrees: float = 20.0
+    hough_cluster_gap_fraction: float = 0.075
 
     temporal_center_sigma: float = 0.38
     temporal_size_sigma: float = 0.75
@@ -925,43 +926,55 @@ class OrangeGateDetector:
             return np.empty((0, 4), dtype=np.float32)
         return array.reshape(-1, 4)
 
-    def _line_candidate(
-        self, mask: np.ndarray, hint: Optional[GateDetection]
+    @staticmethod
+    def _cluster_line_records(records, gap: float):
+        """Group nearby Hough segments before fitting any gate rectangle."""
+        count = len(records)
+        parents = list(range(count))
+
+        def root(index):
+            while parents[index] != index:
+                parents[index] = parents[parents[index]]
+                index = parents[index]
+            return index
+
+        def union(left, right):
+            left_root, right_root = root(left), root(right)
+            if left_root != right_root:
+                parents[right_root] = left_root
+
+        bounds = []
+        for raw, _, _ in records:
+            x1, y1, x2, y2 = (float(value) for value in raw)
+            bounds.append(
+                (
+                    min(x1, x2),
+                    min(y1, y2),
+                    max(x1, x2),
+                    max(y1, y2),
+                )
+            )
+        for left in range(count):
+            lx0, ly0, lx1, ly1 = bounds[left]
+            for right in range(left + 1, count):
+                rx0, ry0, rx1, ry1 = bounds[right]
+                dx = max(0.0, max(lx0, rx0) - min(lx1, rx1))
+                dy = max(0.0, max(ly0, ry0) - min(ly1, ry1))
+                if math.hypot(dx, dy) <= gap:
+                    union(left, right)
+
+        groups = {}
+        for index, record in enumerate(records):
+            groups.setdefault(root(index), []).append(record)
+        return [group for group in groups.values() if len(group) >= 3]
+
+    def _line_candidate_from_records(
+        self,
+        records,
+        mask: np.ndarray,
+        hint: Optional[GateDetection],
     ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
         cfg = self.config
-        edges = cv2.Canny(mask, 60, 160)
-        minimum_length = max(
-            6, round(min(mask.shape) * cfg.hough_min_line_fraction)
-        )
-        lines = cv2.HoughLinesP(
-            edges,
-            1,
-            np.pi / 180.0,
-            cfg.hough_threshold,
-            minLineLength=minimum_length,
-            maxLineGap=cfg.hough_max_line_gap,
-        )
-        if lines is None:
-            return None, None
-        segments = self._normalize_hough_lines(lines)
-        if len(segments) < 3:
-            return None, None
-
-        records = []
-        for raw in segments:
-            x1, y1, x2, y2 = (float(value) for value in raw)
-            length = math.hypot(x2 - x1, y2 - y1)
-            angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
-            midpoint = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
-            if hint is not None and hint.found:
-                hx = (hint.normalized_x + 1.0) * mask.shape[1] / 2.0
-                hy = (hint.normalized_y + 1.0) * mask.shape[0] / 2.0
-                radius = 1.8 * max(hint.opening_width, hint.opening_height, 20.0)
-                if math.hypot(midpoint[0] - hx, midpoint[1] - hy) > radius:
-                    continue
-            records.append((raw.astype(np.float32), length, angle))
-        if len(records) < 3:
-            return None, None
         dominant = max(records, key=lambda item: item[1])[2]
         tolerance = cfg.hough_angle_tolerance_degrees
         parallel = [
@@ -1029,6 +1042,70 @@ class OrangeGateDetector:
             hint=hint,
         )
         return candidate, debug
+
+    def _line_candidates(
+        self, mask: np.ndarray, hint: Optional[GateDetection]
+    ) -> list[tuple[Optional[_Candidate], Optional[CandidateDebug]]]:
+        cfg = self.config
+        edges = cv2.Canny(mask, 60, 160)
+        minimum_length = max(
+            6, round(min(mask.shape) * cfg.hough_min_line_fraction)
+        )
+        lines = cv2.HoughLinesP(
+            edges,
+            1,
+            np.pi / 180.0,
+            cfg.hough_threshold,
+            minLineLength=minimum_length,
+            maxLineGap=cfg.hough_max_line_gap,
+        )
+        if lines is None:
+            return []
+        segments = self._normalize_hough_lines(lines)
+        records = []
+        for raw in segments:
+            x1, y1, x2, y2 = (float(value) for value in raw)
+            length = math.hypot(x2 - x1, y2 - y1)
+            angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180.0
+            records.append((raw.astype(np.float32), length, angle))
+        gap = max(
+            8.0,
+            min(mask.shape) * cfg.hough_cluster_gap_fraction,
+        )
+        return [
+            self._line_candidate_from_records(cluster, mask, hint)
+            for cluster in self._cluster_line_records(records, gap)
+        ]
+
+    def _line_candidate(
+        self, mask: np.ndarray, hint: Optional[GateDetection]
+    ) -> tuple[Optional[_Candidate], Optional[CandidateDebug]]:
+        """Compatibility helper returning the best spatial line cluster."""
+        results = self._line_candidates(mask, hint)
+        valid = [
+            (candidate, debug)
+            for candidate, debug in results
+            if candidate is not None
+        ]
+        if not valid:
+            return (None, results[0][1]) if results else (None, None)
+        if hint is not None and hint.found:
+            hx = (hint.normalized_x + 1.0) * mask.shape[1] / 2.0
+            hy = (hint.normalized_y + 1.0) * mask.shape[0] / 2.0
+            return min(
+                valid,
+                key=lambda item: math.hypot(
+                    item[0].center[0] - hx,
+                    item[0].center[1] - hy,
+                ),
+            )
+        return max(
+            valid,
+            key=lambda item: (
+                item[0].opening_width * item[0].opening_height,
+                item[0].score,
+            ),
+        )
 
     def detect(
         self,
@@ -1098,11 +1175,13 @@ class OrangeGateDetector:
             self.config.enable_line_reconstruction
             and strong_contour < 0.55
         ):
-            line_candidate, line_debug = self._line_candidate(cleaned_mask, hint)
-            if line_debug is not None:
-                debug_candidates.append(line_debug)
-            if line_candidate is not None:
-                candidates.append(line_candidate)
+            for line_candidate, line_debug in self._line_candidates(
+                cleaned_mask, hint
+            ):
+                if line_debug is not None:
+                    debug_candidates.append(line_debug)
+                if line_candidate is not None:
+                    candidates.append(line_candidate)
         line_done = time.perf_counter()
 
         # Acquire the largest valid opening. While a tracked hint exists,

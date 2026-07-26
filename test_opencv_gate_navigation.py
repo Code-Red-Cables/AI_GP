@@ -403,14 +403,22 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertLess(selected.bbox[2], 170)
         self.assertLess(selected.bbox[3], 170)
 
-    def test_19e_line_reconstruction_rejects_multi_gate_span(self):
+    def test_19e_line_reconstruction_splits_multi_gate_span(self):
         mask = np.zeros(FRAME_SIZE, dtype=np.uint8)
         cv2.rectangle(mask, (120, 100), (300, 280), 255, 8)
         cv2.rectangle(mask, (430, 120), (540, 230), 255, 8)
 
-        candidate, _ = OrangeGateDetector()._line_candidate(mask, None)
+        results = OrangeGateDetector()._line_candidates(mask, None)
+        candidates = [
+            candidate
+            for candidate, _ in results
+            if candidate is not None
+        ]
 
-        self.assertIsNone(candidate)
+        self.assertEqual(len(candidates), 2)
+        self.assertTrue(
+            all(candidate.bbox[2] < 220 for candidate in candidates)
+        )
 
 
 class TrackerTests(unittest.TestCase):
