@@ -9,7 +9,7 @@ def _env_bool(name, default=False):
     return value.strip().lower() in {'1', 'true', 'yes', 'on'}
 
 # ---- Flight controller ----
-HOVER_THRUST    = 0.27      # open-loop hover baseline (no baro in VQ2)
+HOVER_THRUST    = 0.25      # open-loop hover baseline (no baro in VQ2)
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
 KP_LEAN         = 0.10      # body velocity (m/s) → desired lean angle (rad)
 MAX_LEAN_RAD    = math.radians(25.0)

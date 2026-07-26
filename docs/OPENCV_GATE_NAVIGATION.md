@@ -39,7 +39,7 @@ python main.py
 
 1. `VisionRX` reassembles the newest complete UDP JPEG frame.
 2. `OrangeGateDetector` finds the flyable opening rather than the orange
-   material centroid.
+   material centroid and always selects the largest valid opening in view.
 3. `GateTracker` rejects implausible jumps and predicts through at most five
    missed frames. When starting a new track, it also rejects tiny openings,
    extreme side targets, and objects at the bottom of the image. These guards
@@ -51,9 +51,11 @@ python main.py
    profile: reduced blind/track lean, progressive leveling from 0.8% opening
    area, and a short bounded braking command near 2.5%. This prevents the
    constant demo lean from accelerating through gate one too quickly to align
-   gate two. The gate target is held at 62% image height with a 24%-frame
-   vertical deadband, placing the drone higher in the opening to clear the
-   bottom rail. Horizontal gate capture favors lateral bank over camera yaw,
+   gate two. The gate target is held at 59% image height with a 10%-frame
+   vertical deadband. Altitude correction remains active even for distant
+   gates, keeping the selected opening away from the top and bottom of the
+   frame while retaining bottom-rail clearance. Horizontal gate capture favors
+   lateral bank over camera yaw,
    so turning toward an off-axis gate cannot masquerade as moving onto its
    flight line.
    Blue-path detection and steering are disabled in the Q2 runtime. Only the
@@ -68,6 +70,9 @@ python main.py
    The race timer's active-gate increment is used only to confirm a completed
    pass and release the old visual track immediately; it supplies no steering
    geometry.
+   If the selected gate approaches any image edge, forward speed is reduced
+   and then reversed while centering continues. With no measured gate, blind
+   forward flight stops and the vehicle scans toward the last known direction.
 5. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
    forward/right/down to Q2 NED velocity.
 6. `Controller` reuses the demonstration AHRS from

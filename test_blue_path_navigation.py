@@ -67,9 +67,12 @@ class Q2BluePathIsolationTests(unittest.TestCase):
     def test_q2_profile_ignores_path_only_detection(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         command = navigator.update(None, 1.0, path=self.right_path())
+        baseline = GateNavigator(q2_demo_navigation_config()).update(
+            None, 1.0
+        )
         self.assertEqual(command.right_mps, 0.0)
-        self.assertEqual(command.yaw_rate_rps, 0.0)
-        self.assertGreater(command.forward_mps, 0.0)
+        self.assertEqual(command.yaw_rate_rps, baseline.yaw_rate_rps)
+        self.assertEqual(command.forward_mps, 0.0)
 
     def test_q2_profile_ignores_path_with_gate(self):
         path = self.right_path()

@@ -39,13 +39,13 @@ class _FakeConnection:
 class DemoNavigationProfileTests(unittest.TestCase):
     def test_profile_matches_collect_demos_tuning(self):
         cfg = q2_demo_navigation_config()
-        self.assertAlmostEqual(cfg.search_forward_mps, 0.45)
+        self.assertAlmostEqual(cfg.search_forward_mps, 0.0)
         self.assertAlmostEqual(cfg.maximum_approach_mps, 0.65)
-        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.24)
-        self.assertAlmostEqual(cfg.vertical_deadband, 0.24)
+        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.18)
+        self.assertAlmostEqual(cfg.vertical_deadband, 0.10)
         self.assertAlmostEqual(
             cfg.vertical_control_min_area_ratio,
-            40.0 / 4096.0,
+            0.0,
         )
         self.assertAlmostEqual(cfg.horizontal_yaw_kp, 0.75)
         self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.48)
@@ -149,11 +149,11 @@ class DemoNavigationProfileTests(unittest.TestCase):
             tracker.update(forward_gate, timestamp=1.0)
         )
 
-    def test_no_gate_uses_reduced_blind_approach_without_yaw(self):
+    def test_no_gate_stops_forward_flight_and_scans(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         command = navigator.update(None, 1.0)
-        self.assertAlmostEqual(command.forward_mps, 0.45)
-        self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
+        self.assertAlmostEqual(command.forward_mps, 0.0)
+        self.assertGreater(command.yaw_rate_rps, 0.0)
 
     def test_close_gate_slows_and_brakes_before_commit(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -200,21 +200,31 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator = GateNavigator(q2_demo_navigation_config())
         navigator.state = NavigationState.COMMIT
         navigator.confirm_gate_pass(2.0)
-        self.assertEqual(
-            navigator.state, NavigationState.PASS_THROUGH
-        )
+        self.assertEqual(navigator.state, NavigationState.SEARCH)
         self.assertEqual(navigator._state_since, 2.0)
 
-    def test_vertical_servo_is_close_range_with_demo_deadband(self):
+    def test_vertical_servo_keeps_distant_gate_in_frame(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         far = detection_at(ny=0.70, opening_width=35)
         _, far_vertical, _ = navigator._errors(far)
-        self.assertEqual(far_vertical, 0.0)
+        self.assertAlmostEqual(far_vertical, 0.42)
 
         close = detection_at(ny=0.60, opening_width=80)
         _, close_vertical, _ = navigator._errors(close)
-        # (0.60 - 0.24 target) - 0.24 Q2 clearance deadband.
-        self.assertAlmostEqual(close_vertical, 0.12)
+        # (0.60 - 0.18 target) - 0.10 framing deadband.
+        self.assertAlmostEqual(close_vertical, 0.32)
+
+    def test_gate_near_frame_edge_stops_forward_approach(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        edge_gate = detection_at(
+            nx=0.90,
+            opening_width=50,
+            opening_height=40,
+            stable_frames=5,
+        )
+        command = navigator.update(edge_gate, 1.0)
+        self.assertLess(command.forward_mps, 0.0)
+        self.assertGreater(command.right_mps, 0.0)
 
     def test_q2_controller_matches_demo_gain_damping_and_rate_cap(self):
         connection = _FakeConnection()

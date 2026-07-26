@@ -99,6 +99,9 @@ class NavigationConfig:
     next_gate_yaw_kp: float = 0.0
     next_gate_max_right_mps: float = 0.0
     next_gate_max_yaw_rate_rps: float = 0.0
+    framing_soft_edge_normalized: float = 0.58
+    framing_hard_edge_normalized: float = 0.82
+    framing_retreat_mps: float = -0.12
 
 
 @dataclass
@@ -289,10 +292,10 @@ class GateNavigator:
     def confirm_gate_pass(self, now: float) -> None:
         """Release the old visual target after the race timer confirms a pass."""
         self._last_seen_at = now
-        self._transition(NavigationState.PASS_THROUGH, now, force=True)
-        # Confirmation arrives after the physical crossing, so path guidance
-        # may resume immediately rather than waiting another delay interval.
-        self._state_since = now - self.config.path_pass_through_delay_s
+        # Race confirmation arrives after the physical crossing. Do not add
+        # another blind pass-through interval; stop and acquire the largest
+        # visible gate immediately.
+        self._transition(NavigationState.SEARCH, now, force=True)
 
     def update(
         self,
@@ -469,6 +472,31 @@ class GateNavigator:
                 )
             )
 
+        # Never drive a measured gate out of the camera. As its center enters
+        # the outer frame margin, progressively remove forward speed and then
+        # back away while horizontal/vertical centering remains active.
+        if (
+            usable
+            and detection is not None
+            and self.state
+            not in (NavigationState.COMMIT, NavigationState.PASS_THROUGH)
+        ):
+            frame_edge = max(
+                abs(detection.normalized_x),
+                abs(detection.normalized_y),
+            )
+            soft = cfg.framing_soft_edge_normalized
+            hard = max(soft + 1e-6, cfg.framing_hard_edge_normalized)
+            if frame_edge > soft:
+                edge_progress = float(
+                    np.clip((frame_edge - soft) / (hard - soft), 0.0, 1.0)
+                )
+                safe_forward = (
+                    (1.0 - edge_progress) * max(0.0, desired[0])
+                    + edge_progress * cfg.framing_retreat_mps
+                )
+                desired[0] = min(desired[0], safe_forward)
+
         path_found = bool(
             path is not None
             and getattr(path, 'found', False)
@@ -553,16 +581,18 @@ def q2_demo_navigation_config() -> NavigationConfig:
         center_deadband=0.0,
         # Hold the opening lower in the camera (drone higher in the opening)
         # and start correcting sooner to clear the first gate's bottom rail.
-        vertical_setpoint_normalized=2.0 * 0.62 - 1.0,
-        vertical_deadband=0.24,
-        vertical_control_min_area_ratio=40.0 / 4096.0,
-        search_forward_mps=0.45,
-        search_yaw_rate_rps=0.0,
+        vertical_setpoint_normalized=2.0 * 0.59 - 1.0,
+        vertical_deadband=0.10,
+        # Distant gates still control altitude so they cannot drift out of the
+        # top or bottom of the frame.
+        vertical_control_min_area_ratio=0.0,
+        search_forward_mps=0.0,
+        search_yaw_rate_rps=0.16,
         track_forward_mps=0.55,
         minimum_approach_mps=0.35,
         maximum_approach_mps=0.65,
         commit_forward_mps=0.40,
-        recover_forward_mps=0.25,
+        recover_forward_mps=0.0,
         minimum_forward_mps=-0.12,
         maximum_forward_mps=0.65,
         approach_slowdown_start_area_ratio=0.008,

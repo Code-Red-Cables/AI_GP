@@ -57,8 +57,8 @@ class GateVisionConfig:
     polygon_epsilon_ratio: float = 0.035
     min_confidence: float = 0.22
     maximum_candidates: int = 30
-    # When a near gate fills the frame, prefer a supported gate candidate
-    # visible through its opening so guidance hands off continuously.
+    # Retained for configuration compatibility. Q2 now always selects the
+    # largest valid opening instead of handing off through a nearer opening.
     handoff_bbox_area_ratio: float = 0.30
 
     estimated_opening_scale: float = 0.72
@@ -991,33 +991,18 @@ class OrangeGateDetector:
                 candidates.append(line_candidate)
         line_done = time.perf_counter()
 
-        selected = max(candidates, key=lambda candidate: candidate.score, default=None)
-        if (
-            selected is not None
-            and selected.opening_contour is not None
-            and selected.bbox[2] * selected.bbox[3]
-            >= self.config.handoff_bbox_area_ratio
-            * cleaned_mask.shape[0]
-            * cleaned_mask.shape[1]
-        ):
-            through_opening = [
-                candidate
-                for candidate in candidates
-                if candidate is not selected
-                and cv2.pointPolygonTest(
-                    selected.opening_contour,
-                    candidate.center,
-                    False,
-                )
-                >= 0
-                and candidate.bbox[2] * candidate.bbox[3]
-                < selected.bbox[2] * selected.bbox[3]
-            ]
-            if through_opening:
-                selected = max(
-                    through_opening,
-                    key=lambda candidate: candidate.score,
-                )
+        # The closest race gate has the largest apparent flyable opening.
+        # Area is authoritative here: confidence/temporal score only break
+        # ties between similarly sized candidates that already passed all
+        # validity checks in _finalize_candidate().
+        selected = max(
+            candidates,
+            key=lambda candidate: (
+                candidate.opening_width * candidate.opening_height,
+                candidate.score,
+            ),
+            default=None,
+        )
         timings = {
             "preprocess": (preprocess_done - start) * 1000.0,
             "mask_generation": (mask_done - preprocess_done) * 1000.0,

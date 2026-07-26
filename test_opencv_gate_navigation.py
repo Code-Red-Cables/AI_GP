@@ -289,14 +289,14 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertTrue(result.found)
         self.assertLess(result.center_x, 300)
 
-    def test_14_temporal_hint_prevents_switch_to_larger_gate(self):
+    def test_14_largest_valid_gate_overrides_temporal_hint(self):
         image = blank_frame()
         add_gate(image, (190, 180), 180, 24)
         add_gate(image, (470, 180), 100, 16)
         hint = detection_at(nx=(470 - 320) / 320, opening_width=68)
         result = self.detector.detect(image, hint=hint)
         self.assertTrue(result.found)
-        self.assertGreater(result.center_x, 400)
+        self.assertLess(result.center_x, 300)
 
     def test_15_isolated_orange_post_is_rejected(self):
         image = blank_frame()
@@ -333,23 +333,16 @@ class DetectorRobustnessTests(unittest.TestCase):
         self.assertEqual(estimate["method"], "pnp")
         self.assertLessEqual(estimate["pnp_reprojection_error"], 6.0)
 
-    def test_19b_handoff_targets_gate_visible_through_near_opening(self):
+    def test_19b_largest_gate_stays_primary_with_nested_gate(self):
         image = blank_frame()
         add_gate(image, (320, 180), 340, thickness=25)
         add_gate(image, (355, 170), 80, thickness=12)
 
-        without_handoff = OrangeGateDetector(
-            GateVisionConfig(handoff_bbox_area_ratio=1.0)
-        ).detect(image)
-        with_handoff = OrangeGateDetector().detect(image)
+        selected = OrangeGateDetector().detect(image)
 
-        self.assertTrue(without_handoff.found)
-        self.assertTrue(with_handoff.found)
-        self.assertGreater(
-            without_handoff.opening_width,
-            with_handoff.opening_width,
-        )
-        self.assertAlmostEqual(with_handoff.center_x, 355.0, delta=10.0)
+        self.assertTrue(selected.found)
+        self.assertGreater(selected.opening_width, 250.0)
+        self.assertAlmostEqual(selected.center_x, 320.0, delta=10.0)
 
 
 class TrackerTests(unittest.TestCase):
