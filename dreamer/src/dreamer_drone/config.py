@@ -73,6 +73,9 @@ class RewardConfig:
     w_finish: float = 100.0
     w_time: float = 0.05               # per second of sim time
     w_collision: float = 20.0
+    w_collision_gate: float = 20.0     # gate-frame strike (COLLISION id 1001); default same
+                                       # as w_collision, set lower to make near-miss threading
+                                       # attempts cheaper than ground/obstacle crashes
     w_control: float = 0.01
     # MEASURED 2026-07-23: a per-step off-course penalty makes stable hovering (-39 over 60s)
     # score WORSE than an instant crash (-20), so the agent learned to crash. Zeroed — the
@@ -82,6 +85,28 @@ class RewardConfig:
                                        # * span) to avoid a hover-farming exploit. Off by default.
     use_privileged_progress: bool = False   # auto-enabled if position telemetry present
     progress_clip: float = 2.0         # clamp per-step progress reward (anti-exploit)
+    # Temporal consistency for the vision progress proxy (2026-07-24): the detector can
+    # switch targets between frames (gate -> sign -> next gate), which produced +-0.9/step
+    # reward spikes from comparing areas of DIFFERENT objects. If sqrt(area) or the
+    # detection center jumps more than these thresholds in one step, treat it as a target
+    # switch: re-baseline and emit 0 progress instead of a spurious delta.
+    progress_area_jump: float = 1.35   # max allowed per-step sqrt(area) ratio
+    progress_center_jump: float = 0.25 # max allowed per-step center move (frac of frame diag)
+    # Potential-based centering shaping (2026-07-25): pays w_center * Δφ where
+    # φ = -|u - 0.5| of the detected gate center (φ = -0.5 when no gate is visible).
+    # Loops sum to zero (pure potential), so it cannot be farmed; what it DOES do is
+    # charge the "slide sideways past the gate" trajectory (measured: episodes earned
+    # +1.3-2.3 progress while the gate drifted out the left of frame, 0 passes) and
+    # pay for re-centering / re-acquiring. Horizontal-only: vertical aim is
+    # intentionally off-center (20 deg camera up-tilt).
+    w_center: float = 0.0
+    # Close-range hold: if the gate's sqrt(area) at last sight was >= this (full-res
+    # detector px; 0 disables), losing it is treated as crossing the aperture and φ is
+    # held neutral for up to center_hold_steps frames instead of charged. Without this
+    # the centering term taxes the pass itself (the gate must exit the frame to fly
+    # through it) and the policy learns to bail upward at the aperture.
+    center_hold_sqrt_px: float = 0.0
+    center_hold_steps: int = 8
 
 
 @dataclass
@@ -154,6 +179,17 @@ class TrainConfig:
     # then anneal to 0 so RL takes over. Fixes "world model learns but actor never passes a gate".
     bc_coef: float = 1.0               # initial BC weight on the actor loss
     bc_anneal: int = 30_000            # updates over which BC weight decays 1->0
+    # MEASURED 2026-07-24: every collected demo ends in a collision shortly after gate 1,
+    # so BC was cloning the crash approach too. Drop the last N steps of crash-ending
+    # demos from the BC buffer only (the world-model replay keeps full episodes so it
+    # still learns what collisions look like). ~30 steps ~= the final 1-2 s of flight.
+    demo_trim_steps: int = 30
+    # MEASURED 2026-07-25 (run 1784940039, 255k steps): gate-pass states were ~3% of
+    # replay and shrinking, so imagination almost never started near an aperture and the
+    # single live +40 pass could not anchor the value function. Mix this fraction of
+    # every world-model batch from the demo buffer: imagination then regularly rolls out
+    # from demo aperture states, where the gate reward is a step away.
+    demo_wm_frac: float = 0.25
 
 
 @dataclass

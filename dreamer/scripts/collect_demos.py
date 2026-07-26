@@ -69,8 +69,11 @@ def main() -> int:
     ap.add_argument("--climb-bias", type=float, default=0.0, help="stabilized: thrust offset (0=hover)")
     ap.add_argument("--kp-att", type=float, default=0.6)
     ap.add_argument("--kd-att", type=float, default=0.03)
-    ap.add_argument("--kp-yaw", type=float, default=0.8)
-    ap.add_argument("--bank-gain", type=float, default=0.3)
+    # negative: this sim's yaw/roll rate response is inverted relative to the MAVLink
+    # SET_ATTITUDE_TARGET convention (positive command turned the drone AWAY from the
+    # gate in a runaway loop — measured 2026-07-25)
+    ap.add_argument("--kp-yaw", type=float, default=-0.8)
+    ap.add_argument("--bank-gain", type=float, default=-0.3)
     ap.add_argument("--kp-vert", type=float, default=0.4, help="gate vertical servo -> thrust (thread the hole)")
     ap.add_argument("--gate-v-target", type=float, default=0.58, help="target gate height in frame (frac; >0.5 for the up-tilt)")
     ap.add_argument("--ahrs-alpha", type=float, default=0.95)

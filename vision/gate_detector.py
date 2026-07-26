@@ -21,10 +21,15 @@ import numpy as np
 #
 # Configured for glowing red/orange gates using a two-piece mask to handle
 # the OpenCV hue wrap-around at 180/0.
+#
+# Saturation floor raised 0 -> 60 (2026-07-24): with S_min=0 any bright *gray*
+# pixel (OpenCV maps gray to H=0, S=0) fell inside the first hue band, so lit
+# girders/buildings leaked into the mask. The gate frame body is saturated red;
+# only its bloom halo is desaturated, and we don't need the halo.
 # --------------------------------------------------------------------------- #
-LOWER_HSV = (0, 0, 80)
+LOWER_HSV = (0, 60, 80)
 UPPER_HSV = (15, 255, 255)
-LOWER_HSV2 = (170, 0, 80) 
+LOWER_HSV2 = (170, 60, 80)
 UPPER_HSV2 = (180, 255, 255)
 
 # Default tuning knobs. Any of these (incl. the HSV thresholds above) may be
@@ -41,6 +46,17 @@ DEFAULT_CFG = {
                              # edge (how the lower next-gate first appears as we descend
                              # toward it) isn't rejected for being a partial shape.
     "approx_eps_frac": 0.04, # approxPolyDP epsilon as fraction of perimeter
+    # Anti-reward-hack gates (2026-07-24): the training run learned to dive at red
+    # banners/signs because the score is area-dominated and any solid red blob won.
+    # A real gate is an ANNULUS — require the inner hole (the flyable opening) and a
+    # roughly square outer bbox so solid strips (banners, pillars) are rejected.
+    # The hole is only required for LARGE candidates: at distance the gate's glow
+    # bloom fills its opening (measured on frames/: no mask hole below ~2.5% of the
+    # frame), and a small solid blob can't sustain the "dive at red stuff" exploit —
+    # detection drops the moment it grows past the threshold without an opening.
+    "require_hole": True,        # enforce the annulus test on large candidates
+    "hole_min_bbox_frac": 0.025, # bbox area / frame area above which the hole is mandatory
+    "min_squareness": 0.35,  # outer bbox aspect floor (1.0 = square); banners are ~0.1-0.3
 }
 
 
@@ -131,8 +147,12 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
 
     min_area = float(cfg["min_area"])
     min_extent = float(cfg["min_extent"])
+    min_square = float(cfg["min_squareness"])
+    require_hole = bool(cfg["require_hole"])
+    frame_px = float(bgr.shape[0] * bgr.shape[1])
+    hole_min_bbox = float(cfg["hole_min_bbox_frac"]) * frame_px
 
-    best = None  # (score, index)
+    best = None  # (score, index, inner_contour_or_None, inner_area)
     for i, cnt in enumerate(contours):
         # Only consider outer contours (no parent) as the gate frame body.
         if hierarchy[i][3] != -1:
@@ -148,8 +168,27 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
             continue
 
         square = _squareness(w, h)
+        if square < min_square:
+            continue  # solid red strips (banners, pillars) are far from square
+
         extent = area / bbox_area
         if extent < min_extent:
+            continue
+
+        # A real gate is an annulus: it must enclose an inner hole (the flyable
+        # opening). Solid red blobs — banners, signs, glow patches — have no hole
+        # and are rejected here, which is what stops the "approach the biggest red
+        # thing" reward exploit.
+        inner, inner_area = None, -1.0
+        j = hierarchy[i][2]  # first child
+        while j != -1:
+            a = cv2.contourArea(contours[j])
+            if a > inner_area:
+                inner_area = a
+                inner = contours[j]
+            j = hierarchy[j][0]  # next sibling
+        has_hole = inner is not None and inner_area >= max(1.0, 0.05 * min_area)
+        if require_hole and bbox_area >= hole_min_bbox and not has_hole:
             continue
 
         # Prefer the NEAREST gate. The course is a tunnel of concentric gates (see the
@@ -162,29 +201,18 @@ def detect_gate(bgr: np.ndarray, cfg: Optional[dict] = None) -> Optional[GateDet
         # Make AREA the dominant term (nearest wins) while still requiring squareness/fill.
         score = area * (0.5 + 0.5 * square) * (0.5 + 0.5 * extent)
         if best is None or score > best[0]:
-            best = (score, i)
+            best = (score, i, inner if has_hole else None, inner_area)
 
     if best is None:
         return None
 
-    _, idx = best
+    _, idx, inner, inner_area = best
     outer = contours[idx]
     x, y, w, h = cv2.boundingRect(outer)
     bbox_px = (int(x), int(y), int(w), int(h))
 
     # Prefer the inner-hole contour (the flyable opening) for center/area/corners.
-    child = hierarchy[idx][2]
-    inner = None
-    inner_area = -1.0
-    j = child
-    while j != -1:
-        a = cv2.contourArea(contours[j])
-        if a > inner_area:
-            inner_area = a
-            inner = contours[j]
-        j = hierarchy[j][0]  # next sibling
-
-    if inner is not None and inner_area >= max(1.0, 0.05 * min_area):
+    if inner is not None:
         center = _centroid(inner)
         area_px = float(inner_area)
         opening_contour = inner

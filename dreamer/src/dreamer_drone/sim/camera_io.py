@@ -55,6 +55,17 @@ class CameraIO:
         self._reset_gap = 1000
 
     def start(self) -> "CameraIO":
+        # Bind HERE, not in the RX thread: a port conflict (e.g. a second trainer
+        # attached to the same sim) must raise to the caller instead of silently
+        # killing the background thread and looking like a dead camera stream.
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+        try:
+            self._sock.bind((self.bind, self.port))
+        except OSError:
+            self._sock.close()
+            raise
+        self._sock.settimeout(1.0)
         self.running = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -75,10 +86,7 @@ class CameraIO:
         return (time.time() - f.recv_wall_s) if f else float("inf")
 
     def _loop(self) -> None:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
-        sock.bind((self.bind, self.port))
-        sock.settimeout(1.0)
+        sock = self._sock
         partial: dict[int, dict] = {}
         try:
             while self.running:

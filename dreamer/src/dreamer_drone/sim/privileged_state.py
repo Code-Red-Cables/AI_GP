@@ -22,6 +22,8 @@ class PrivilegedSnapshot:
     num_gates: Optional[int]
     finished: bool
     collision_threat: int          # threat of a *new* collision this step (0 = none)
+    collision_is_gate: bool        # this step's collision hit a gate frame (id 1001),
+                                   # not terrain/obstacles (id 1002)
     position: Optional[tuple]      # (x,y,z) if available (VQ2: usually None)
     dist_to_gate: Optional[float]  # privileged geometric progress if computable
 
@@ -31,18 +33,22 @@ class PrivilegedState:
         self.io = io
         self._last_collision_seq = 0
         self._t0_wall = time.time()
+        self._gate_hwm: Optional[int] = None
 
     def reset(self) -> None:
         self._last_collision_seq = self.io.collision_seq
         self._t0_wall = time.time()
+        self._gate_hwm = None
 
-    def _new_collision_threat(self) -> int:
+    def _new_collision(self) -> tuple[int, bool]:
+        """Returns (threat_level, is_gate) for a NEW collision this step, else (0, False)."""
         seq = self.io.collision_seq
         if seq > self._last_collision_seq:
             self._last_collision_seq = seq
             col = self.io.get("collision") or {}
-            return int(col.get("threat", 1) or 1)
-        return 0
+            threat = int(col.get("threat", 1) or 1)
+            return threat, col.get("id") == 1001
+        return 0, False
 
     def sim_time_s(self) -> float:
         """Prefer sim clock (race_status.sim_boot / IMU time_usec); fall back to wall."""
@@ -61,7 +67,18 @@ class PrivilegedState:
                 pos = (p.get("x"), p.get("y"), p.get("z"))
                 break
 
+        # Monotonic high-water mark: the sim's race_status stream flickers between
+        # the advanced gate index and a stale 0 (~0.75s period, measured 2026-07-25).
+        # Pre-pass the signal is a solid 0 — upward transitions are real, downward
+        # ones are telemetry noise. Without this the gate reward re-fires every few
+        # steps forever after the first pass (infinite reward farm).
         active_gate = rs.get("active_gate")
+        if active_gate is not None:
+            if self._gate_hwm is None or int(active_gate) > self._gate_hwm:
+                self._gate_hwm = int(active_gate)
+            active_gate = self._gate_hwm
+        else:
+            active_gate = self._gate_hwm
         num_gates = len(gates) if gates else None
         finished = bool(rs.get("race_finish_ns", 0) and rs["race_finish_ns"] > 0)
 
@@ -74,12 +91,14 @@ class PrivilegedState:
                 if any(v != 0.0 for v in (gx, gy, gz)):  # VQ2 nulls these to 0
                     dist_to_gate = math.dist(pos, (gx, gy, gz))
 
+        threat, is_gate = self._new_collision()
         return PrivilegedSnapshot(
             sim_time_s=self.sim_time_s(),
             active_gate=active_gate,
             num_gates=num_gates,
             finished=finished,
-            collision_threat=self._new_collision_threat(),
+            collision_threat=threat,
+            collision_is_gate=is_gate,
             position=pos,
             dist_to_gate=dist_to_gate,
         )

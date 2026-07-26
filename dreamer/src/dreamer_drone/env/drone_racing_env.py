@@ -67,6 +67,9 @@ class DroneRacingEnv:
         self._last_frame_id = -1
         self._last_sim_time_ns = 0
         self._prev_sim_time_s = 0.0
+        self._ep_start_gate = 0
+        self._ep_max_gate = 0
+        self._ep_steps = 0
         self._cam_meter = RateMeter()
         self._connected = False
 
@@ -108,8 +111,11 @@ class DroneRacingEnv:
         snap = self.priv.snapshot()
         self.priv.reset()
         self.reward_fn.reset()
-        self.term_fn.reset(snap.sim_time_s, snap.active_gate)
+        self.term_fn.reset(snap.active_gate)
         self._prev_sim_time_s = snap.sim_time_s
+        self._ep_start_gate = int(snap.active_gate or 0)
+        self._ep_max_gate = self._ep_start_gate
+        self._ep_steps = 0
 
         frame = self.cam.get_latest()
         self._last_frame_id = frame.frame_id if frame else -1
@@ -131,34 +137,48 @@ class DroneRacingEnv:
         dt_sim = max(0.0, snap.sim_time_s - self._prev_sim_time_s)
         self._prev_sim_time_s = snap.sim_time_s
 
+        # Post-reset collision grace: the previous episode's crash keeps emitting
+        # collision events for a few frames after respawn, which killed (and -20
+        # penalized) fresh episodes 2-10 steps in with a clean spawn view (measured
+        # 2026-07-25, ~10% of episodes). The drone spawns hovering in free space, so
+        # a REAL collision inside the first 8 steps is impossible.
+        self._ep_steps += 1
+        collision_threat = snap.collision_threat if self._ep_steps > 8 else 0
+
         # LEGAL vision signal for the proxy progress + off-course term
-        gate_visible, gate_area = self._vision()
+        gate_visible, gate_area, gate_center = self._vision()
 
         ctx = StepContext(
             dt_sim=dt_sim if dt_sim > 0 else dt_cam,
             active_gate=snap.active_gate, num_gates=snap.num_gates,
-            finished=snap.finished, collision_threat=snap.collision_threat,
+            finished=snap.finished, collision_threat=collision_threat,
+            collision_is_gate=snap.collision_is_gate,
             dist_to_gate=snap.dist_to_gate,
-            gate_area_px=gate_area, gate_visible=gate_visible,
+            gate_area_px=gate_area, gate_visible=gate_visible, gate_center=gate_center,
             action=list(np.asarray(action, dtype=np.float32).reshape(-1)),
             prev_action=list(self._prev_action),
         )
         rc = self.reward_fn.compute(ctx)
-        term = self.term_fn.check(snap.sim_time_s, snap.active_gate,
-                                  snap.finished, snap.collision_threat)
+        term = self.term_fn.check(ctx.dt_sim, snap.active_gate,
+                                  snap.finished, collision_threat)
+
+        if snap.active_gate is not None:
+            self._ep_max_gate = max(self._ep_max_gate, int(snap.active_gate))
 
         self._prev_action = applied
         obs = self._build_obs(dt=dt_cam, image_valid=image_valid)
+        gates_passed = self._ep_max_gate - self._ep_start_gate
         info = {
             "reward_components": rc.as_dict(),
             "active_gate": snap.active_gate,
+            "gates_passed": gates_passed,
             "sim_time": snap.sim_time_s,
             "gate_visible": gate_visible,
             "term_reason": term.reason,
             "stage": self.curriculum.stage_name,
         }
         if term.terminated or term.truncated:
-            success = term.reason == "finish"
+            success = self.curriculum.episode_success(term.reason, gates_passed)
             promoted = self.curriculum.record_episode(success)
             info["episode_success"] = success
             info["curriculum_promoted"] = promoted
@@ -181,16 +201,19 @@ class DroneRacingEnv:
             time.sleep(0.001)
         return False, period  # stale: held observation, marked invalid
 
-    def _vision(self) -> tuple[bool, Optional[float]]:
+    def _vision(self) -> tuple[bool, Optional[float], Optional[tuple]]:
+        """Returns (gate_visible, area_px, center normalized to [0,1]^2)."""
         if self._detect_gate is None:
-            return False, None
+            return False, None, None
         f = self.cam.get_latest()  # type: ignore[union-attr]
         if f is None:
-            return False, None
+            return False, None, None
         det = self._detect_gate(f.image_bgr)
         if det is None:
-            return False, None
-        return True, float(det.area_px)
+            return False, None, None
+        h, w = f.image_bgr.shape[:2]
+        center = (float(det.center_px[0]) / max(1, w), float(det.center_px[1]) / max(1, h))
+        return True, float(det.area_px), center
 
     def _build_obs(self, dt: float, image_valid: bool) -> dict:
         f = self.cam.get_latest()  # type: ignore[union-attr]

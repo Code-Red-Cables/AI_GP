@@ -82,16 +82,30 @@ class SequenceReplay:
         with self._lock:
             return any(ep["image"].shape[0] >= seq_len for ep in self._episodes)
 
-    def load_episode_dir(self, directory: str) -> int:
+    def load_episode_dir(self, directory: str, trim_crash_tail: int = 0) -> int:
         """Preload demonstration episodes (episode_*.npz) for replay seeding (Phase 5).
-        Returns the number of transitions added."""
+        Returns the number of transitions added.
+
+        `trim_crash_tail`: drop the last N steps of episodes that END IN A CRASH
+        (terminal cont=0 with a strongly negative final reward). Used for the
+        behavior-cloning buffer so the actor imitates the gate-passing approach but
+        not the final seconds of flying into an obstacle. Episodes ending in finish
+        or truncation are kept whole.
+        """
         total = 0
         for f in sorted(glob.glob(os.path.join(directory, "episode_*.npz"))):
             d = np.load(f)
             ep = {k: d[k] for k in _EP_KEYS if k in d.files}
-            if "image" in ep and ep["image"].shape[0] >= 2:
-                self.add_episode(ep)
-                total += ep["image"].shape[0]
+            if "image" not in ep or ep["image"].shape[0] < 2:
+                continue
+            if trim_crash_tail > 0:
+                cont = ep["cont"].reshape(-1)
+                rew = ep["reward"].reshape(-1)
+                crash_end = cont[-1] < 0.5 and rew[-1] < -1.0
+                if crash_end and ep["image"].shape[0] > trim_crash_tail + 2:
+                    ep = {k: v[:-trim_crash_tail] for k, v in ep.items()}
+            self.add_episode(ep)
+            total += ep["image"].shape[0]
         return total
 
     def sample(self, batch: int, seq_len: int, device="cpu") -> dict[str, torch.Tensor]:

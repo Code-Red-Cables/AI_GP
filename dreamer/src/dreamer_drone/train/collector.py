@@ -9,6 +9,7 @@ the learner keep training through a sim crash while the collector relaunches.
 """
 from __future__ import annotations
 
+import errno
 import threading
 import time
 
@@ -35,11 +36,19 @@ class Collector:
         self.mode = "random"               # "random" during prefill, then "policy"
         self.running = False
         self.thread: threading.Thread | None = None
-        # telemetry (GIL-atomic ints / small dicts)
+        # telemetry (GIL-atomic ints / small dicts). last_info carries ALL keys from
+        # the start so the trainer's CSV header is stable even before episode 1 ends.
         self.env_steps = 0
         self.episodes = 0
-        self.last_info: dict = {}
+        self.last_info: dict = {
+            "ep_reward": 0.0, "max_gate": 0, "gates_passed": 0, "len": 0,
+            "gate_visible_frac": 0.0, "progress_sum": 0.0, "reason": "", "stage": "",
+        }
         self.relaunches = 0
+        # episode dump for behavior debugging: when the trainer sets dump_dir, every
+        # dump_every-th collected episode is written there as npz
+        self.dump_dir: str | None = None
+        self.dump_every = 25
 
     # ---- lifecycle ---------------------------------------------------------
     def start(self) -> "Collector":
@@ -86,6 +95,20 @@ class Collector:
                     pass
                 self.env.pm.relaunch()
                 time.sleep(3.0)
+            except OSError as e:
+                if e.errno == errno.EADDRINUSE:
+                    # Another trainer already owns the camera port for this sim. Two
+                    # collectors would send conflicting actions/resets to one drone,
+                    # so this is fatal — do NOT retry (2026-07-24: two concurrent runs
+                    # silently corrupted each other for 100 minutes).
+                    print("[collect] FATAL: camera port already in use — another "
+                          "trainer is attached to this sim. Stop the other "
+                          "train_dreamer process and restart. Collection halted.",
+                          flush=True)
+                    self.running = False
+                    return
+                print(f"[collect] unexpected error: {e!r}; retrying in 2s", flush=True)
+                time.sleep(2.0)
             except Exception as e:  # never let the collector thread die silently
                 print(f"[collect] unexpected error: {e!r}; retrying in 2s", flush=True)
                 time.sleep(2.0)
@@ -96,7 +119,9 @@ class Collector:
         state = self.policy.initial_state(self.device)
         prev = neutral_action()
         ep_reward, max_gate, steps = 0.0, 0, 0
+        vis_steps, progress_sum = 0, 0.0
         info: dict = {}
+        term = trunc = False
         for _ in range(self.cfg.train.max_episode_steps):
             if not self.running:
                 break
@@ -112,13 +137,34 @@ class Collector:
             self.env_steps += 1
             if info.get("active_gate") is not None:
                 max_gate = max(max_gate, int(info["active_gate"]))
+            # vision-proxy health: how often the detector fires + what the dense
+            # progress term actually paid out (catches detector/reward exploits)
+            if info.get("gate_visible"):
+                vis_steps += 1
+            progress_sum += info.get("reward_components", {}).get("progress", 0.0)
             if term or trunc:
                 break
         ep = acc.flush()
         if ep is not None:
             self.replay.add_episode(ep)
+            if (self.dump_dir is not None and self.mode == "policy"
+                    and self.episodes % self.dump_every == 0):
+                try:
+                    import os
+                    os.makedirs(self.dump_dir, exist_ok=True)
+                    np.savez(os.path.join(self.dump_dir, f"ep_{self.episodes:05d}.npz"), **ep)
+                except Exception as e:
+                    print(f"[collect] episode dump failed: {e!r}", flush=True)
         self.episodes += 1
+        # an empty reason with a full-length episode means the hard step cap hit,
+        # i.e. env-side termination never fired — make that visible in the logs
+        reason = info.get("term_reason", "")
+        if not reason and not (term or trunc) and steps > 0:
+            reason = "step_cap"
         self.last_info = {
-            "ep_reward": round(ep_reward, 2), "max_gate": max_gate, "len": steps,
-            "reason": info.get("term_reason", ""), "stage": info.get("stage", ""),
+            "ep_reward": round(ep_reward, 2), "max_gate": max_gate,
+            "gates_passed": info.get("gates_passed", max_gate), "len": steps,
+            "gate_visible_frac": round(vis_steps / max(1, steps), 3),
+            "progress_sum": round(progress_sum, 3),
+            "reason": reason, "stage": info.get("stage", ""),
         }

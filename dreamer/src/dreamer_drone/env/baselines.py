@@ -121,9 +121,62 @@ class StabilizedController:
         self.rate_cap = rate_cap
         self.ahrs = ComplementaryAHRS(ahrs_cfg)
         self._detect = detect_gate or _try_load_detector()
+        self._det_cfg: Optional[dict] = None
+        self._det_cfg_hw: Optional[tuple] = None
+        # target-switch rejection: hold the last accepted center through brief detector
+        # flips (e.g. to the glow pool under the gate, which sits ~0.15 frame lower and
+        # made the vertical servo cut thrust into the ground — measured 2026-07-25)
+        self._last_center: Optional[tuple] = None
+        self._hold_frames = 0
+
+    def _detector_cfg(self, h: int, w: int) -> dict:
+        """Resolution-aware overrides: the controller sees the small obs image, but the
+        detector defaults are tuned for the ~640x360 sim frame. min_area=400 px is ~10%
+        of a 64x64 thumbnail (gate undetectable until point-blank), the 5px morphology
+        kernel erases the opening, and the hole rule then rejects what remains. Scale
+        the area floor, shrink the kernel, and require the hole only for blobs big
+        enough (>6% of frame) that a real opening survives the downsample."""
+        if self._det_cfg_hw != (h, w):
+            scale = (h * w) / (640.0 * 360.0)
+            small = min(h, w) <= 128
+            self._det_cfg = {
+                "min_area": max(8.0, 400.0 * scale),
+                # kernel 1 = no morphology: at 64x64 the gate is a ~9x8 ring 1-2 px
+                # thick; even a 3x3 open shreds it into fragments (measured 2026-07-25)
+                "kernel_size": 1 if small else 5,
+                "hole_min_bbox_frac": 0.06 if small else 0.025,
+            }
+            self._det_cfg_hw = (h, w)
+        return self._det_cfg
 
     def reset(self) -> None:
         self.ahrs.reset()
+        self._last_center = None
+        self._hold_frames = 0
+
+    def _servo_center(self, det, h: int, w: int, trusted: bool) -> Optional[tuple]:
+        """Accept/reject a detection center with a short hold across flips.
+
+        A jump of >25% of the frame in one step means the detector switched targets
+        (glow pool, sign, next gate). Hold the previous center for a few frames; if
+        the jump persists, accept it as a genuine new target. `trusted` (close-range,
+        big blob) detections bypass the hold: near the gate large frame-to-frame
+        motion is genuine."""
+        c = (det.center_px[0], det.center_px[1]) if det is not None else None
+        if c is None:
+            self._hold_frames += 1
+            if self._hold_frames > 5:
+                self._last_center = None
+            return self._last_center if self._hold_frames <= 5 else None
+        if not trusted and self._last_center is not None:
+            jump = np.hypot((c[0] - self._last_center[0]) / w,
+                            (c[1] - self._last_center[1]) / h)
+            if jump > 0.25 and self._hold_frames <= 5:
+                self._hold_frames += 1
+                return self._last_center
+        self._last_center = c
+        self._hold_frames = 0
+        return c
 
     def __call__(self, obs: dict) -> np.ndarray:
         v = obs["vector"]
@@ -133,17 +186,40 @@ class StabilizedController:
         roll_est, pitch_est, _ = self.ahrs.update((gx, gy, gz), (ax, ay, az), dt)
         cap = self.rate_cap
 
-        # vision servo: bank + yaw toward gate center (horizontal), thrust toward it (vertical)
+        # vision servo: bank + yaw toward gate center always; vertical (thrust) only at
+        # close range. At long range the gate's vertical pixel position is dominated by
+        # the drone's own pitch attitude, not altitude error — servoing thrust on it
+        # dove the drone into the ground from spawn (measured 2026-07-25). The original
+        # working demos flew the approach with hover thrust and only used the vertical
+        # servo as a close-range climb burst through the gate (v_target 0.58).
         desired_roll, a_yaw, a_vert = 0.0, 0.0, 0.0
         img = obs.get("image")
         if self._detect is not None and img is not None and img.shape[-1] == 3:
-            det = self._detect(img[..., ::-1])  # RGB->BGR
-            if det is not None:
-                h, w = img.shape[0], img.shape[1]
-                err_x = (det.center_px[0] - w / 2.0) / (w / 2.0)          # [-1,1] left/right
-                err_y = (det.center_px[1] - self.gate_v_target * h) / (h / 2.0)  # up/down
+            h, w = img.shape[0], img.shape[1]
+            det = self._detect(img[..., ::-1], self._detector_cfg(h, w))  # RGB->BGR
+            # 40 px on the 64x64 obs = any solid detection. The working demo profile is
+            # a SUSTAINED gentle climb servoing the centroid to v_target~0.58 through
+            # the whole visible approach; late engagement (120-300 px triggers) turned
+            # it into a violent last-second burst that clipped the gate bar
+            close = det is not None and det.area_px >= 40.0 * (h * w) / 4096.0
+            center = self._servo_center(det, h, w, trusted=close)
+            if center is not None:
+                err_x = (center[0] - w / 2.0) / (w / 2.0)          # [-1,1] left/right
                 desired_roll = float(np.clip(self.bank_gain * err_x, -0.3, 0.3))
                 a_yaw = float(np.clip(self.kp_yaw * err_x, -cap, cap))
+            if close:
+                err_y = (det.center_px[1] - self.gate_v_target * h) / (h / 2.0)  # up/down
+                # Deadband: the spawn-aligned ballistic path (hover thrust, forward
+                # lean) threads gate 1 on its own; proportional correction from spawn
+                # (err ~-0.2) lifted the drone off that rail and it missed. Only
+                # correct gross vertical deviations.
+                dead = 0.30
+                if err_y > dead:
+                    err_y -= dead
+                elif err_y < -dead:
+                    err_y += dead
+                else:
+                    err_y = 0.0
                 # gate low in frame (err_y>0) => descend (less thrust); sign is tunable via kp_vert
                 a_vert = float(np.clip(-self.kp_vert * err_y, -0.5, 0.5))
 

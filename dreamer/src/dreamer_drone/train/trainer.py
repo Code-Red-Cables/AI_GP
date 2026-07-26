@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import torch
+
 from ..config import Config
 from ..dreamer.agent import DreamerAgent
 from ..dreamer.replay import SequenceReplay
@@ -37,6 +39,7 @@ class Trainer:
         cfg.save(self.run_dir / "config.yaml")
         self._csv_path = self.run_dir / "metrics.csv"
         self._csv_started = False
+        self.collector.dump_dir = str(self.run_dir / "episodes")
         print(f"[train] run dir: {self.run_dir}", flush=True)
         print(f"[train] learner device={self.agent.device} collector={cfg.train.collector_device}",
               flush=True)
@@ -67,9 +70,13 @@ class Trainer:
         if self.demos:
             self._demo_steps = self.replay.load_episode_dir(self.demos)
             self.demo_replay = SequenceReplay(max(self._demo_steps, 1))
-            self.demo_replay.load_episode_dir(self.demos)
+            # BC buffer: trim the pre-crash tail so the actor doesn't imitate flying
+            # into obstacles (the world-model replay above keeps the full episodes).
+            bc_steps = self.demo_replay.load_episode_dir(
+                self.demos, trim_crash_tail=t.demo_trim_steps)
             print(f"[train] seeded replay with {self._demo_steps} demo transitions from "
-                  f"{self.demos} (BC coef={t.bc_coef} anneal={t.bc_anneal})", flush=True)
+                  f"{self.demos} (BC on {bc_steps} after crash-tail trim of "
+                  f"{t.demo_trim_steps}; coef={t.bc_coef} anneal={t.bc_anneal})", flush=True)
 
         self.collector.start()
 
@@ -94,7 +101,18 @@ class Trainer:
             # Including demo_steps lets the learner train on seeded demos while env_steps is 0.
             target_updates = t.train_ratio * max(1, env_steps + self._demo_steps) / bt
             if updates < target_updates and self.replay.can_sample(t.seq_len):
-                batch = self.replay.sample(t.batch_size, t.seq_len, self.agent.device)
+                # World-model batch: mix in demo sequences so gate passes stay a fixed
+                # fraction of training data (instead of shrinking as live replay grows)
+                # AND imagination regularly starts from aperture states.
+                n_demo = 0
+                if (self.demo_replay is not None and t.demo_wm_frac > 0
+                        and self.demo_replay.can_sample(t.seq_len)):
+                    n_demo = min(t.batch_size - 1,
+                                 max(1, round(t.batch_size * t.demo_wm_frac)))
+                batch = self.replay.sample(t.batch_size - n_demo, t.seq_len, self.agent.device)
+                if n_demo:
+                    db = self.demo_replay.sample(n_demo, t.seq_len, self.agent.device)
+                    batch = {k: torch.cat([batch[k], db[k]], dim=0) for k in batch}
                 # behavior cloning: sample a demo batch + anneal the BC weight to 0
                 demo_batch, bc_weight = None, 0.0
                 if self.demo_replay is not None and self.demo_replay.can_sample(t.seq_len):
@@ -121,14 +139,18 @@ class Trainer:
                         **{f"ep_{k}": v for k, v in self.collector.last_info.items()},
                     }
                     self._log(row)
+                    li = self.collector.last_info
                     print(f"[train] steps={env_steps} upd={updates} "
                           f"sps={row['steps_per_s']} ups={row['updates_per_s']} "
                           f"wm={metrics.get('wm/loss', float('nan')):.2f} "
                           f"actor={metrics.get('ac/actor_loss', float('nan')):.2f} "
                           f"bc={metrics.get('ac/bc_loss', 0.0):.2f}(w={bc_weight:.2f}) "
-                          f"ep_r={self.collector.last_info.get('ep_reward')} "
-                          f"gate={self.collector.last_info.get('max_gate')} "
-                          f"stage={self.collector.last_info.get('stage')}", flush=True)
+                          f"ep_r={li.get('ep_reward')} "
+                          f"gates={li.get('gates_passed')} "
+                          f"vis={li.get('gate_visible_frac')} "
+                          f"prog={li.get('progress_sum')} "
+                          f"end={li.get('reason')} "
+                          f"stage={li.get('stage')}", flush=True)
                 if env_steps - last_ckpt >= t.checkpoint_every:
                     last_ckpt = env_steps
                     self._checkpoint(env_steps)

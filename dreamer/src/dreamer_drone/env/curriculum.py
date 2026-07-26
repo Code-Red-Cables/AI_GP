@@ -12,6 +12,24 @@ from collections import deque
 from ..config import CurriculumConfig
 
 
+# Per-stage success criteria (2026-07-24). Success used to be "finished the whole race"
+# for EVERY stage, so a policy that couldn't already win never promoted out of stage 0
+# ("stage=hover" forever in the training logs). Each stage now has an attainable goal:
+#   ("survive", _)  episode ended without a collision
+#   ("gates", n)    passed at least n gates this episode
+#   ("finish", _)   crossed the finish line
+_STAGE_GOALS: dict[str, tuple[str, int]] = {
+    "hover": ("survive", 0),
+    "single_gate": ("gates", 1),
+    "random_near_gate": ("gates", 1),
+    "two_gate": ("gates", 2),
+    "short_segment": ("gates", 3),
+    "full_course": ("finish", 0),
+    "full_course_fast": ("finish", 0),
+    "recovery": ("gates", 1),
+}
+
+
 class Curriculum:
     def __init__(self, cfg: CurriculumConfig):
         self.cfg = cfg
@@ -25,6 +43,17 @@ class Curriculum:
     @property
     def at_final_stage(self) -> bool:
         return self.stage >= len(self.cfg.stages) - 1
+
+    def episode_success(self, term_reason: str, gates_passed: int) -> bool:
+        """Stage-relative success for one finished episode."""
+        if term_reason == "finish":
+            return True
+        kind, n = _STAGE_GOALS.get(self.stage_name, ("finish", 0))
+        if kind == "survive":
+            return term_reason != "collision"
+        if kind == "gates":
+            return gates_passed >= n
+        return False
 
     def record_episode(self, success: bool) -> bool:
         """Record an episode outcome; return True if the stage advanced."""

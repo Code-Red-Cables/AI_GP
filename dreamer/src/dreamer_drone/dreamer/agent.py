@@ -31,7 +31,12 @@ from .rssm import RSSM
 # --------------------------------------------------------------------------- #
 class Actor(nn.Module):
     def __init__(self, feat_dim: int, action_dim: int, hidden: int, layers: int = 2,
-                 min_std: float = 0.1, max_std: float = 1.0):
+                 min_std: float = 0.02, max_std: float = 1.0):
+        # min_std lowered 0.1 -> 0.02 (2026-07-25): the demo actions live in a ±0.02-0.04
+        # band, so with a 0.1 noise floor the BC log-prob saturated at its ceiling (~-5.4
+        # observed vs ~-6.4 theoretical max) while sampled flight still random-walked off
+        # the demo corridor within ~25 steps and spun out. Precision hover control needs
+        # a tighter floor than DreamerV3's Atari-bred default.
         super().__init__()
         self.net = mlp(feat_dim, hidden, 2 * action_dim, layers)
         self.action_dim = action_dim
