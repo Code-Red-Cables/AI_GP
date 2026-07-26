@@ -152,6 +152,11 @@ YAW_DEADBAND_RAD = math.radians(9.0)   # within this azimuth, hold heading (no r
 # until back below the ceiling. A pure client-side fail-safe.
 MAX_ALT_M = 15.0           # m above the arm point we ever allow before recovering
 
+# Adapter from the image-space navigator to this planner's existing command
+# contract (NED velocity + absolute yaw).
+NAVIGATION_TIMEOUT_NS = 350_000_000
+YAW_RATE_TARGET_HORIZON_S = 0.50
+
 
 class Planner:
     """Decides the current target setpoint from the shared blackboard."""
@@ -238,6 +243,8 @@ class Planner:
         with self.data['lock']:
             return {
                 'vision': self.data.get('vision'),
+                'navigation': self.data.get('navigation'),
+                'control_source': self.data.get('control_source'),
                 'gates': self.data.get('gates'),
                 'race': self.data.get('race'),
                 'attitude': self.data.get('attitude'),
@@ -431,6 +438,47 @@ class Planner:
                 return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, MAX_VSPEED),
                                       'yaw': yaw_hold, 'range_m': altitude,
                                       'source': 'alt_guard', 'ts': now})
+
+        # New deterministic image-space controller. It does not require world
+        # pose; yaw is only used here to express body forward/right velocities
+        # in the repository's established NED target format.
+        nav = s.get('navigation')
+        control_source = s.get('control_source')
+        if control_source == 'safe':
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'source': 'ai_safe_hover', 'ts': now})
+        if control_source == 'ai':
+            # Controller consumes the AI rate/thrust action directly.
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'source': 'ai_active', 'ts': now})
+        if (control_source == 'opencv' and nav and nav.get('ts')
+                and now - nav['ts'] <= NAVIGATION_TIMEOUT_NS):
+            forward = float(nav.get('forward_mps', 0.0))
+            right = float(nav.get('right_mps', 0.0))
+            down = float(nav.get('down_mps', 0.0))
+            c, sy = math.cos(yaw_hold), math.sin(yaw_hold)
+            vn = c * forward - sy * right
+            ve = sy * forward + c * right
+            yaw = self._wrap(
+                yaw_hold
+                + float(nav.get('yaw_rate_rps', 0.0)) * YAW_RATE_TARGET_HORIZON_S
+            )
+            vis_range = s['vision'].get('range_m') if s.get('vision') else None
+            return self._publish({
+                'mode': 'velocity',
+                'vel_ned': (float(vn), float(ve), float(down)),
+                'yaw': float(yaw),
+                'range_m': vis_range,
+                'source': f"opencv_{nav.get('state', 'UNKNOWN').lower()}",
+                'navigation_state': nav.get('state'),
+                'ts': now,
+            })
+        if control_source == 'opencv':
+            # No fresh image-space command yet. Do not fall through to map or
+            # simulator geometry in OpenCV-only mode.
+            return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                  'yaw': yaw_hold, 'source': 'opencv_stale_hover',
+                                  'ts': now})
 
         offset, source = self._target_offset_ned(s, now)
         if offset is None:

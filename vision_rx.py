@@ -7,7 +7,15 @@ import time
 import cv2
 import numpy as np
 
-from vision.gate_detector import detect_gate, draw_detection
+from vision.gate_detector import OrangeGateDetector, draw_detection
+from vision.gate_tracker import GateTracker
+from vision.navigation import GateNavigator
+from vision.mode_router import (
+    ModeRouterConfig,
+    VisionMode,
+    VisionModeRouter,
+)
+from vision.ai_adapter import validate_ai_action
 from gate_estimator import estimate_gate
 
 
@@ -46,6 +54,13 @@ class VisionRX:
         # Temporal filter belief: last accepted (smoothed) gate_body + its timestamp.
         self._gb_filt = None
         self._gb_ts = 0
+        self.detector = OrangeGateDetector()
+        self.tracker = GateTracker()
+        self.navigator = GateNavigator()
+        requested_mode = str(self.data.get('vision_mode', 'opencv')).lower()
+        self.mode_router = VisionModeRouter(
+            ModeRouterConfig(mode=VisionMode(requested_mode))
+        )
         self.thread = threading.Thread(
             target=self._vision_loop,
             daemon=False
@@ -95,10 +110,14 @@ class VisionRX:
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT))
+        sock.settimeout(0.2)
         print("Listening for camera frames...")
 
         while self.is_running:
-            packet, addr = sock.recvfrom(65536)  # max UDP size
+            try:
+                packet, addr = sock.recvfrom(65536)  # max UDP size
+            except socket.timeout:
+                continue
 
             header = packet[:header_sz]
             payload = packet[header_sz:]
@@ -145,6 +164,11 @@ class VisionRX:
                     print(f"Failed to decode frame: {frame_id}")
 
                 del frames[frame_id]
+                # The controller needs the newest causal image, not an unbounded
+                # queue of stale partial frames.
+                for stale_id in [key for key in frames if key < frame_id - 2]:
+                    del frames[stale_id]
+        sock.close()
 
     def process_frame(self, frame_id, img, sim_time_ns=None):
         """Detect the gate, estimate its pose, and publish to shared_data['vision'].
@@ -154,7 +178,9 @@ class VisionRX:
         the planner can fuse it. Returns None on no detection (still publishes a
         'detected': False record so downstream code can detect staleness).
         """
-        det = detect_gate(img)
+        raw_detection = self.detector.detect(img)
+        det = self.tracker.update(raw_detection)
+        command = self.navigator.update(det, time.monotonic())
 
         # Snapshot the latest pose for the camera->NED transform.
         with self.data['lock']:
@@ -162,6 +188,27 @@ class VisionRX:
             odo = self.data.get('odometry')
             pos = self.data.get('position_ned')
             debug = self.data.get('debug_vision', False)
+            ai_policy = self.data.get('ai_policy')
+            context = {
+                'attitude': att,
+                'odometry': odo,
+                'position_ned': pos,
+                'imu': self.data.get('imu'),
+            }
+
+        source = self.mode_router.update(
+            det.confidence if det is not None and det.found else 0.0,
+            ai_available=ai_policy is not None,
+        )
+        ai_action = None
+        ai_error = None
+        if source == 'ai' and ai_policy is not None:
+            try:
+                predictor = getattr(ai_policy, 'predict', ai_policy)
+                ai_action = validate_ai_action(predictor(img, context))
+            except Exception as exc:
+                ai_error = f"{type(exc).__name__}: {exc}"
+                source = 'safe'
 
         attitude = None
         if att is not None:
@@ -192,13 +239,37 @@ class VisionRX:
                 est['gate_ned'] = tuple(float(c) for c in offset_ned)
         est['frame_id'] = frame_id
         est['sim_time_ns'] = sim_time_ns
+        est['raw_confidence'] = raw_detection.confidence
+        est['predicted'] = bool(det.predicted) if det is not None else False
+        est['detector_timings_ms'] = (
+            dict(self.detector.last_debug.timings_ms)
+            if self.detector.last_debug else {}
+        )
 
         with self.data['lock']:
             self.data['vision'] = est
+            self.data['navigation'] = {
+                'ts': now,
+                'forward_mps': command.forward_mps,
+                'right_mps': command.right_mps,
+                'down_mps': command.down_mps,
+                'yaw_rate_rps': command.yaw_rate_rps,
+                'state': command.state.value,
+                'confidence': command.confidence,
+                'predicted': command.predicted,
+            }
+            self.data['control_source'] = source
+            self.data['ai_action'] = (
+                dict(ai_action, ts=now) if ai_action is not None else None
+            )
+            self.data['ai_error'] = ai_error
 
         if debug:
-            try:
-                cv2.imwrite(f"_vision_{frame_id % 20:02d}.png",
-                            draw_detection(img, det))
-            except Exception:
-                pass
+            overlay = draw_detection(
+                img,
+                det,
+                self.detector.last_debug,
+                state=command.state.value,
+                command=command,
+            )
+            cv2.imwrite(f"_vision_{frame_id % 20:02d}.png", overlay)

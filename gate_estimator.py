@@ -27,15 +27,30 @@ except Exception:  # pragma: no cover
 
 import camera_model as cm
 
+MAX_PNP_REPROJECTION_ERROR_PX = 6.0
+MIN_PNP_RANGE_M = 0.20
+MAX_PNP_RANGE_M = 50.0
+
 # Object points of the flyable inner square in the gate's own frame (metres),
 # ordered TL, TR, BR, BL to match both gate_detector._order_corners AND the
 # canonical order cv2.SOLVEPNP_IPPE_SQUARE expects: a y-UP planar square
 # [(-s,+s,0),(+s,+s,0),(+s,-s,0),(-s,-s,0)] with +z as the surface normal.
-_S = cm.GATE_INNER_M / 2.0
-_GATE_OBJ_PTS = np.array(
-    [[-_S, _S, 0.0], [_S, _S, 0.0], [_S, -_S, 0.0], [-_S, -_S, 0.0]],
-    dtype=np.float32,
-)
+def build_gate_object_points(width_m=cm.GATE_INNER_M, height_m=cm.GATE_INNER_M):
+    """Return planar gate corners TL, TR, BR, BL in metres (y is up)."""
+    half_width = float(width_m) / 2.0
+    half_height = float(height_m) / 2.0
+    return np.array(
+        [
+            [-half_width, half_height, 0.0],
+            [half_width, half_height, 0.0],
+            [half_width, -half_height, 0.0],
+            [-half_width, -half_height, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+_GATE_OBJ_PTS = build_gate_object_points()
 
 
 def _opening_side_px(det):
@@ -57,19 +72,51 @@ def _bearing(gate_body):
 
 
 def _solve_pnp(det):
-    """Return (gate_cam_point, normal_cam) from solvePnP, or None on failure."""
-    if cv2 is None or det.corners_px is None or len(det.corners_px) != 4:
+    """Return validated PnP pose and reprojection error, or None on failure."""
+    if (
+        cv2 is None
+        or not getattr(det, "corners_reliable", True)
+        or det.corners_px is None
+        or len(det.corners_px) != 4
+    ):
         return None
     img_pts = np.array(det.corners_px, dtype=np.float32)
     ok, rvec, tvec = cv2.solvePnP(
         _GATE_OBJ_PTS, img_pts, cm.K, None, flags=cv2.SOLVEPNP_IPPE_SQUARE
     )
+
+    def reprojection(rv, tv):
+        if (
+            not np.all(np.isfinite(rv))
+            or not np.all(np.isfinite(tv))
+        ):
+            return float("inf")
+        projected, _ = cv2.projectPoints(_GATE_OBJ_PTS, rv, tv, cm.K, None)
+        residual = projected.reshape(-1, 2) - img_pts
+        return float(np.sqrt(np.mean(np.sum(residual * residual, axis=1))))
+
+    reprojection_error = reprojection(rvec, tvec) if ok else float("inf")
+    # IPPE can return NaNs or a poor degenerate solution for a nearly perfect
+    # fronto-parallel square. ITERATIVE is deterministic and stable there.
+    if not ok or reprojection_error > MAX_PNP_REPROJECTION_ERROR_PX:
+        ok, rvec, tvec = cv2.solvePnP(
+            _GATE_OBJ_PTS, img_pts, cm.K, None, flags=cv2.SOLVEPNP_ITERATIVE
+        )
+        reprojection_error = reprojection(rvec, tvec) if ok else float("inf")
     if not ok:
         return None
     R, _ = cv2.Rodrigues(rvec)
     gate_cam = tvec.reshape(3)
+    range_m = float(np.linalg.norm(gate_cam))
+    if (
+        gate_cam[2] <= 0.0
+        or not (MIN_PNP_RANGE_M <= range_m <= MAX_PNP_RANGE_M)
+    ):
+        return None
+    if not np.isfinite(reprojection_error) or reprojection_error > MAX_PNP_REPROJECTION_ERROR_PX:
+        return None
     normal_cam = R @ np.array([0.0, 0.0, 1.0])  # gate +z (surface normal) in cam frame
-    return gate_cam, normal_cam
+    return gate_cam, normal_cam, reprojection_error, rvec, tvec
 
 
 def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
@@ -91,10 +138,11 @@ def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
 
     method = "size"
     normal_body = None
+    reprojection_error = None
 
     pnp = _solve_pnp(det) if use_pnp else None
     if pnp is not None:
-        gate_cam, normal_cam = pnp
+        gate_cam, normal_cam, reprojection_error, pnp_rvec, pnp_tvec = pnp
         gate_body = cm.cam_to_body(gate_cam)
         normal_body = cm.cam_to_body(normal_cam)
         method = "pnp"
@@ -119,10 +167,22 @@ def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
         else:
             gate_ned = tuple(float(c) for c in offset_ned)  # relative, world axes
 
+    confidence = float(det.confidence)
+    if reprojection_error is not None:
+        # PnP contributes up to 20% of the final confidence. A pose at the
+        # configured reprojection limit contributes zero.
+        pnp_quality = max(
+            0.0, 1.0 - reprojection_error / MAX_PNP_REPROJECTION_ERROR_PX
+        )
+        confidence = float(np.clip(0.8 * confidence + 0.2 * pnp_quality, 0.0, 1.0))
+        det.pnp_reprojection_error = reprojection_error
+        det.pnp_rvec = pnp_rvec
+        det.pnp_tvec = pnp_tvec
+
     return {
         "ts": ts,
         "detected": True,
-        "confidence": float(det.confidence),
+        "confidence": confidence,
         "center_px": det.center_px,
         "corners_px": det.corners_px,
         "area_px": det.area_px,
@@ -132,4 +192,5 @@ def estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None):
         "gate_ned": gate_ned,
         "normal_body": normal_body,
         "method": method,
+        "pnp_reprojection_error": reprojection_error,
     }

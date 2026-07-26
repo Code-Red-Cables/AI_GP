@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Python client for the **AI Grand Prix (AI-GP)** autonomous drone-racing competition. The client connects to the DCL flight simulator over **MAVLink 2 / UDP**, ingests telemetry and a first-person camera stream, and must fly a racing drone through a sequence of gates with **zero human input** (any human input during a timed run is disqualification).
 
+**Current OpenCV navigation (2026-07-26):** `vision/gate_detector.py` now exposes
+`OrangeGateDetector`/`DetectorConfig` with structured normalized detections;
+`vision/gate_tracker.py` smooths and predicts bounded dropouts;
+`vision/navigation.py` implements SEARCH/ALIGN/APPROACH/COMMIT/PASS_THROUGH/RECOVER;
+and `vision/mode_router.py` provides OpenCV/AI/hybrid hysteresis. `vision_rx.py`
+publishes `vision`, `navigation`, `control_source`, and optional `ai_action`;
+`Planner` adapts body image guidance to NED targets; `Controller` remains the
+exclusive body-rate/thrust sender. See `docs/OPENCV_GATE_NAVIGATION.md`. The
+checked-out `main` branch has no AI checkpoint; an existing learned policy is
+loaded lazily through `AI_POLICY_FACTORY=module:factory`.
+
 The committed code on `main` is the organizer-provided **example client**: it connects, arms, and spins a control loop, but perception/planning/control are stubs. The work is filling in the pipeline:
 
 ```
@@ -33,7 +44,7 @@ python main.py
 
 - Target runtime is **Python 3.14.2 on Windows 11** (the sim does not run on Linux).
 - **Use the bundled interpreter** `C:\Users\rocky\docs\AI_GP\PyAIPilotExample\myenv\Scripts\python.exe` — it has `numpy`/`cv2`/`pymavlink`; the system `py` does not.
-- **Offline tests (no sim needed):** `python test_camera_model.py` (geometry sign-checks) and `python test_pipeline_smoke.py` (detector→estimator→planner→control-send). Both print `ALL ... PASSED`. There is no linter/build step.
+- **Offline tests (no sim needed):** `python test_camera_model.py`, `python test_pipeline_smoke.py`, and `python test_opencv_gate_navigation.py`. There is no linter/build step.
 - **Safety flags in `main.py`:** `DRY_RUN` (default **False** — CAUTION: the drone will attempt to fly on startup; set to True to compute & log guidance only without sending flight setpoints), `DEBUG_VISION` (write detection overlays; keep off for timed runs), `LOGGING` (JSONL run logs under `logs/`).
 - End-to-end verification against the sim (manual login required): see `reference/VERIFY.md`.
 - Connection defaults live at the top of `main.py` (MAVLink `udpin:127.0.0.1:14550`) and `vision_rx.py` (camera `udp:0.0.0.0:5600`). Edit these to talk to a remote sim.

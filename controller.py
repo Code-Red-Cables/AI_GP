@@ -107,6 +107,9 @@ RATE_MAX = math.radians(220.0)      # cap on any commanded body rate
 # keeping them in frame; the planner's plausibility gate removes the bad-frame swings.
 YAW_RATE_MAX = math.radians(70.0)   # tighter cap on the yaw rate specifically
 LEAN_LPF_ALPHA = 0.35               # roll/pitch desired-angle smoothing (1.0 = off)
+AI_ACTION_TIMEOUT_NS = 300_000_000
+AI_RATE_SLEW_PER_TICK = math.radians(18.0)
+AI_THRUST_SLEW_PER_TICK = 0.035
 
 # Per-axis sign of the body-rate command needed for NEGATIVE feedback. This sim's
 # SET_ATTITUDE_TARGET rate axes do NOT share a consistent convention with its reported
@@ -202,6 +205,7 @@ class Controller:
         # Command-conditioning state (see KP_YAW / LEAN_LPF above).
         self._roll_cmd = 0.0        # last low-passed roll command (rad)
         self._pitch_cmd = 0.0       # last low-passed pitch command (rad)
+        self._last_ai_command = [HOVER_THRUST, 0.0, 0.0, 0.0]
 
     @staticmethod
     def _wrap(a):
@@ -262,6 +266,11 @@ class Controller:
         target = self.planner.compute_target() if self.planner is not None else None
         dry_run = self.data.get('dry_run', True)
 
+        if target is not None and target.get('source') in ('ai_active', 'ai_safe_hover'):
+            self._apply_ai_or_safe(target, dry_run)
+            time.sleep(self._dt)
+            return
+
         if target is not None and target['mode'] == 'velocity':
             roll_now, pitch_now, yaw_now, vn_now, ve_now, vz_now = self._telemetry()
             roll_des, pitch_des, yaw_target, thrust = velocity_to_attitude(
@@ -284,6 +293,62 @@ class Controller:
             self._maybe_log(target, (roll_des, pitch_des, yaw_target, thrust), dry_run)
 
         time.sleep(self._dt)
+
+    def _apply_ai_or_safe(self, target, dry_run):
+        """Send one bounded learned-policy action, or an explicit safe hover.
+
+        The AI provider contract uses physical body rates and thrust. This path
+        is mutually exclusive with the OpenCV velocity target, so two systems
+        can never issue commands on the same control tick.
+        """
+        now = time.time_ns()
+        with self.data['lock']:
+            action = self.data.get('ai_action')
+        fresh = (
+            target.get('source') == 'ai_active'
+            and action is not None
+            and action.get('ts')
+            and now - action['ts'] <= AI_ACTION_TIMEOUT_NS
+        )
+        desired = [HOVER_THRUST, 0.0, 0.0, 0.0]
+        source = 'ai_safe_hover'
+        if fresh:
+            desired = [
+                max(THRUST_MIN, min(THRUST_MAX, float(action['thrust']))),
+                _clamp(float(action['roll_rate']), RATE_MAX),
+                _clamp(float(action['pitch_rate']), RATE_MAX),
+                _clamp(float(action['yaw_rate']), YAW_RATE_MAX),
+            ]
+            source = 'ai'
+
+        conditioned = []
+        for index, (old, new) in enumerate(zip(self._last_ai_command, desired)):
+            limit = AI_THRUST_SLEW_PER_TICK if index == 0 else AI_RATE_SLEW_PER_TICK
+            conditioned.append(old + _clamp(new - old, limit))
+        self._last_ai_command = conditioned
+        thrust, roll_rate, pitch_rate, yaw_rate = conditioned
+        if not dry_run:
+            send_rate_target(
+                self.sim_conn,
+                self.system_boot_ms,
+                roll_rate,
+                pitch_rate,
+                yaw_rate,
+                thrust,
+            )
+        with self.data['lock']:
+            self.data['control'] = {
+                'ts': now,
+                'dry_run': dry_run,
+                'source': source,
+                'vel_cmd_ned': (0.0, 0.0, 0.0),
+                'cmd': {
+                    'roll_rate': roll_rate,
+                    'pitch_rate': pitch_rate,
+                    'yaw_rate': yaw_rate,
+                    'thrust': thrust,
+                },
+            }
 
     def _publish_control(self, target, attitude_des, rate_cmd, meas, dry_run):
         """Expose the actual command (and the telemetry it used) for the logger."""

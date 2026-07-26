@@ -6,8 +6,19 @@ from controller import Controller
 from planner import Planner
 from logger import Logger
 from course_map import CourseMap
+from vision.ai_adapter import load_policy_factory
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
+    # Optional and lazy: OpenCV-only mode never imports the learned policy's
+    # framework. The checked-in main branch has no model weights, so callers
+    # provide their existing policy through this narrow adapter boundary.
+    shared_data['ai_policy'] = load_policy_factory(
+        shared_data.get('ai_policy_factory'), shared_data
+    )
+    shared_data.setdefault(
+        'control_source',
+        'ai' if shared_data.get('vision_mode') == 'ai' else 'opencv'
+    )
     # -------------------------------
     # Mavlink Connection
     # -------------------------------

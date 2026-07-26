@@ -52,6 +52,8 @@ _LEGEND = {
     "vel_cmd": "planner's commanded velocity NED [vn,ve,vd] (m/s)",
     "yaw_tgt": "planner's raw desired yaw before slew-limiting (rad)",
     "vis": "[detected(0/1), confidence, range_m, method] from perception",
+    "nav": "[state, forward, right, down, yaw_rate] from image-space navigator",
+    "control_source": "exclusive command owner: opencv|ai|safe",
     "col": "[collision_id, threat_level, impulse] if a collision is fresh (<1s) else null",
 }
 
@@ -103,7 +105,8 @@ def _r(x, n=4):
 class Logger:
 
     LOG_KEYS = ('armed', 'flight_mode', 'attitude', 'position_ned', 'odometry', 'race',
-                'vision', 'target', 'control', 'last_collision')
+                'vision', 'navigation', 'control_source', 'ai_error',
+                'target', 'control', 'last_collision')
 
     LATEST_PATH = os.path.join('logs', 'latest.jsonl')
 
@@ -155,6 +158,7 @@ class Logger:
         odo = snap.get('odometry') or {}
         race = snap.get('race') or {}
         vis = snap.get('vision') or {}
+        nav = snap.get('navigation') or {}
         ctrl = snap.get('control') or {}
         cmd = ctrl.get('cmd') or {}
         col = snap.get('last_collision') or {}
@@ -210,6 +214,15 @@ class Logger:
             "yaw_tgt": _r(ctrl.get('yaw_target')),
             "vis": [int(bool(vis.get('detected'))), _r(vis.get('confidence'), 2),
                     _r(vis.get('range_m'), 2), vis.get('method')] if vis else None,
+            "nav": [
+                nav.get('state'),
+                _r(nav.get('forward_mps'), 3),
+                _r(nav.get('right_mps'), 3),
+                _r(nav.get('down_mps'), 3),
+                _r(nav.get('yaw_rate_rps'), 3),
+            ] if nav else None,
+            "control_source": snap.get('control_source'),
+            "ai_error": snap.get('ai_error'),
             # Raw body-frame gate vector (x-fwd,y-right,z-down) + its azimuth-off-nose
             # (deg). az should be ~0 for a centred gate REGARDLESS of lean; a swinging az
             # while the gate is centred pinpoints bearing corruption at the source.

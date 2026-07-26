@@ -1,5 +1,14 @@
 # Calibration & tuning guide
 
+> Current detector note (2026-07-26): configuration now lives in the
+> `DetectorConfig` dataclass, not `LOWER_HSV`/`DEFAULT_CFG`. The active two HSV
+> ranges are `((0,55,75),(18,255,255))` and
+> `((165,55,75),(179,255,255))`; morphology is 3×3, minimum contour area is
+> 45 px, minimum side is 5 px, and minimum confidence is 0.20. Use
+> `tools/offline_gate_viewer.py` for folder/video replay. The complete current
+> tuning reference is [OPENCV_GATE_NAVIGATION.md](OPENCV_GATE_NAVIGATION.md).
+> Older constant names below document the legacy compatibility wrapper only.
+
 Three things need calibrating/tuning against the **real** simulator, in this order:
 
 1. **HSV thresholds** — so the detector actually sees the gate (required; placeholders ship).

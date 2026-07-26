@@ -60,15 +60,20 @@ Functions: `pixel_to_ray`, `project`, `deproject`, `range_from_size`,
 `cam_to_body`/`body_to_cam`, `rot_world_body`, `body_to_ned`/`ned_to_body`.
 See §3 for the math. Has its own unit tests (`test_camera_model.py`).
 
-### `vision/gate_detector.py` — HSV → square (pure, frame in → detection out)
-`detect_gate(bgr, cfg=None) -> GateDetection | None`. Pipeline: BGR→HSV →
-`inRange` (+ optional wrapped-hue range) → open/close morphology →
-`findContours(RETR_CCOMP)` → filter by area/squareness/extent → pick best →
-inner-hole centroid + `approxPolyDP` corners (TL,TR,BR,BL) + confidence.
-`GateDetection` = `{center_px, corners_px|None, bbox_px, area_px, confidence}`.
-Thresholds (`LOWER_HSV`/`UPPER_HSV`/`LOWER_HSV2`/`UPPER_HSV2`, `DEFAULT_CFG`) are
-**calibrated for the red/orange Round-1 gate** using a two-piece hue mask (see `CALIBRATION.md` §2).
-`draw_detection()` annotates a copy; `__main__` self-tests on a synthetic frame or an image path argument.
+### `vision/gate_detector.py` — HSV gate candidates (pure)
+`OrangeGateDetector.detect(frame) -> GateDetection` accepts explicitly configured
+BGR/RGB/BGRA/RGBA input. It uses two-range HSV segmentation, morphology,
+`RETR_TREE` hierarchy, rotated rectangles, child openings, polygon corners,
+border density, partial-edge handling, and documented weighted confidence.
+Results include pixel/normalized center, width/height, area, angle, distance,
+TL/TR/BR/BL corners, and tracking metadata. The legacy `detect_gate()` wrapper
+remains for compatibility.
+
+`vision/gate_tracker.py` adds EMA smoothing, jump rejection, five-frame bounded
+prediction, and reset. `vision/navigation.py` implements
+SEARCH→ALIGN→APPROACH→COMMIT→PASS_THROUGH→RECOVER with bounded, filtered,
+slew-limited body-axis commands. `vision/mode_router.py` owns exclusive
+OpenCV/AI/hybrid selection with hysteresis.
 
 ### `gate_estimator.py` — pixels → 3D pose (uses camera_model, cv2 for PnP)
 `estimate_gate(det, attitude=None, position_ned=None, use_pnp=True, ts=None) -> dict`.
@@ -91,11 +96,12 @@ gate-id-sorted list. ODOMETRY is the rich pose source; ATTITUDE/LOCAL_POSITION_N
 are fallbacks.
 
 ### `vision_rx.py` — inbound video → perception
-Reassembles chunked JPEG (unchanged) then `process_frame()` runs `detect_gate` →
-`estimate_gate` (using the latest attitude/position snapshot) → publishes
-`shared_data['vision']`. `_quat_to_rpy()` converts the ODOMETRY quaternion to
-roll/pitch/yaw when ATTITUDE isn't present. Writes `_vision_NN.png` overlays when
-`shared_data['debug_vision']` is set.
+Reassembles chunked JPEG, prunes stale partial frames, then `process_frame()` runs
+detector → tracker → navigation → validated PnP/size estimate. It publishes
+`vision`, `navigation`, `control_source`, and optional `ai_action`. `_quat_to_rpy()`
+converts ODOMETRY only when available; the image controller itself does not need
+world pose. Debug overlays include mask candidates, errors, state, command, and
+timing.
 
 ### `planner.py` — choose the target gate (Task C)
 `Planner.compute_target()` snapshots `shared_data`, then (in priority order):

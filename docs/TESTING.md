@@ -18,8 +18,14 @@ Run everything from the repo root (`C:\Users\rocky\docs\AI_GP\AI_GP`).
 ```powershell
 & $PY test_camera_model.py        # geometry sign-checks
 & $PY test_pipeline_smoke.py      # detector -> estimator -> planner -> control-send
+& $PY test_opencv_gate_navigation.py  # detector/tracker/state/router synthetic tests
 ```
-Both must end with `ALL ... PASSED`. Combined they take < 2 s.
+All must pass. Combined they take < 2 s on the development machine.
+
+`test_opencv_gate_navigation.py` adds 14 focused checks covering HSV
+segmentation, normalized coordinates, contour selection, ordered corners, PnP
+validation, tiny/filled rejection, partial/rotated gates, tracking, command
+signs/caps, state transitions, dropouts, and hybrid hysteresis.
 
 ### `test_camera_model.py` — geometry (8 checks)
 Validates the frame math in isolation (numpy only). Each asserts a *physical*
@@ -61,7 +67,9 @@ Runs the whole chain on a synthetic gate frame, no sim:
 ```powershell
 & $PY -m py_compile camera_model.py gate_estimator.py planner.py controller.py `
     logger.py mavlink_rx.py vision_rx.py setup.py main.py timesync.py `
-    vision/gate_detector.py tools/capture_frames.py tools/hsv_tuner.py
+    vision/gate_detector.py vision/gate_tracker.py vision/navigation.py `
+    vision/mode_router.py vision/ai_adapter.py tools/capture_frames.py `
+    tools/hsv_tuner.py tools/offline_gate_viewer.py
 & $PY -c "import setup; from vision.gate_detector import detect_gate; print('import graph OK')"
 ```
 Importing `setup` loads the entire component graph **without** connecting to the
@@ -75,6 +83,13 @@ sim — a fast way to catch interface mismatches after edits.
 ```
 Prints the `GateDetection` and writes an annotated `_detect_debug.png`. Use this
 while calibrating HSV (see [`CALIBRATION.md`](CALIBRATION.md)).
+
+For image folders and videos:
+
+```powershell
+& $PY tools/offline_gate_viewer.py frames --save-dir debug_frames
+& $PY tools/offline_gate_viewer.py flight.mp4 --video-out annotated.mp4
+```
 
 ## 4. On-sim verification (manual)
 Requires launching the sim and logging in — full runbook in

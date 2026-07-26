@@ -23,6 +23,14 @@ DRY_RUN = False
 DEBUG_VISION = False
 LOGGING = True
 
+# Perception/control source.  "opencv" is deterministic; "ai" delegates to an
+# optional provider loaded through AI_POLICY_FACTORY; "hybrid" uses OpenCV until
+# confidence stays low for several frames, then switches with hysteresis.
+VISION_MODE = os.environ.get("VISION_MODE", "opencv").lower()
+AI_POLICY_FACTORY = os.environ.get("AI_POLICY_FACTORY")
+if VISION_MODE not in {"opencv", "ai", "hybrid"}:
+    raise ValueError("VISION_MODE must be one of: opencv, ai, hybrid")
+
 # --------------------------------------------------------------------------------------
 # Preplanning (learn-then-replay the deterministic course; spec 3.5). The sim sends no
 # track map (spec 4.3), so we LEARN each gate's world position as we pass it and PREPLAN
@@ -46,6 +54,9 @@ shared_data = {
     'dry_run': DRY_RUN,
     'debug_vision': DEBUG_VISION,
     'logging': LOGGING,
+    'vision_mode': VISION_MODE,
+    'ai_policy_factory': AI_POLICY_FACTORY,
+    'control_source': 'ai' if VISION_MODE == 'ai' else 'opencv',
     'preplan': PREPLAN,
     'learn': LEARN,
     'course_map_path': COURSE_MAP_PATH,
