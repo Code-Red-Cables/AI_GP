@@ -90,6 +90,7 @@ def create_gate_detector():
             minimum_gate_area_px=config.YOLO_MIN_GATE_AREA_PX,
             maximum_outside_fraction=config.YOLO_MAX_OUTSIDE_FRACTION,
             previous_center_frames=config.YOLO_PREVIOUS_CENTER_FRAMES,
+            estimated_opening_scale=config.YOLO_ESTIMATED_OPENING_SCALE,
             inference_size=config.YOLO_INFERENCE_SIZE,
             device=config.YOLO_DEVICE,
             log_interval_s=config.YOLO_LOG_INTERVAL_S,

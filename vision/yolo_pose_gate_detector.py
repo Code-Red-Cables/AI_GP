@@ -1,9 +1,9 @@
-"""Four-keypoint YOLO pose detector for overlapping racing gates.
+"""YOLO pose detector for separately labeled overlapping racing gates.
 
-The pose model separates physical gate instances and directly predicts the
-inner opening corners. This avoids running a shared orange contour over pixels
-from multiple overlapping gates. The detector preserves the established
-``GateDetection`` contract used by tracking, PnP, navigation, and control.
+The model separates physical gate instances and predicts the annotated outer
+gate corners. The YOLO box owns the steering center because the training
+keypoints nearly duplicate the box corners and are noisier. Keypoints provide
+orientation only and are intentionally excluded from inner-opening PnP.
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ from .gate_detector import (
 from .yolo_gate_detector import (
     InnerGateCorners,
     YoloGateBox,
-    calculate_gate_center,
     select_target_gate,
 )
 
@@ -46,6 +45,7 @@ class PoseGateConfig:
     minimum_opening_area_px: float = 64.0
     minimum_opening_side_px: float = 8.0
     previous_center_frames: int = 5
+    estimated_opening_scale: float = 0.72
     inference_size: int = 640
     device: Optional[str] = None
     log_interval_s: float = 1.0
@@ -236,11 +236,11 @@ def select_pose_target(
     )
 
 
-def reliable_inner_corners(
+def reliable_pose_corners(
     candidate: PoseGateCandidate,
     config: PoseGateConfig,
 ) -> tuple[Optional[InnerGateCorners], str]:
-    """Validate and order four predicted opening corners TL, TR, BR, BL."""
+    """Validate the learned outer gate corners for orientation only."""
     confidences = candidate.keypoint_confidences
     if np.any(confidences < config.keypoint_confidence_threshold):
         return None, "low_keypoint_confidence"
@@ -250,12 +250,12 @@ def reliable_inner_corners(
     bottom_width = np.linalg.norm(ordered[2] - ordered[3])
     left_height = np.linalg.norm(ordered[3] - ordered[0])
     right_height = np.linalg.norm(ordered[2] - ordered[1])
-    opening_width = 0.5 * (top_width + bottom_width)
-    opening_height = 0.5 * (left_height + right_height)
+    pose_width = 0.5 * (top_width + bottom_width)
+    pose_height = 0.5 * (left_height + right_height)
     if area < config.minimum_opening_area_px:
-        return None, "opening_area"
-    if min(opening_width, opening_height) < config.minimum_opening_side_px:
-        return None, "opening_side"
+        return None, "pose_area"
+    if min(pose_width, pose_height) < config.minimum_opening_side_px:
+        return None, "pose_side"
     corners = InnerGateCorners(
         top_left=tuple(float(value) for value in ordered[0]),
         top_right=tuple(float(value) for value in ordered[1]),
@@ -263,22 +263,7 @@ def reliable_inner_corners(
         bottom_left=tuple(float(value) for value in ordered[3]),
         reliable=True,
     )
-    return corners, "pose_keypoints"
-
-
-def _opening_dimensions(
-    corners: InnerGateCorners,
-) -> tuple[float, float]:
-    points = corners.as_polygon()
-    width = 0.5 * (
-        np.linalg.norm(points[1] - points[0])
-        + np.linalg.norm(points[2] - points[3])
-    )
-    height = 0.5 * (
-        np.linalg.norm(points[3] - points[0])
-        + np.linalg.norm(points[2] - points[1])
-    )
-    return float(width), float(height)
+    return corners, "outer_pose_orientation"
 
 
 def draw_pose_debug_overlay(
@@ -374,7 +359,7 @@ def draw_pose_debug_overlay(
 
 
 class YoloPoseGateDetector:
-    """Drop-in detector that publishes per-instance learned gate corners."""
+    """Drop-in detector using YOLO boxes for target center and scale."""
 
     def __init__(
         self,
@@ -424,7 +409,7 @@ class YoloPoseGateDetector:
     def _to_gate_detection(
         self,
         candidate: PoseGateCandidate,
-        corners: Optional[InnerGateCorners],
+        pose_corners: Optional[InnerGateCorners],
         frame_shape: tuple[int, ...],
         timestamp: float,
     ) -> GateDetection:
@@ -436,11 +421,15 @@ class YoloPoseGateDetector:
             int(round(x2 - x1)),
             int(round(y2 - y1)),
         )
-        if corners is not None:
-            center_x, center_y = calculate_gate_center(corners)
-            opening_width, opening_height = _opening_dimensions(corners)
-            polygon = corners.as_polygon()
-            method = "yolo_pose_keypoints"
+        center_x, center_y = candidate.box.center
+        opening_scale = float(
+            np.clip(self.config.estimated_opening_scale, 0.05, 1.0)
+        )
+        opening_width = max(1.0, (x2 - x1) * opening_scale)
+        opening_height = max(1.0, (y2 - y1) * opening_scale)
+        if pose_corners is not None:
+            polygon = pose_corners.as_polygon()
+            method = "yolo_pose_box_center"
             point_quality = float(
                 np.mean(candidate.keypoint_confidences)
             )
@@ -450,11 +439,7 @@ class YoloPoseGateDetector:
             top_edge = polygon[1] - polygon[0]
             angle = math.degrees(math.atan2(top_edge[1], top_edge[0]))
         else:
-            center_x, center_y = candidate.box.center
-            opening_width = max(1.0, (x2 - x1) * 0.72)
-            opening_height = max(1.0, (y2 - y1) * 0.72)
-            polygon = None
-            method = "yolo_pose_box_fallback"
+            method = "yolo_pose_box_center_no_orientation"
             confidence = 0.70 * candidate.box.confidence
             angle = 0.0
         normalized_x, normalized_y = normalized_image_coordinates(
@@ -477,9 +462,12 @@ class YoloPoseGateDetector:
             apparent_area=opening_width * opening_height,
             angle_degrees=float(angle),
             confidence=float(np.clip(confidence, 0.0, 1.0)),
-            corners=polygon,
+            # The learned points describe the outer gate, not the flyable
+            # inner opening. Publishing them here would make gate_estimator
+            # run physically invalid inner-square PnP.
+            corners=None,
             method=method,
-            corners_reliable=corners is not None,
+            corners_reliable=False,
             distance_m=float(distance),
             frame_width=width,
             frame_height=height,
@@ -507,13 +495,8 @@ class YoloPoseGateDetector:
                 [[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
                 dtype=np.int32,
             ).reshape(-1, 1, 2)
-            pose_corners, _ = reliable_inner_corners(
+            pose_corners, _ = reliable_pose_corners(
                 candidate, self.config
-            )
-            candidate_center = (
-                calculate_gate_center(pose_corners)
-                if pose_corners is not None
-                else candidate.box.center
             )
             debug_candidates.append(
                 CandidateDebug(
@@ -530,7 +513,7 @@ class YoloPoseGateDetector:
                     confidence=candidate.box.confidence,
                     reason="yolo_pose_gate",
                     method="yolo_pose_gate",
-                    center=candidate_center,
+                    center=candidate.box.center,
                     bbox=(
                         int(round(x1)),
                         int(round(y1)),
@@ -654,14 +637,10 @@ class YoloPoseGateDetector:
             timestamp=now,
         )
         if selected is not None:
-            corners, reason = reliable_inner_corners(
+            corners, reason = reliable_pose_corners(
                 selected, self.config
             )
-            source = (
-                "pose_keypoints"
-                if corners is not None
-                else "pose_box_fallback"
-            )
+            source = "yolo_box_center"
             result = self._to_gate_detection(
                 selected, corners, frame.shape, now
             )

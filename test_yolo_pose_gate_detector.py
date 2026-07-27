@@ -10,7 +10,7 @@ from vision.yolo_pose_gate_detector import (
     PoseGateConfig,
     YoloPoseGateDetector,
     detect_gate_poses,
-    reliable_inner_corners,
+    reliable_pose_corners,
     select_pose_target,
 )
 from vision.yolo_gate_detector import YoloGateBox
@@ -111,7 +111,7 @@ def test_generic_pose_weights_are_rejected():
         )
 
 
-def test_pose_keypoints_publish_center_and_cyclic_corners():
+def test_pose_uses_box_center_and_keeps_outer_corners_debug_only():
     detector = YoloPoseGateDetector(
         PoseGateConfig(
             minimum_gate_area_px=100,
@@ -125,13 +125,42 @@ def test_pose_keypoints_publish_center_and_cyclic_corners():
     )
 
     assert result.found
-    assert result.method == "yolo_pose_keypoints"
+    assert result.method == "yolo_pose_box_center"
     assert result.center_px == pytest.approx((200.0, 160.0))
-    assert result.corners_reliable
+    assert not result.corners_reliable
+    assert result.corners is None
     assert np.allclose(
-        result.corners,
+        detector.last_pose_debug.corners.as_polygon(),
         np.asarray([[125, 90], [275, 90], [275, 230], [125, 230]]),
     )
+    assert detector.last_pose_debug.center_source == "yolo_box_center"
+
+
+def test_asymmetric_keypoints_cannot_shift_steering_off_box_center():
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(minimum_gate_area_px=100, log_interval_s=999),
+        model=_FakeModel(
+            [
+                _frame(
+                    points=(
+                        (
+                            (115, 70),
+                            (245, 80),
+                            (105, 200),
+                            (250, 220),
+                        ),
+                    )
+                )
+            ]
+        ),
+    )
+
+    result = detector.detect(
+        np.zeros((360, 640, 3), dtype=np.uint8), timestamp=1.0
+    )
+
+    assert result.center_px == (200.0, 160.0)
+    assert result.angle_degrees != 0.0
 
 
 def test_largest_pose_instance_is_acquired_without_merging():
@@ -210,7 +239,7 @@ def test_low_confidence_corner_uses_box_center_fallback():
     )
 
     assert result.found
-    assert result.method == "yolo_pose_box_fallback"
+    assert result.method == "yolo_pose_box_center_no_orientation"
     assert result.center_px == (200.0, 160.0)
     assert not result.corners_reliable
 
@@ -257,7 +286,7 @@ def test_reliable_corners_require_all_four_points():
         keypoint_confidences=np.asarray([0.9, 0.9, 0.0, 0.9]),
     )
 
-    corners, reason = reliable_inner_corners(
+    corners, reason = reliable_pose_corners(
         candidate,
         PoseGateConfig(keypoint_confidence_threshold=0.25),
     )

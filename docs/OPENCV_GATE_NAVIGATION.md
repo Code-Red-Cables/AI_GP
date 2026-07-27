@@ -59,15 +59,17 @@ python main.py
    valid YOLO gate. While locked, overlap with the previous target is
    authoritative and center/size similarity breaks ties, preventing rapid
    switching between overlapping gates.
-3. Each pose instance directly supplies its own four inner-opening keypoints:
-   top-left, top-right, bottom-left, and bottom-right. They are validated and
-   converted to the cyclic TL/TR/BR/BL order required by PnP. This avoids a
-   shared color contour entirely: overlapping gate pixels cannot be merged
-   into one geometry. The target center is the arithmetic mean of the four
-   corners. When one keypoint is temporarily unreliable, only that selected
-   instance's YOLO-box center is used as a bounded fallback. A short complete
-   disappearance uses the previous center; pass confirmation resets the pose
-   instance lock and tracker before the next gate is acquired.
+3. Each pose instance supplies four annotated outer-gate keypoints:
+   top-left, top-right, bottom-left, and bottom-right. Dataset inspection shows
+   that these points span a median 97.3% of the YOLO box and share virtually
+   the same labeled center, so they are not inner-opening corners. The selected
+   YOLO box center is therefore authoritative for steering and target scale.
+   High-confidence keypoints contribute only the gate's image-plane
+   orientation angle and remain visible in the debug overlay. They are not
+   published as `GateDetection.corners`, preventing physically invalid
+   inner-square PnP. A short complete disappearance uses the previous box
+   center; pass confirmation resets the pose instance lock and tracker before
+   the next gate is acquired.
    The older `yolo_hybrid` backend remains available for detection-box models.
    It runs orange opening extraction only inside the selected YOLO crop.
 4. With no custom model, `auto` mode uses `OrangeGateDetector`, which finds the
@@ -169,7 +171,7 @@ to PnP when reliable opening corners are available.
 No trained racing-gate weights are committed to Git. The downloaded Roboflow
 YOLOv8 keypoint export belongs at
 `datasets/AI_GP.v1i.yolov8/`; datasets and weights remain ignored because they
-are large/private. The dataset has four inner-opening points in the order
+are large/private. The current dataset has four outer-gate points in the order
 top-left, top-right, bottom-left, bottom-right. Its `data.yaml` must contain:
 
 ```yaml
@@ -205,6 +207,7 @@ Primary runtime tuning variables:
 - `YOLO_CROP_PADDING_PX` (default `14`)
 - `YOLO_MIN_GATE_AREA_PX` (default `400`)
 - `YOLO_PREVIOUS_CENTER_FRAMES` (default `5`)
+- `YOLO_ESTIMATED_OPENING_SCALE` (default `0.72`)
 - `GATE_HSV_LOWER` / `GATE_HSV_UPPER` (comma-separated HSV triples)
 - `GATE_MIN_CONTOUR_AREA` (default `45`)
 
@@ -233,9 +236,11 @@ two diagnostics on the right: the orange color mask and an accepted-target
 view containing only the orange gate geometry that may influence steering.
 In pose mode the overlay shows every separate pose instance, confidence, all
 four keypoints, the selected opening quadrilateral, calculated center, and
-center source (`pose_keypoints`, `pose_box_fallback`, or
-`previous_frame_fallback`). In hybrid mode it shows the equivalent selected
-box, padded crop, and color-extracted corners.
+center source (`yolo_box_center` or `previous_frame_fallback`). Purple
+keypoints show outer-gate orientation for diagnostics only; they do not move
+the red steering center away from the green selected box. In hybrid mode the
+overlay shows the equivalent selected box, padded crop, and color-extracted
+corners.
 Orange pixels in the mask are color candidates, not necessarily
 accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
 to stop the client. Reset the simulator before using perception-only mode so

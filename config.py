@@ -143,6 +143,9 @@ YOLO_MAX_OUTSIDE_FRACTION = float(
 YOLO_PREVIOUS_CENTER_FRAMES = int(
     os.environ.get('YOLO_PREVIOUS_CENTER_FRAMES', '5')
 )
+YOLO_ESTIMATED_OPENING_SCALE = float(
+    os.environ.get('YOLO_ESTIMATED_OPENING_SCALE', '0.72')
+)
 YOLO_INFERENCE_SIZE = int(os.environ.get('YOLO_INFERENCE_SIZE', '640'))
 YOLO_DEVICE = os.environ.get('YOLO_DEVICE', '').strip() or None
 YOLO_LOG_INTERVAL_S = float(os.environ.get('YOLO_LOG_INTERVAL_S', '1.0'))

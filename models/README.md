@@ -12,8 +12,11 @@ Place the Roboflow YOLOv8 keypoint export at:
 datasets/AI_GP.v1i.yolov8/
 ```
 
-Its four points are the inner opening corners in TL, TR, BL, BR order. Ensure
-`data.yaml` uses dataset-local paths and correct horizontal flip semantics:
+Its current four points are outer-gate corners in TL, TR, BL, BR order. The
+runtime uses the YOLO box center for steering and these points only for
+high-confidence orientation; it deliberately does not pass them to
+inner-opening PnP. Ensure `data.yaml` uses dataset-local paths and correct
+horizontal flip semantics:
 
 ```yaml
 train: train/images
