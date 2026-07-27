@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import pytest
 
@@ -315,6 +316,69 @@ def test_inconsistent_pose_candidate_cannot_become_steering_target():
     ]
 
     assert not any(result.found for result in results)
+
+
+def test_hsv_confirmation_rejects_yolo_box_without_orange_gate():
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            require_hsv_confirmation=True,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame()]),
+    )
+
+    result = detector.detect(
+        np.zeros((360, 640, 3), dtype=np.uint8), timestamp=1.0
+    )
+
+    assert not result.found
+    assert len(detector.last_pose_debug.candidates) == 1
+    assert not detector.last_pose_debug.candidates[0].hsv_confirmed
+    assert not detector.last_debug.candidates[0].accepted
+
+
+def test_hsv_confirmation_accepts_orange_supported_gate_frame():
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(image, (100, 60), (300, 260), (0, 105, 255), -1)
+    cv2.rectangle(image, (135, 95), (265, 225), (0, 0, 0), -1)
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            require_hsv_confirmation=True,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame()]),
+    )
+
+    result = detector.detect(image, timestamp=1.0)
+    candidate = detector.last_pose_debug.candidates[0]
+
+    assert result.found
+    assert candidate.hsv_confirmed
+    assert candidate.hsv_supported_sides == 4
+    assert 0.12 <= candidate.hsv_orange_ratio <= 0.72
+    assert np.count_nonzero(detector.last_debug.cleaned_mask) > 0
+
+
+def test_hsv_confirmation_rejects_local_orange_reflection_patch():
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(image, (170, 130), (230, 190), (0, 105, 255), -1)
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            require_hsv_confirmation=True,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame()]),
+    )
+
+    result = detector.detect(image, timestamp=1.0)
+    candidate = detector.last_pose_debug.candidates[0]
+
+    assert not result.found
+    assert not candidate.hsv_confirmed
+    assert candidate.hsv_supported_sides < 3
 
 
 def test_reliable_corners_require_all_four_points():

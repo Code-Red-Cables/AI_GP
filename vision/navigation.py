@@ -372,6 +372,8 @@ class GateNavigator:
         elif self.state == NavigationState.TRACK:
             if not usable:
                 self._transition(NavigationState.RECOVER, now)
+            elif not measured:
+                self._last_command[:] = 0.0
             elif (
                 measured
                 and detection.stable_frames >= cfg.track_confirmation_frames
@@ -449,8 +451,11 @@ class GateNavigator:
                 cfg.search_yaw_rate_rps * self._last_direction,
             )
         elif self.state == NavigationState.TRACK:
-            desired[0] = cfg.track_forward_mps if usable else 0.0
-            if usable:
+            # A tracker prediction is useful for retaining identity, but it
+            # does not satisfy the live YOLO+HSV gate confirmation contract.
+            # Hold position until a measured, doubly confirmed target returns.
+            desired[0] = cfg.track_forward_mps if measured else 0.0
+            if measured:
                 scale = cfg.track_alignment_scale
                 desired[1] = scale * cfg.lateral_kp * horizontal
                 desired[2] = scale * cfg.vertical_kp * vertical

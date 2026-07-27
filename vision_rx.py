@@ -90,6 +90,13 @@ def create_gate_detector():
             acquisition_confirmation_frames=(
                 config.YOLO_ACQUISITION_CONFIRMATION_FRAMES
             ),
+            require_hsv_confirmation=config.YOLO_REQUIRE_HSV_CONFIRMATION,
+            hsv_ranges=hsv_ranges,
+            hsv_min_orange_ratio=config.YOLO_HSV_MIN_ORANGE_RATIO,
+            hsv_max_orange_ratio=config.YOLO_HSV_MAX_ORANGE_RATIO,
+            hsv_side_band_fraction=config.YOLO_HSV_SIDE_BAND_FRACTION,
+            hsv_min_side_density=config.YOLO_HSV_MIN_SIDE_DENSITY,
+            hsv_min_supported_sides=config.YOLO_HSV_MIN_SUPPORTED_SIDES,
             minimum_gate_area_px=config.YOLO_MIN_GATE_AREA_PX,
             maximum_outside_fraction=config.YOLO_MAX_OUTSIDE_FRACTION,
             previous_center_frames=config.YOLO_PREVIOUS_CENTER_FRAMES,

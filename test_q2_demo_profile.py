@@ -199,6 +199,29 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertAlmostEqual(command.forward_mps, 0.0)
         self.assertGreater(command.yaw_rate_rps, 0.0)
 
+    def test_tracker_prediction_cannot_move_unconfirmed_gate_target(self):
+        navigator = GateNavigator(q2_demo_navigation_config())
+        measured = detection_at(
+            nx=0.40,
+            confidence=0.90,
+            stable_frames=1,
+        )
+        navigator.update(measured, 1.0)
+        predicted = detection_at(
+            nx=0.40,
+            confidence=0.70,
+            predicted=True,
+            stable_frames=1,
+        )
+
+        command = navigator.update(predicted, 1.1)
+
+        self.assertEqual(command.state, NavigationState.TRACK)
+        self.assertAlmostEqual(command.forward_mps, 0.0)
+        self.assertAlmostEqual(command.right_mps, 0.0)
+        self.assertAlmostEqual(command.down_mps, 0.0)
+        self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
+
     def test_close_gate_slows_and_brakes_before_commit(self):
         navigator = GateNavigator(q2_demo_navigation_config())
         far = detection_at(

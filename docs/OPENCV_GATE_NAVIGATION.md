@@ -56,12 +56,19 @@ python main.py
    called with class-aware NMS (`agnostic_nms=False`) and a configurable
    default IoU threshold of `0.70`, preserving separately labeled overlapping
    gates when the trained model supports them. Acquisition selects the largest
-   valid YOLO gate only after it remains spatially consistent for three
-   consecutive inference frames. A one-frame false positive therefore remains
-   a cyan diagnostic candidate and cannot become the green steering target.
+   valid YOLO gate only when the calibrated orange HSV mask independently
+   confirms it. Confirmation requires 12–72% orange coverage inside the YOLO
+   box and orange support on at least three of its four border bands; this
+   preserves angled/partly occluded gates while rejecting isolated reflections
+   and solid orange patches. The surviving proposal must then remain spatially
+   consistent for three consecutive inference frames. A one-frame or
+   HSV-rejected false positive therefore cannot become the green steering
+   target.
    While locked, overlap with the previous target is authoritative and
    center/size similarity breaks ties, preventing rapid switching between
-   overlapping gates.
+   overlapping gates. Tracker predictions retain identity through a brief
+   dropout but command no motion in `TRACK`; movement resumes only after a
+   fresh YOLO-plus-HSV measurement.
 3. Each pose instance supplies four annotated outer-gate keypoints:
    top-left, top-right, bottom-left, and bottom-right. Dataset inspection shows
    that these points span a median 97.3% of the YOLO box and share virtually
@@ -209,6 +216,12 @@ Primary runtime tuning variables:
 - `YOLO_NMS_IOU_THRESHOLD` (default `0.70`)
 - `YOLO_TARGET_LOCK_SECONDS` (default `0.75`)
 - `YOLO_ACQUISITION_CONFIRMATION_FRAMES` (default `3`)
+- `YOLO_REQUIRE_HSV_CONFIRMATION` (default `true`)
+- `YOLO_HSV_MIN_ORANGE_RATIO` / `YOLO_HSV_MAX_ORANGE_RATIO` (defaults
+  `0.12` / `0.72`)
+- `YOLO_HSV_SIDE_BAND_FRACTION` (default `0.28`)
+- `YOLO_HSV_MIN_SIDE_DENSITY` (default `0.10`)
+- `YOLO_HSV_MIN_SUPPORTED_SIDES` (default `3`)
 - `YOLO_CROP_PADDING_PX` (default `14`)
 - `YOLO_MIN_GATE_AREA_PX` (default `400`)
 - `YOLO_PREVIOUS_CENTER_FRAMES` (default `5`)
@@ -241,7 +254,11 @@ two diagnostics on the right: the orange color mask and an accepted-target
 view containing only the orange gate geometry that may influence steering.
 In pose mode the overlay shows every separate pose instance, confidence, all
 four keypoints, the selected opening quadrilateral, calculated center, and
-center source (`yolo_box_center` or `previous_frame_fallback`). Purple
+center source (`yolo_box_center` or `previous_frame_fallback`). The pose-mode
+orange-mask panel is the same calibrated mask used as the hard YOLO
+confirmation layer. Candidate labels show `hsv=<coverage> <sides>/4`: red
+boxes failed HSV confirmation, cyan boxes passed HSV but are not selected,
+and green is the selected confirmed target. Purple
 keypoints show outer-gate orientation for diagnostics only; they do not move
 the red steering center away from the green selected box. The accepted-target
 panel uses green only for a measured, confirmed steering target; a short

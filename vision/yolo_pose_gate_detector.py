@@ -41,6 +41,15 @@ class PoseGateConfig:
     nms_iou_threshold: float = 0.70
     target_lock_seconds: float = 0.75
     acquisition_confirmation_frames: int = 1
+    require_hsv_confirmation: bool = False
+    hsv_ranges: tuple[
+        tuple[tuple[int, int, int], tuple[int, int, int]], ...
+    ] = (((3, 105, 180), (17, 255, 255)),)
+    hsv_min_orange_ratio: float = 0.12
+    hsv_max_orange_ratio: float = 0.72
+    hsv_side_band_fraction: float = 0.28
+    hsv_min_side_density: float = 0.10
+    hsv_min_supported_sides: int = 3
     minimum_gate_area_px: float = 400.0
     maximum_outside_fraction: float = 0.35
     minimum_opening_area_px: float = 64.0
@@ -59,6 +68,9 @@ class PoseGateCandidate:
     box: YoloGateBox
     keypoints: np.ndarray
     keypoint_confidences: np.ndarray
+    hsv_confirmed: bool = True
+    hsv_orange_ratio: float = 1.0
+    hsv_supported_sides: int = 4
 
     @property
     def keypoint_center(self) -> tuple[float, float]:
@@ -207,6 +219,90 @@ def detect_gate_poses(
     return candidates
 
 
+def build_pose_orange_mask(
+    frame: np.ndarray,
+    config: PoseGateConfig,
+) -> np.ndarray:
+    """Build the calibrated orange mask used to confirm YOLO proposals."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    for lower, upper in config.hsv_ranges:
+        mask = cv2.bitwise_or(
+            mask,
+            cv2.inRange(
+                hsv,
+                np.asarray(lower, dtype=np.uint8),
+                np.asarray(upper, dtype=np.uint8),
+            ),
+        )
+    return mask
+
+
+def confirm_pose_candidates_with_hsv(
+    candidates: Sequence[PoseGateCandidate],
+    orange_mask: np.ndarray,
+    config: PoseGateConfig,
+) -> list[PoseGateCandidate]:
+    """Require orange frame support inside each proposed YOLO gate box."""
+    if not config.require_hsv_confirmation:
+        return list(candidates)
+    frame_height, frame_width = orange_mask.shape[:2]
+    confirmed = []
+    for candidate in candidates:
+        x1, y1, x2, y2 = candidate.box.bbox
+        left = max(0, int(math.floor(x1)))
+        top = max(0, int(math.floor(y1)))
+        right = min(frame_width, int(math.ceil(x2)))
+        bottom = min(frame_height, int(math.ceil(y2)))
+        crop = orange_mask[top:bottom, left:right]
+        if crop.size == 0:
+            confirmed.append(
+                replace(
+                    candidate,
+                    hsv_confirmed=False,
+                    hsv_orange_ratio=0.0,
+                    hsv_supported_sides=0,
+                )
+            )
+            continue
+        height, width = crop.shape
+        band_fraction = float(
+            np.clip(config.hsv_side_band_fraction, 0.05, 0.50)
+        )
+        band_x = max(1, int(round(width * band_fraction)))
+        band_y = max(1, int(round(height * band_fraction)))
+        side_regions = (
+            crop[:band_y, :],
+            crop[-band_y:, :],
+            crop[:, :band_x],
+            crop[:, -band_x:],
+        )
+        side_densities = [
+            float(np.count_nonzero(region)) / max(region.size, 1)
+            for region in side_regions
+        ]
+        supported_sides = sum(
+            density >= config.hsv_min_side_density
+            for density in side_densities
+        )
+        orange_ratio = float(np.count_nonzero(crop)) / crop.size
+        is_confirmed = bool(
+            config.hsv_min_orange_ratio
+            <= orange_ratio
+            <= config.hsv_max_orange_ratio
+            and supported_sides >= config.hsv_min_supported_sides
+        )
+        confirmed.append(
+            replace(
+                candidate,
+                hsv_confirmed=is_confirmed,
+                hsv_orange_ratio=orange_ratio,
+                hsv_supported_sides=supported_sides,
+            )
+        )
+    return confirmed
+
+
 def select_pose_target(
     candidates: Sequence[PoseGateCandidate],
     previous_target: Optional[YoloGateBox],
@@ -284,12 +380,21 @@ def draw_pose_debug_overlay(
             and candidate.box.source_index
             == debug.selected.box.source_index
         )
-        color = (0, 255, 0) if selected else (255, 170, 0)
+        if selected:
+            color = (0, 255, 0)
+        elif candidate.hsv_confirmed:
+            color = (255, 170, 0)
+        else:
+            color = (0, 0, 255)
         thickness = 3 if selected else 1
         cv2.rectangle(output, (x1, y1), (x2, y2), color, thickness)
         cv2.putText(
             output,
-            f"gate {candidate.box.confidence:.2f}",
+            (
+                f"gate {candidate.box.confidence:.2f} "
+                f"hsv={candidate.hsv_orange_ratio:.2f} "
+                f"{candidate.hsv_supported_sides}/4"
+            ),
             (x1, max(14, y1 - 5)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.42,
@@ -483,7 +588,11 @@ class YoloPoseGateDetector:
         opening_height = max(1.0, (y2 - y1) * opening_scale)
         if pose_corners is not None:
             polygon = pose_corners.as_polygon()
-            method = "yolo_pose_box_center"
+            method = (
+                "yolo_pose_hsv_box_center"
+                if self.config.require_hsv_confirmation
+                else "yolo_pose_box_center"
+            )
             point_quality = float(
                 np.mean(candidate.keypoint_confidences)
             )
@@ -493,7 +602,11 @@ class YoloPoseGateDetector:
             top_edge = polygon[1] - polygon[0]
             angle = math.degrees(math.atan2(top_edge[1], top_edge[0]))
         else:
-            method = "yolo_pose_box_center_no_orientation"
+            method = (
+                "yolo_pose_hsv_box_center_no_orientation"
+                if self.config.require_hsv_confirmation
+                else "yolo_pose_box_center_no_orientation"
+            )
             confidence = 0.70 * candidate.box.confidence
             angle = 0.0
         normalized_x, normalized_y = normalized_image_coordinates(
@@ -532,6 +645,7 @@ class YoloPoseGateDetector:
     def _publish_debug(
         self,
         frame_shape: tuple[int, ...],
+        orange_mask: Optional[np.ndarray],
         candidates: list[PoseGateCandidate],
         selected: Optional[PoseGateCandidate],
         corners: Optional[InnerGateCorners],
@@ -541,7 +655,8 @@ class YoloPoseGateDetector:
         timings: dict[str, float],
     ) -> None:
         height, width = frame_shape[:2]
-        empty_mask = np.zeros((height, width), dtype=np.uint8)
+        if orange_mask is None or orange_mask.shape != (height, width):
+            orange_mask = np.zeros((height, width), dtype=np.uint8)
         debug_candidates = []
         for candidate in candidates:
             x1, y1, x2, y2 = candidate.box.bbox
@@ -562,10 +677,14 @@ class YoloPoseGateDetector:
                         if pose_corners is not None
                         else None
                     ),
-                    accepted=True,
+                    accepted=candidate.hsv_confirmed,
                     score=candidate.box.confidence,
                     confidence=candidate.box.confidence,
-                    reason="yolo_pose_gate",
+                    reason=(
+                        "yolo_pose_hsv_confirmed"
+                        if candidate.hsv_confirmed
+                        else "yolo_pose_hsv_rejected"
+                    ),
                     method="yolo_pose_gate",
                     center=candidate.box.center,
                     bbox=(
@@ -576,8 +695,9 @@ class YoloPoseGateDetector:
                     ),
                     features={
                         "supported_sides": (
-                            4.0 if pose_corners is not None else 0.0
-                        )
+                            float(candidate.hsv_supported_sides)
+                        ),
+                        "orange_ratio": candidate.hsv_orange_ratio,
                     },
                 )
             )
@@ -594,8 +714,8 @@ class YoloPoseGateDetector:
             else None
         )
         self.last_debug = DetectorDebug(
-            raw_mask=empty_mask.copy(),
-            cleaned_mask=empty_mask,
+            raw_mask=orange_mask.copy(),
+            cleaned_mask=orange_mask.copy(),
             candidates=debug_candidates,
             selected_contour=selected_contour,
             selected_opening_contour=opening_contour,
@@ -622,6 +742,17 @@ class YoloPoseGateDetector:
             if debug.selected is None
             else f"{debug.selected.box.confidence:.2f}"
         )
+        confirmed_count = sum(
+            candidate.hsv_confirmed for candidate in debug.candidates
+        )
+        selected_hsv = (
+            "none"
+            if debug.selected is None
+            else (
+                f"{debug.selected.hsv_orange_ratio:.2f}/"
+                f"{debug.selected.hsv_supported_sides}"
+            )
+        )
         point_confidences = (
             "none"
             if debug.selected is None
@@ -634,7 +765,9 @@ class YoloPoseGateDetector:
         print(
             "[YOLO_POSE] "
             f"detections={len(debug.candidates)} "
+            f"hsv_confirmed={confirmed_count} "
             f"selected_conf={selected_confidence} "
+            f"selected_hsv={selected_hsv} "
             f"keypoint_conf={point_confidences} "
             f"keypoints={debug.keypoint_reason} "
             f"center={debug.center} "
@@ -659,6 +792,7 @@ class YoloPoseGateDetector:
             empty = GateDetection(timestamp=now)
             self._publish_debug(
                 (1, 1, 3),
+                None,
                 [],
                 None,
                 None,
@@ -672,8 +806,18 @@ class YoloPoseGateDetector:
         inference_started = time.perf_counter()
         candidates = detect_gate_poses(frame, self.model, self.config)
         inference_done = time.perf_counter()
+        orange_mask = build_pose_orange_mask(frame, self.config)
+        candidates = confirm_pose_candidates_with_hsv(
+            candidates, orange_mask, self.config
+        )
+        hsv_done = time.perf_counter()
+        eligible_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.hsv_confirmed
+        ]
         selected = select_pose_target(
-            candidates,
+            eligible_candidates,
             self._previous_target,
             frame.shape,
             self.config,
@@ -742,7 +886,8 @@ class YoloPoseGateDetector:
         extraction_done = time.perf_counter()
         timings = {
             "pose_inference": (inference_done - inference_started) * 1000.0,
-            "target_selection": (selection_done - inference_done) * 1000.0,
+            "hsv_confirmation": (hsv_done - inference_done) * 1000.0,
+            "target_selection": (selection_done - hsv_done) * 1000.0,
             "keypoint_validation": (
                 extraction_done - selection_done
             ) * 1000.0,
@@ -750,6 +895,7 @@ class YoloPoseGateDetector:
         }
         self._publish_debug(
             frame.shape,
+            orange_mask,
             candidates,
             selected,
             corners,
