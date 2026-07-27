@@ -311,8 +311,20 @@ class Controller:
             # limits (anti-windup), when flying open-loop, and hard-clamped.
             vd_cmd = float(target['vel_ned'][2])
             if not open_loop and THRUST_MIN < thrust < THRUST_MAX:
-                self._i_thrust += KI_THRUST * (vz_now - vd_cmd) * self._dt
-                self._i_thrust = _clamp(self._i_thrust, I_THRUST_MAX)
+                # Trim, not authority: only integrate SMALL errors. Big transients
+                # (planner just commanded a 0.7 m/s climb; VIO vz lags) wound the
+                # integral to its +0.10 cap during every approach, and that stale
+                # windup then ballooned the blind coast/search to 13+ m altitude
+                # (run 18:26 — hovered above the course, saw nothing, alt_guard).
+                err = vz_now - vd_cmd
+                if abs(err) < 0.5:
+                    self._i_thrust += KI_THRUST * err * self._dt
+                    self._i_thrust = _clamp(self._i_thrust, I_THRUST_MAX)
+            elif open_loop:
+                # Blind phases fly pure feedforward: bleed the trim away (tau~2 s)
+                # instead of freezing it — a wound-up trim applied open-loop is a
+                # constant climb command the planner never asked for.
+                self._i_thrust *= max(0.0, 1.0 - 0.5 * self._dt)
             thrust = max(THRUST_MIN, min(THRUST_MAX, thrust + self._i_thrust))
             # Smooth the desired lean angles, then close the angle loop OURSELVES and
             # command body rates (the sim is ACRO: it tracks rates, ignores attitude).
