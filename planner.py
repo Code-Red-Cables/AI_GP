@@ -143,7 +143,13 @@ ROLL_TRUST_MAX = math.radians(8.0)   # skip folding vision into the waypoint abo
 # significantly off-centre (|az| > YAW_DEADBAND). Inside the band we hold heading, which
 # keeps us in the stable straight-flight regime — and the first gate is dead ahead, so
 # holding heading flies us straight through it.
-YAW_DEADBAND_RAD = math.radians(9.0)   # within this azimuth, hold heading (no re-aim)
+# 9deg -> 3deg (2026-07-27, VIO/PnP pipeline): the wide deadband protected against
+# the HSV detector's garbage per-frame bearings, but it let the gate wander to the
+# frame edge before any correction — run 6 lost sight 1.7 s into the approach and
+# never recovered. PnP bearings are geometric and already filtered by the
+# world-consistency check (_vision_accepted), so track tightly and keep the camera
+# ON the gate: continuous sight = continuous VIO fixes = everything else works.
+YAW_DEADBAND_RAD = math.radians(3.0)   # within this azimuth, hold heading (no re-aim)
 
 # Altitude-envelope safety guard. NED z is negative-up with the origin at the arm
 # point on the ground; race gates sit only a few metres up. If we ever climb past
@@ -180,6 +186,15 @@ class Planner:
         self._yaw_lock = None
         # Post-gate coast (see POST_GATE_COAST_*): keep flying forward to find the next gate.
         self._coast_until_ns = 0
+        # True on ticks where the fresh detection AGREED with the world belief (set in
+        # _target_offset_ned). The yaw lock only re-aims on those ticks: run 4 showed a
+        # single frame whose "best gate" was a DIFFERENT gate re-aiming the heading 90deg
+        # right and driving the drone off the course line.
+        self._vision_accepted = False
+        # Reactive (pnp mode) guidance state: latched approach heading + last-seen time.
+        self._rx_heading = None
+        self._rx_last_ns = 0
+        self._rx_committed = False
 
         # ---- Preplanning (learn-then-replay the DETERMINISTIC course; spec 3.5) --------
         # The sim broadcasts no track geometry (spec 4.3), so we build our own gate map:
@@ -241,7 +256,7 @@ class Planner:
     def _snapshot(self):
         """Atomically read the bits of shared_data we need."""
         with self.data['lock']:
-            return {
+            snap = {
                 'vision': self.data.get('vision'),
                 'navigation': self.data.get('navigation'),
                 'control_source': self.data.get('control_source'),
@@ -251,6 +266,20 @@ class Planner:
                 'odometry': self.data.get('odometry'),
                 'position_ned': self.data.get('position_ned'),
             }
+            # Adapt the sim's race broadcast to the 'active_gate_index' contract this
+            # planner was written against (nothing ever published a 'race' key).
+            # PREFER the VIO's SETTLED index: the raw active_gate telemetry flickers
+            # (run 4: a flicker at 7 m out dropped the waypoint and started the
+            # post-gate coast BEFORE the gate) — the estimator debounces it 0.5 s.
+            if snap['race'] is None:
+                settled = self.data.get('gate_idx_settled')
+                rs = self.data.get('race_status')
+                if settled is not None:
+                    snap['race'] = {'active_gate_index': int(settled)}
+                elif rs is not None:
+                    # settled index not published until the first advance; 0 until then
+                    snap['race'] = {'active_gate_index': 0}
+        return snap
 
     @staticmethod
     def _pose(s):
@@ -340,7 +369,9 @@ class Planner:
                         updated = True
 
         # Record whether vision CONFIRMED the current world belief this tick (used to
-        # decide what is safe to learn into the course map — preplan-only seeds are not).
+        # decide what is safe to learn into the course map — preplan-only seeds are not,
+        # and the yaw lock only re-aims on a CONFIRMED detection; see _vision_accepted).
+        self._vision_accepted = bool(updated)
         if updated:
             self._gate_world_vis = True
 
@@ -384,6 +415,60 @@ class Planner:
         with self.data['lock']:
             self.data['target'] = target
         return target
+
+    # ------------------------------------------------------------------
+    # Gate-relative reactive guidance for the PnP pipeline (see compute_target).
+    # ------------------------------------------------------------------
+    def _pnp_reactive(self, s, now, yaw_hold, position):
+        vis = s['vision']
+        fresh = (vis and vis.get('detected')
+                 and vis.get('confidence', 0) >= CONF_MIN
+                 and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
+                 and vis.get('gate_body'))
+        if fresh:
+            gb = np.asarray(vis['gate_body'], float)
+            rng = float(np.linalg.norm(gb))
+            az = math.atan2(float(gb[1]), float(gb[0]))
+            if 0.0 < rng <= MAX_GATE_RANGE_M:
+                self._rx_last_ns = now
+                # Inside the commit distance the aperture fills the frame and the
+                # detection whipsaws: LATCH the heading and punch straight through.
+                if rng > YAW_FREEZE_DIST:
+                    self._rx_heading = self._wrap(yaw_hold + az)
+                self._rx_committed = rng <= YAW_FREEZE_DIST
+                speed = MAX_SPEED if rng <= PASS_THROUGH_DIST \
+                    else min(MAX_SPEED, max(0.6, KP_POS * 0.25 * rng))
+                hdg = self._rx_heading if self._rx_heading is not None \
+                    else self._wrap(yaw_hold + az)
+                vn = speed * math.cos(hdg)
+                ve = speed * math.sin(hdg)
+                # Vertical straight from the body-frame elevation (camera tilt is
+                # already folded into gate_body); aim a touch below the centre.
+                vd = speed * (float(gb[2]) + GATE_AIM_DOWN_M) / max(rng, 1e-6)
+                vd = max(-MAX_VSPEED, min(MAX_VSPEED, vd))
+                return self._publish({'mode': 'velocity',
+                                      'vel_ned': (float(vn), float(ve), float(vd)),
+                                      'yaw': float(hdg), 'range_m': rng,
+                                      'source': 'pnp_track', 'ts': now})
+
+        # ---- blind ----
+        last = getattr(self, '_rx_last_ns', 0)
+        hdg = self._rx_heading if getattr(self, '_rx_heading', None) is not None \
+            else yaw_hold
+        blind_s = (now - last) / 1e9 if last else 1e9
+        if blind_s < 3.0:
+            # Just lost sight (usually: passing through / gate at frame edge).
+            # Coast straight ahead OPEN-LOOP: gentle fixed forward lean, hover
+            # thrust — do NOT close the loop on a blind velocity belief.
+            return self._publish({'mode': 'velocity',
+                                  'vel_ned': (1.0 * math.cos(hdg), 1.0 * math.sin(hdg), 0.1),
+                                  'yaw': float(hdg), 'open_loop': True,
+                                  'source': 'pnp_coast', 'ts': now})
+        # Lost for good: slow level search sweep (open-loop hover + yaw steps).
+        self._rx_heading = self._wrap(hdg + math.radians(0.4))  # ~24 deg/s at 60 Hz
+        return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                              'yaw': float(self._rx_heading), 'open_loop': True,
+                              'source': 'pnp_search', 'ts': now})
 
     def compute_target(self):
         """Compute and publish the current velocity setpoint. Returns the target dict."""
@@ -479,6 +564,16 @@ class Planner:
             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
                                   'yaw': yaw_hold, 'source': 'opencv_stale_hover',
                                   'ts': now})
+        if control_source == 'pnp':
+            # GATE-RELATIVE reactive guidance (2026-07-27). The world-waypoint
+            # machinery below assumes a trustworthy absolute pose; runs 4-7 showed
+            # that once the VIO position diverges (blind stretch -> anchor churn)
+            # that machinery chases ghosts at max thrust and never recovers. PnP
+            # gives the gate's BODY-frame vector directly, so while a gate is in
+            # sight we steer on it reactively (yaw-servo the azimuth, speed from
+            # range) — immune to absolute-pose drift. Blind phases fly OPEN-LOOP
+            # (level coast / slow search), never off the drifted velocity belief.
+            return self._pnp_reactive(s, now, yaw_hold, position)
 
         offset, source = self._target_offset_ned(s, now)
         if offset is None:
@@ -493,8 +588,13 @@ class Planner:
                     vd = 0.0
                 return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
                                       'yaw': yaw_hold, 'source': 'post_gate_coast', 'ts': now})
+            # Blind and out of ideas: rotate slowly in place to sweep the camera
+            # across the course until a gate re-enters the frame (run 6 parked in
+            # a permanent zero-detection hover after losing sight). Slow enough
+            # (~25 deg/s) that YOLO gets several clean frames per gate crossing.
+            search_yaw = self._wrap(yaw_hold + math.radians(25.0) * 0.5)
             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
-                                  'yaw': yaw_hold, 'source': 'hover', 'ts': now})
+                                  'yaw': search_yaw, 'source': 'search_spin', 'ts': now})
 
         # Aim a touch BELOW the estimated gate centre so we don't clip the top edge
         # (NED +z is down). See GATE_AIM_DOWN_M.
@@ -533,10 +633,12 @@ class Planner:
             # First fix: aim at wherever the gate is.
             self._yaw_lock = self._wrap(yaw_hold + az) if az is not None \
                 else math.atan2(float(offset[1]), float(offset[0]))
-        elif dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD:
-            # Gate is genuinely off-centre AND we're not yet committed to the pass ->
-            # deliberate re-aim onto it. Inside YAW_FREEZE_DIST we hold the lock and punch
-            # straight through (point-blank azimuth is garbage; see YAW_FREEZE_DIST).
+        elif (dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD
+                and self._vision_accepted):
+            # Gate is genuinely off-centre AND we're not yet committed to the pass AND
+            # the detection agreed with the world belief this tick (a frame locked onto
+            # a DIFFERENT gate must not steer us) -> deliberate re-aim onto it. Inside
+            # YAW_FREEZE_DIST we hold the lock and punch straight through.
             self._yaw_lock = self._wrap(yaw_hold + az)
         yaw = self._yaw_lock
 

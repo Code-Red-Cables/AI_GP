@@ -23,16 +23,20 @@ DRY_RUN = False
 DEBUG_VISION = False
 LOGGING = True
 
-# Gate-targeting owner. "opencv" is deterministic; "existing_ai" delegates to
-# the repository's existing learned policy through AI_POLICY_FACTORY.
+# Gate-targeting owner.
+#   "pnp"        — YOLO gate corners + solvePnP feed the VIO state estimator and
+#                  the planner's world-waypoint guidance (the default: the VQ2 sim
+#                  sends no attitude/position telemetry, so VIO is the only pose).
+#   "opencv"     — HSV detector + image-space navigator (no world pose needed).
+#   "existing_ai" — delegates to a learned policy through AI_POLICY_FACTORY.
 GATE_NAVIGATION_MODE = os.environ.get(
     "GATE_NAVIGATION_MODE",
-    os.environ.get("VISION_MODE", "opencv"),  # compatibility with older launch scripts
+    os.environ.get("VISION_MODE", "pnp"),  # compatibility with older launch scripts
 ).lower()
 AI_POLICY_FACTORY = os.environ.get("AI_POLICY_FACTORY")
-if GATE_NAVIGATION_MODE not in {"opencv", "existing_ai"}:
+if GATE_NAVIGATION_MODE not in {"pnp", "opencv", "existing_ai"}:
     raise ValueError(
-        "GATE_NAVIGATION_MODE must be one of: opencv, existing_ai"
+        "GATE_NAVIGATION_MODE must be one of: pnp, opencv, existing_ai"
     )
 
 # --------------------------------------------------------------------------------------
@@ -61,7 +65,7 @@ shared_data = {
     'gate_navigation_mode': GATE_NAVIGATION_MODE,
     'ai_policy_factory': AI_POLICY_FACTORY,
     'control_source': (
-        'ai' if GATE_NAVIGATION_MODE == 'existing_ai' else 'opencv'
+        'ai' if GATE_NAVIGATION_MODE == 'existing_ai' else GATE_NAVIGATION_MODE
     ),
     'preplan': PREPLAN,
     'learn': LEARN,
@@ -75,6 +79,7 @@ ts_loop = components['ts_loop']
 mavlink_rx = components['mavlink_rx']
 vision_rx = components['vision_rx']
 logger = components.get('logger')
+state_estimator = components.get('state_estimator')
 
 # Flight-mode entry. The sim is a Betaflight-style FPV racer that boots in ACRO (raw
 # rate control) — which has no velocity/position loop, so the armed quad ignored our
@@ -89,6 +94,10 @@ if not DRY_RUN:
     controller.prime_setpoint_stream(seconds=0.3)  # keep stream alive across the switch
 
 print("Arming drone...", flush=True)
+# Release the VIO's pre-flight ZUPT: from here on the drone can actually move,
+# so the estimator may dead-reckon. Before this it pins vel/pos to the origin.
+with shared_data['lock']:
+    shared_data['flight_started'] = True
 controller.arm()
 print(f"Starting control loop... (DRY_RUN={DRY_RUN})", flush=True)
 
@@ -99,12 +108,17 @@ except KeyboardInterrupt:
     print("\nInterrupted — shutting down...", flush=True)
 
 # exit: stop each RX/loop thread and join (guard against threads that never started)
-for component in (ts_loop, mavlink_rx, vision_rx, logger):
+for component in (ts_loop, mavlink_rx, vision_rx, logger, state_estimator):
     if component is None:
         continue
     thread = component.get_thread_for_join()
     if thread is not None:
         thread.join(timeout=1.0)
+
+# Persist the VIO gate anchors so later runs share one world frame.
+if state_estimator is not None:
+    state_estimator.save_anchors()
+    print(f"Gate anchors saved: {sorted(state_estimator.anchors)}", flush=True)
 
 # Persist the learned course map so the next run can preplan from it.
 course_map = shared_data.get('course_map')

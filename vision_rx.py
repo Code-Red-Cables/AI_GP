@@ -17,6 +17,7 @@ from vision.mode_router import (
 )
 from vision.ai_adapter import validate_ai_action
 from gate_estimator import estimate_gate
+import camera_model as cm
 
 
 def _quat_to_rpy(q):
@@ -60,8 +61,19 @@ class VisionRX:
         requested_mode = str(
             self.data.get('gate_navigation_mode', 'opencv')
         ).lower()
+        # 'pnp' mode: YOLO corner detection + solvePnP is the perception source
+        # (feeds the VIO state estimator AND the planner's world-waypoint path).
+        # It bypasses the HSV detector and the opencv/ai mode router entirely.
+        self.pnp_mode = requested_mode == 'pnp'
+        self.pnp_detector = None
+        if self.pnp_mode:
+            from vision.yolo_pnp import YoloGatePnP
+            print("Loading YOLO gate model...", flush=True)
+            self.pnp_detector = YoloGatePnP()
+            print("YOLO gate model ready.", flush=True)
         self.mode_router = VisionModeRouter(
-            ModeRouterConfig(mode=GateNavigationMode(requested_mode))
+            ModeRouterConfig(mode=GateNavigationMode(
+                'opencv' if self.pnp_mode else requested_mode))
         )
         self.thread = threading.Thread(
             target=self._vision_loop,
@@ -172,6 +184,63 @@ class VisionRX:
                     del frames[stale_id]
         sock.close()
 
+    def _process_frame_pnp(self, frame_id, img, sim_time_ns=None):
+        """YOLO corners -> PnP pose. Publishes shared_data['vision'] (for the
+        planner's world-waypoint path) and shared_data['pnp_fix'] (for the VIO
+        state estimator). Perception only — no flight commands here."""
+        t0 = time.perf_counter()
+        gates = self.pnp_detector.detect(img)
+        now = time.time_ns()
+        best = next((g for g in gates if g.solved), None)
+        est = {'ts': now, 'detected': False, 'confidence': 0.0,
+               'frame_id': frame_id, 'sim_time_ns': sim_time_ns,
+               'n_gates': len(gates)}
+        if best is not None:
+            gb = best.center_body()
+            x, y, z = (float(v) for v in gb)
+            est.update({
+                'detected': True,
+                'confidence': best.confidence,
+                'gate_body': (x, y, z),
+                'range_m': best.range_m,
+                'bearing': (math.atan2(y, x), math.atan2(-z, math.hypot(x, y))),
+                'corners_px': best.corners_px.tolist(),
+                'reproj_err_px': best.reproj_err_px,
+            })
+        with self.data['lock']:
+            att = self.data.get('attitude')
+            pos = self.data.get('position_ned')
+            debug = self.data.get('debug_vision', False)
+        if best is not None and att is not None:
+            offset_ned = cm.body_to_ned(
+                np.asarray(est['gate_body'], float),
+                att['roll'], att['pitch'], att['yaw'])
+            p = (pos['x'], pos['y'], pos['z']) if pos is not None else (0.0, 0.0, 0.0)
+            est['gate_ned'] = tuple(float(a + b) for a, b in zip(p, offset_ned))
+        est['vision_total_time_ms'] = (time.perf_counter() - t0) * 1000.0
+        with self.data['lock']:
+            self.data['vision'] = est
+            self.data['control_source'] = 'pnp'
+            if best is not None:
+                self.data['pnp_fix'] = {
+                    'ts': now,
+                    'R_cg': best.R_cg.tolist(),
+                    't_cg': best.t_cg.tolist(),
+                    'reproj_err_px': best.reproj_err_px,
+                    'range_m': best.range_m,
+                }
+        if debug:
+            overlay = img.copy()
+            for g in gates:
+                color = (0, 255, 0) if g.solved else (0, 128, 255)
+                for (u, v) in g.corners_px.astype(int):
+                    cv2.circle(overlay, (u, v), 3, color, -1)
+                if g.solved:
+                    x1, y1 = int(g.bbox[0]), int(g.bbox[1])
+                    cv2.putText(overlay, f"{g.range_m:.1f}m", (x1, max(12, y1 - 4)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+            cv2.imwrite(f"_vision_{frame_id % 20:02d}.png", overlay)
+
     def process_frame(self, frame_id, img, sim_time_ns=None):
         """Detect the gate, estimate its pose, and publish to shared_data['vision'].
 
@@ -180,6 +249,8 @@ class VisionRX:
         the planner can fuse it. Returns None on no detection (still publishes a
         'detected': False record so downstream code can detect staleness).
         """
+        if self.pnp_mode:
+            return self._process_frame_pnp(frame_id, img, sim_time_ns)
         frame_time = time.monotonic()
         frame_started = time.perf_counter()
         hint = self.tracker.hint(frame_time)

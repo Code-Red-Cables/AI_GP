@@ -77,6 +77,12 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
 # Re-tune from the next log: climbs -> lower HOVER_THRUST; sinks -> raise it.
 HOVER_THRUST = 0.27        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
 KP_THRUST = 0.25           # extra thrust per (m/s) of vertical-velocity error (more authority)
+# Integral trim on the vertical-velocity loop (added with the VIO pipeline,
+# 2026-07-27): the measured 0.27 hover was fit on one battery/attitude state; a
+# slow integrator absorbs the residual so altitude stops sagging/ballooning when
+# the true hover point differs. Clamped hard — it is a TRIM, not an authority.
+KI_THRUST = 0.06           # thrust per (m/s * s) of integrated vertical-velocity error
+I_THRUST_MAX = 0.10        # anti-windup clamp on the integral contribution
 THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority while descending
 KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
 MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
@@ -99,6 +105,11 @@ MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
 # to translate) and are low-passed first to damp vision jitter.
 # --------------------------------------------------------------------------------------
 KP_ATT = 3.0                        # body roll/pitch rate (rad/s) per rad of angle error
+# Derivative damping on the angle loop (added with the VIO pipeline, 2026-07-27):
+# the VIO publishes the gyro body rates alongside the attitude, so the angle loop
+# can be a proper PD — commanded rate = KP*err - KD*measured_rate. Without it the
+# P-only loop rings around the setpoint after aggressive planner re-aims.
+KD_ATT = 0.35                       # rate feedback (per rad/s of measured body rate)
 KP_YAW = 2.0                        # body yaw rate (rad/s) per rad of heading error
 RATE_MAX = math.radians(220.0)      # cap on any commanded body rate
 # Yaw-rate cap kept low on purpose: the camera FOV is narrow, so a fast yaw sweeps the
@@ -111,18 +122,24 @@ AI_ACTION_TIMEOUT_NS = 300_000_000
 AI_RATE_SLEW_PER_TICK = math.radians(18.0)
 AI_THRUST_SLEW_PER_TICK = 0.035
 
-# Per-axis sign of the body-rate command needed for NEGATIVE feedback. This sim's
-# SET_ATTITUDE_TARGET rate axes do NOT share a consistent convention with its reported
-# ATTITUDE Euler angles, and roll differs from pitch (logs 2026-06-05):
-#   * PITCH angle responds OPPOSITE to a commanded pitch rate -> negate (-1) to stabilise.
-#     (verified: cmdPitch->measured-pitch correlation -0.97, att_err pitch ~0.30 = clean.)
-#   * ROLL angle responds with the SAME sign as the commanded roll rate -> do NOT negate
-#     (+1). With -1 the loop was positive feedback and roll ramped to a tumble every run.
-#   * YAW is stable with -1 (heading-hold error ~0.04).
-# If an axis ever diverges from level again, flip its sign here first.
-RATE_SIGN_ROLL = +1.0
+# Per-axis sign of the body-rate command needed for NEGATIVE feedback.
+# RE-MEASURED 2026-07-27 with a direct open-loop probe (command +0.8 rad/s on one
+# axis, read the raw HIGHRES_IMU gyro): ALL THREE axes respond INVERTED, at ~2.4x
+# the commanded magnitude:
+#     cmd +0.8 roll  -> gyro p = -1.94       cmd +0.8 pitch -> gyro q = -1.94
+#     cmd +0.8 yaw   -> gyro r = -5.2 (already tumbling; sign clear)
+# The old RATE_SIGN_ROLL=+1 was tuned against the VQ1 sim's reported ATTITUDE,
+# whose roll convention was itself inverted vs. physical — two inversions
+# cancelled. The VIO estimates PHYSICAL attitude (gravity- and gate-anchored),
+# so every axis now needs -1. If an axis diverges from level, re-run the probe
+# before touching these.
+RATE_SIGN_ROLL = -1.0
 RATE_SIGN_PITCH = -1.0
 RATE_SIGN_YAW = -1.0
+# The sim's rate loop applies ~2.4x the commanded rate (probe above; the Dreamer
+# branch independently measured ~2.5x). Divide our commands back so the angle
+# loop's effective gain is what KP_ATT says it is.
+RATE_CMD_SCALE = 1.0 / 2.4
 
 # Ignore the attitude quaternion; command the three body rates + thrust.
 ATTITUDE_CONTROL_MASK = mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
@@ -175,11 +192,11 @@ def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
     c, s = math.cos(yaw_now), math.sin(yaw_now)
     e_fwd = c * en + s * ee          # body-forward velocity error
     e_lat = -s * en + c * ee         # body-right velocity error
-    # Pitch sign is INVERTED on this sim (same asymmetry as RATE_SIGN_PITCH=-1 vs
-    # RATE_SIGN_ROLL=+1): the rate loop faithfully holds the commanded pitch angle, but
-    # the textbook "nose-down to go forward" sign drove the quad BACKWARD (verified
-    # 2026-06-05), so forward uses +KP_LEAN. Roll/lateral was already correct.
-    pitch = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_fwd))   # forward translation
+    # TEXTBOOK signs (2026-07-27): these desired angles are now tracked against the
+    # VIO's PHYSICAL attitude, so nose-DOWN (negative pitch) accelerates forward and
+    # roll-right (positive) accelerates right. The old "+KP_LEAN forward" finding was
+    # an artifact of VQ1's inverted reported pitch — two inversions cancelling.
+    pitch = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, -KP_LEAN * e_fwd))  # nose down to go forward
     roll = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_lat))    # roll right to go right
     return roll, pitch, yaw_cmd, thrust
 
@@ -206,6 +223,7 @@ class Controller:
         self._roll_cmd = 0.0        # last low-passed roll command (rad)
         self._pitch_cmd = 0.0       # last low-passed pitch command (rad)
         self._last_ai_command = [HOVER_THRUST, 0.0, 0.0, 0.0]
+        self._i_thrust = 0.0        # vertical-loop integral trim (see KI_THRUST)
 
     @staticmethod
     def _wrap(a):
@@ -246,6 +264,9 @@ class Controller:
         roll_now = att['roll'] if att else 0.0
         pitch_now = att['pitch'] if att else 0.0
         yaw_now = att['yaw'] if att else 0.0
+        # Gyro body rates for the angle loop's D-term (0 when unavailable -> pure P).
+        p_now = att.get('rollspeed', 0.0) if att else 0.0
+        q_now = att.get('pitchspeed', 0.0) if att else 0.0
         vn_now = ve_now = vz_now = 0.0
         if pos is not None and pos.get('vx') is not None:
             vn_now = pos.get('vx', 0.0)
@@ -260,7 +281,8 @@ class Controller:
             ve_now = s * vx_b + c * vy_b
             vz_now = vz_b
         return (float(roll_now), float(pitch_now), float(yaw_now),
-                float(vn_now), float(ve_now), float(vz_now))
+                float(vn_now), float(ve_now), float(vz_now),
+                float(p_now or 0.0), float(q_now or 0.0))
 
     def update(self):
         target = self.planner.compute_target() if self.planner is not None else None
@@ -272,17 +294,38 @@ class Controller:
             return
 
         if target is not None and target['mode'] == 'velocity':
-            roll_now, pitch_now, yaw_now, vn_now, ve_now, vz_now = self._telemetry()
+            (roll_now, pitch_now, yaw_now,
+             vn_now, ve_now, vz_now, p_now, q_now) = self._telemetry()
+            # OPEN-LOOP targets (blind coast/search from the reactive planner):
+            # the velocity belief is untrustworthy without vision fixes, so drop
+            # the feedback terms — lean becomes a bounded feedforward of the
+            # desired velocity and thrust stays at hover. Chasing a phantom
+            # velocity at max thrust is what wrecked runs 1 and 5-7.
+            open_loop = bool(target.get('open_loop'))
+            if open_loop:
+                vn_now = ve_now = vz_now = 0.0
             roll_des, pitch_des, yaw_target, thrust = velocity_to_attitude(
                 target['vel_ned'], target['yaw'], yaw_now, (vn_now, ve_now, vz_now))
+            # Vertical-loop integral trim: slow-integrate the vz error so the true
+            # hover point is learned instead of hard-coded. Frozen at the thrust
+            # limits (anti-windup), when flying open-loop, and hard-clamped.
+            vd_cmd = float(target['vel_ned'][2])
+            if not open_loop and THRUST_MIN < thrust < THRUST_MAX:
+                self._i_thrust += KI_THRUST * (vz_now - vd_cmd) * self._dt
+                self._i_thrust = _clamp(self._i_thrust, I_THRUST_MAX)
+            thrust = max(THRUST_MIN, min(THRUST_MAX, thrust + self._i_thrust))
             # Smooth the desired lean angles, then close the angle loop OURSELVES and
             # command body rates (the sim is ACRO: it tracks rates, ignores attitude).
             roll_des, pitch_des = self._lpf_lean(roll_des, pitch_des)
-            # Body rates with the PER-AXIS sign correction (see RATE_SIGN_* above); each
-            # axis is tuned so its angle loop is negative feedback (roll != pitch here).
-            roll_rate = RATE_SIGN_ROLL * _clamp(KP_ATT * self._wrap(roll_des - roll_now), RATE_MAX)
-            pitch_rate = RATE_SIGN_PITCH * _clamp(KP_ATT * self._wrap(pitch_des - pitch_now), RATE_MAX)
-            yaw_rate = RATE_SIGN_YAW * self._yaw_rate_cmd(yaw_target, yaw_now)
+            # PD angle loop -> body rates, with the PER-AXIS sign correction (see
+            # RATE_SIGN_* above); each axis is tuned so its angle loop is negative
+            # feedback (roll != pitch here). The -KD*rate term damps the ringing a
+            # pure P loop shows after aggressive re-aims.
+            roll_rate = RATE_SIGN_ROLL * RATE_CMD_SCALE * _clamp(
+                KP_ATT * self._wrap(roll_des - roll_now) - KD_ATT * p_now, RATE_MAX)
+            pitch_rate = RATE_SIGN_PITCH * RATE_CMD_SCALE * _clamp(
+                KP_ATT * self._wrap(pitch_des - pitch_now) - KD_ATT * q_now, RATE_MAX)
+            yaw_rate = RATE_SIGN_YAW * RATE_CMD_SCALE * self._yaw_rate_cmd(yaw_target, yaw_now)
             if not dry_run:
                 send_rate_target(self.sim_conn, self.system_boot_ms,
                                  roll_rate, pitch_rate, yaw_rate, thrust)

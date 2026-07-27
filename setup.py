@@ -7,6 +7,7 @@ from planner import Planner
 from logger import Logger
 from course_map import CourseMap
 from vision.ai_adapter import load_policy_factory
+from state_estimator import StateEstimator
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # Optional and lazy: OpenCV-only mode never imports the learned policy's
@@ -41,6 +42,15 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     # -------------------------------
     print("Setting up Timesync loop...", flush=True)
     ts_loop = TimeSync.create_timesync(sim_conn, shared_data)
+
+    # -------------------------------
+    # VIO state estimator — MUST exist on this sim build: VQ2 sends no ATTITUDE
+    # and no LOCAL_POSITION_NED, so this thread manufactures shared_data
+    # ['attitude'] and ['position_ned'] from HIGHRES_IMU + gate-PnP fixes.
+    # Started before VisionRX so the first PnP fix finds a live consumer.
+    # -------------------------------
+    print("Setting up VIO state estimator...", flush=True)
+    state_estimator = StateEstimator(shared_data)
 
     # -------------------------------
     # Connect Vision receiver
@@ -82,5 +92,6 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         'sim_conn': sim_conn,
         'controller': controller,
         'planner': planner,
-        'logger': logger
+        'logger': logger,
+        'state_estimator': state_estimator,
     }
