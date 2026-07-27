@@ -40,6 +40,7 @@ class PoseGateConfig:
     keypoint_confidence_threshold: float = 0.25
     nms_iou_threshold: float = 0.70
     target_lock_seconds: float = 0.75
+    acquisition_confirmation_frames: int = 1
     minimum_gate_area_px: float = 400.0
     maximum_outside_fraction: float = 0.35
     minimum_opening_area_px: float = 64.0
@@ -377,6 +378,8 @@ class YoloPoseGateDetector:
         self._previous_valid_detection: Optional[GateDetection] = None
         self._lock_until = 0.0
         self._missing_frames = 0
+        self._pending_target: Optional[YoloGateBox] = None
+        self._pending_target_frames = 0
         self._last_log_at = -math.inf
 
     def _load_model(self):
@@ -405,6 +408,57 @@ class YoloPoseGateDetector:
         self._previous_valid_detection = None
         self._lock_until = 0.0
         self._missing_frames = 0
+        self._pending_target = None
+        self._pending_target_frames = 0
+
+    @staticmethod
+    def _same_acquisition_candidate(
+        current: YoloGateBox,
+        pending: YoloGateBox,
+    ) -> bool:
+        """Require a spatially consistent instance before starting a lock."""
+        current_span = max(
+            current.bbox[2] - current.bbox[0],
+            current.bbox[3] - current.bbox[1],
+            1.0,
+        )
+        pending_span = max(
+            pending.bbox[2] - pending.bbox[0],
+            pending.bbox[3] - pending.bbox[1],
+            1.0,
+        )
+        center_distance = math.hypot(
+            current.center[0] - pending.center[0],
+            current.center[1] - pending.center[1],
+        )
+        area_ratio = current.area / max(pending.area, 1.0)
+        return bool(
+            center_distance <= 0.45 * max(current_span, pending_span)
+            and 0.50 <= area_ratio <= 2.0
+        )
+
+    def _confirm_acquisition(
+        self,
+        selected: Optional[PoseGateCandidate],
+    ) -> Optional[PoseGateCandidate]:
+        """Suppress one-frame candidates before they can steer the vehicle."""
+        if selected is None:
+            self._pending_target = None
+            self._pending_target_frames = 0
+            return None
+        required = max(1, int(self.config.acquisition_confirmation_frames))
+        if self._pending_target is not None and self._same_acquisition_candidate(
+            selected.box, self._pending_target
+        ):
+            self._pending_target_frames += 1
+        else:
+            self._pending_target = selected.box
+            self._pending_target_frames = 1
+        if self._pending_target_frames < required:
+            return None
+        self._pending_target = None
+        self._pending_target_frames = 0
+        return selected
 
     def _to_gate_detection(
         self,
@@ -625,6 +679,18 @@ class YoloPoseGateDetector:
             self.config,
             lock_active=now <= self._lock_until,
         )
+        acquiring = self._previous_target is None or now > self._lock_until
+        if acquiring:
+            selected = self._confirm_acquisition(selected)
+            if selected is None:
+                # An expired target must not remain a green steering target
+                # while a different candidate is awaiting confirmation.
+                self._previous_target = None
+                self._previous_valid_detection = None
+                self._lock_until = 0.0
+        else:
+            self._pending_target = None
+            self._pending_target_frames = 0
         selection_done = time.perf_counter()
 
         corners = None
@@ -668,7 +734,10 @@ class YoloPoseGateDetector:
                 center = result.center_px
                 source = "previous_frame_fallback"
                 reason = "target_temporarily_missing"
-            elif now > self._lock_until:
+            elif (
+                now > self._lock_until
+                and self._pending_target is None
+            ):
                 self.reset_target_lock()
         extraction_done = time.perf_counter()
         timings = {

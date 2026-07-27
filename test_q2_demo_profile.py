@@ -43,15 +43,16 @@ class DemoNavigationProfileTests(unittest.TestCase):
     def test_profile_matches_collect_demos_tuning(self):
         cfg = q2_demo_navigation_config()
         self.assertAlmostEqual(cfg.search_forward_mps, 0.0)
-        self.assertAlmostEqual(cfg.maximum_approach_mps, 0.65)
+        self.assertAlmostEqual(cfg.maximum_approach_mps, 0.36)
         self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.24)
         self.assertAlmostEqual(cfg.vertical_deadband, 0.20)
         self.assertAlmostEqual(
             cfg.vertical_control_min_area_ratio,
             0.0,
         )
-        self.assertAlmostEqual(cfg.horizontal_yaw_kp, 0.75)
-        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.48)
+        self.assertAlmostEqual(cfg.horizontal_yaw_kp, 0.42)
+        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.28)
+        self.assertAlmostEqual(cfg.prepass_lookahead_weight, 0.0)
         self.assertEqual(cfg.path_lateral_kp, 0.0)
         self.assertEqual(cfg.path_yaw_kp, 0.0)
         self.assertGreater(
@@ -236,8 +237,15 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertEqual(
             command.state, NavigationState.ALIGN_AND_APPROACH
         )
-        self.assertGreater(command.right_mps, 1.5)
-        self.assertLessEqual(abs(command.yaw_rate_rps), 0.48)
+        self.assertGreater(command.right_mps, 0.15)
+        self.assertGreater(
+            abs(command.right_mps),
+            abs(command.yaw_rate_rps),
+        )
+        self.assertLessEqual(
+            abs(command.right_mps),
+            navigator.config.max_right_mps,
+        )
 
     def test_confirmed_pass_releases_old_gate_immediately(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -263,10 +271,12 @@ class DemoNavigationProfileTests(unittest.TestCase):
         navigator.state = NavigationState.COMMIT
         navigator._state_since = 1.1
         clearance = navigator.update(None, 1.2)
-        toward_next = navigator.update(None, 1.45)
+        still_clearing = navigator.update(None, 1.75)
+        toward_next = navigator.update(None, 1.95)
 
         self.assertEqual(clearance.state, NavigationState.PASS_THROUGH)
         self.assertGreaterEqual(clearance.right_mps, 0.0)
+        self.assertAlmostEqual(still_clearing.right_mps, 0.0)
         self.assertGreater(toward_next.right_mps, 0.0)
         self.assertGreater(toward_next.yaw_rate_rps, 0.0)
 

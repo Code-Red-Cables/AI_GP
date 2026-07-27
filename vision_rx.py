@@ -87,6 +87,9 @@ def create_gate_detector():
             ),
             nms_iou_threshold=config.YOLO_NMS_IOU_THRESHOLD,
             target_lock_seconds=config.YOLO_TARGET_LOCK_SECONDS,
+            acquisition_confirmation_frames=(
+                config.YOLO_ACQUISITION_CONFIRMATION_FRAMES
+            ),
             minimum_gate_area_px=config.YOLO_MIN_GATE_AREA_PX,
             maximum_outside_fraction=config.YOLO_MAX_OUTSIDE_FRACTION,
             previous_center_frames=config.YOLO_PREVIOUS_CENTER_FRAMES,
@@ -441,13 +444,18 @@ class VisionRX:
         """Show only geometry accepted for steering, not rejected candidates."""
         target = np.zeros(shape, dtype=np.uint8)
         if gate_detection is not None and gate_detection.found:
+            color = (
+                (0, 255, 255)
+                if gate_detection.predicted
+                else (0, 255, 0)
+            )
             if gate_detection.corners is not None:
                 corners = np.round(
                     gate_detection.corners
                 ).astype(np.int32).reshape(-1, 2)
                 if len(corners) >= 3:
                     cv2.polylines(
-                        target, [corners], True, (0, 255, 0), 3, cv2.LINE_AA
+                        target, [corners], True, color, 3, cv2.LINE_AA
                     )
             else:
                 x, y, width, height = gate_detection.bbox
@@ -455,7 +463,7 @@ class VisionRX:
                     target,
                     (x, y),
                     (x + width, y + height),
-                    (0, 255, 0),
+                    color,
                     3,
                 )
         return target

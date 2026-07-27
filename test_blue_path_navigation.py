@@ -107,7 +107,7 @@ class Q2BluePathIsolationTests(unittest.TestCase):
         self.assertEqual(active.right_mps, 0.0)
         self.assertEqual(active.yaw_rate_rps, 0.0)
 
-    def test_visible_next_gate_adds_bounded_early_turn(self):
+    def test_visible_next_gate_cannot_pull_drone_off_current_gate(self):
         cfg = q2_demo_navigation_config()
         primary = detection_at(
             nx=0.0,
@@ -126,23 +126,49 @@ class Q2BluePathIsolationTests(unittest.TestCase):
         anticipated = with_lookahead.update(
             primary, 1.2, next_gate_horizontal=0.50
         )
-        self.assertGreater(anticipated.right_mps, base.right_mps)
-        self.assertGreater(
+        self.assertAlmostEqual(anticipated.right_mps, base.right_mps)
+        self.assertAlmostEqual(
             anticipated.yaw_rate_rps, base.yaw_rate_rps
         )
-        self.assertLessEqual(
-            anticipated.right_mps, cfg.next_gate_max_right_mps
+
+    def test_q2_lateral_response_is_bounded_and_slew_limited(self):
+        cfg = q2_demo_navigation_config()
+        navigator = GateNavigator(cfg)
+        far_right = detection_at(
+            nx=0.60,
+            ny=0.20,
+            confidence=0.90,
+            stable_frames=5,
         )
+
+        first = navigator.update(far_right, 1.0)
+        second = navigator.update(far_right, 1.1)
+
+        self.assertGreater(first.right_mps, 0.0)
+        self.assertLess(first.right_mps, cfg.max_right_mps)
+        self.assertLessEqual(second.right_mps, cfg.max_right_mps)
         self.assertLessEqual(
-            anticipated.yaw_rate_rps,
-            cfg.next_gate_max_yaw_rate_rps,
+            abs(second.right_mps - first.right_mps),
+            cfg.max_lateral_acceleration * 0.1,
         )
+
     def test_accepted_target_panel_does_not_show_path(self):
         panel = VisionRX.build_accepted_target_frame(
             (360, 640, 3), None
         )
         self.assertEqual(panel.shape, (360, 640, 3))
         self.assertEqual(np.count_nonzero(panel), 0)
+
+    def test_predicted_target_panel_is_yellow_not_green(self):
+        panel = VisionRX.build_accepted_target_frame(
+            (360, 640, 3),
+            detection_at(predicted=True),
+        )
+        yellow = np.all(panel == np.asarray([0, 255, 255]), axis=2)
+        green = np.all(panel == np.asarray([0, 255, 0]), axis=2)
+
+        self.assertTrue(np.any(yellow))
+        self.assertFalse(np.any(green))
 
 
 if __name__ == '__main__':

@@ -56,9 +56,12 @@ python main.py
    called with class-aware NMS (`agnostic_nms=False`) and a configurable
    default IoU threshold of `0.70`, preserving separately labeled overlapping
    gates when the trained model supports them. Acquisition selects the largest
-   valid YOLO gate. While locked, overlap with the previous target is
-   authoritative and center/size similarity breaks ties, preventing rapid
-   switching between overlapping gates.
+   valid YOLO gate only after it remains spatially consistent for three
+   consecutive inference frames. A one-frame false positive therefore remains
+   a cyan diagnostic candidate and cannot become the green steering target.
+   While locked, overlap with the previous target is authoritative and
+   center/size similarity breaks ties, preventing rapid switching between
+   overlapping gates.
 3. Each pose instance supplies four annotated outer-gate keypoints:
    top-left, top-right, bottom-left, and bottom-right. Dataset inspection shows
    that these points span a median 97.3% of the YOLO box and share virtually
@@ -105,9 +108,10 @@ python main.py
    confidence fluctuates; an unmatched frame becomes a short tracker
    prediction, and only pass confirmation/reset authorizes acquisition of the
    next gate.
-   When a farther gate is visible, its horizontal direction is retained
-   through the current gate pass. The pass-through controller first clears
-   the frame without reusing the old gate's final correction, then begins a
+   When a farther gate is visible, its horizontal direction may be retained
+   through the current gate pass, but it contributes no steering before the
+   active gate has been cleared. The pass-through controller first clears the
+   frame without reusing the old gate's final correction, then permits a
    bounded lateral/yaw handoff toward the retained next gate. The old tracker
    prediction is released at pass-through so it cannot block acquisition.
 5. `GateTracker` rejects implausible jumps and predicts through at most five
@@ -119,9 +123,11 @@ python main.py
    Its attitude gains come from `collect_demos.py` and
    `StabilizedController`, but consecutive-gate flight uses a slower approach
    profile: reduced blind/track lean, progressive leveling from 0.8% opening
-   area, and a short bounded braking command near 2.5%. This prevents the
-   constant demo lean from accelerating through gate one too quickly to align
-   gate two. The gate target is held at 62% image height with a 20%-frame
+   area, a short bounded braking command near 2.5%, and slew-limited lateral
+   and yaw commands. This prevents the constant demo lean from accelerating
+   through gate one too quickly and prevents a reacquired side gate from
+   producing a full-bank command step. The gate target is held at 62% image
+   height with a 20%-frame
    vertical deadband. Altitude correction remains active even for distant
    gates, keeping the selected opening away from the top and bottom of the
    frame while retaining bottom-rail clearance. Horizontal gate capture favors
@@ -129,14 +135,12 @@ python main.py
    so turning toward an off-axis gate cannot masquerade as moving onto its
    flight line.
    Blue-path detection and steering are disabled in the Q2 runtime. Only the
-   accepted orange gate and orange next-gate look-ahead affect navigation.
+   accepted orange gate affects navigation before the current gate is clear.
    The Q2 close-gate threshold is calibrated below the measured first-gate
    peak, ensuring the controller commits through the opening before it drops
    out of view.
-   When another fully supported gate is already visible beyond a centered,
-   nearby active gate, a separately bounded look-ahead term begins lateral
-   translation toward the next gate while applying only a small yaw term. It
-   cannot override primary-gate alignment.
+   A fully supported farther gate can supply a post-clearance direction hint,
+   but it cannot add lateral or yaw commands during primary-gate alignment.
    The race timer's active-gate increment is used only to confirm a completed
    pass and release the old visual track immediately; it supplies no steering
    geometry.
@@ -200,10 +204,11 @@ Primary runtime tuning variables:
 
 - `YOLO_POSE_MODEL_PATH` (default `models/gate_pose.pt`)
 - `YOLO_MODEL_PATH` (default `models/gate_detector.pt`)
-- `YOLO_CONFIDENCE_THRESHOLD` (default `0.35`)
+- `YOLO_CONFIDENCE_THRESHOLD` (default `0.50`)
 - `YOLO_KEYPOINT_CONFIDENCE_THRESHOLD` (default `0.25`)
 - `YOLO_NMS_IOU_THRESHOLD` (default `0.70`)
 - `YOLO_TARGET_LOCK_SECONDS` (default `0.75`)
+- `YOLO_ACQUISITION_CONFIRMATION_FRAMES` (default `3`)
 - `YOLO_CROP_PADDING_PX` (default `14`)
 - `YOLO_MIN_GATE_AREA_PX` (default `400`)
 - `YOLO_PREVIOUS_CENTER_FRAMES` (default `5`)
@@ -238,7 +243,10 @@ In pose mode the overlay shows every separate pose instance, confidence, all
 four keypoints, the selected opening quadrilateral, calculated center, and
 center source (`yolo_box_center` or `previous_frame_fallback`). Purple
 keypoints show outer-gate orientation for diagnostics only; they do not move
-the red steering center away from the green selected box. In hybrid mode the
+the red steering center away from the green selected box. The accepted-target
+panel uses green only for a measured, confirmed steering target; a short
+tracker prediction is yellow, and unconfirmed candidates are not drawn in
+that panel. In hybrid mode the
 overlay shows the equivalent selected box, padded crop, and color-extracted
 corners.
 Orange pixels in the mask are color candidates, not necessarily

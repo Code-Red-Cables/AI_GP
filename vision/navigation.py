@@ -101,6 +101,7 @@ class NavigationConfig:
     next_gate_yaw_kp: float = 0.0
     next_gate_max_right_mps: float = 0.0
     next_gate_max_yaw_rate_rps: float = 0.0
+    prepass_lookahead_weight: float = 1.0
     pass_through_lookahead_delay_s: float = 0.20
     framing_soft_edge_normalized: float = 0.58
     framing_hard_edge_normalized: float = 0.82
@@ -416,11 +417,13 @@ class GateNavigator:
             # Once a centered commit makes the gate disappear, punch through
             # instead of reacting to orange edges leaving the image.
             elif not measured:
+                self._last_command[1:] = 0.0
                 self._transition(NavigationState.PASS_THROUGH, now, force=True)
             elif (
                 self._state_since is not None
                 and now - self._state_since >= cfg.commit_maximum_duration_s
             ):
+                self._last_command[1:] = 0.0
                 self._transition(NavigationState.PASS_THROUGH, now, force=True)
         elif self.state == NavigationState.PASS_THROUGH:
             if (
@@ -537,14 +540,17 @@ class GateNavigator:
                     1.0,
                 )
             )
-            desired[1] += proximity * float(
+            lookahead_weight = float(
+                np.clip(cfg.prepass_lookahead_weight, 0.0, 1.0)
+            )
+            desired[1] += lookahead_weight * proximity * float(
                 np.clip(
                     cfg.next_gate_lateral_kp * lookahead,
                     -cfg.next_gate_max_right_mps,
                     cfg.next_gate_max_right_mps,
                 )
             )
-            desired[3] += proximity * float(
+            desired[3] += lookahead_weight * proximity * float(
                 np.clip(
                     cfg.next_gate_yaw_kp * lookahead,
                     -cfg.next_gate_max_yaw_rate_rps,
@@ -657,6 +663,7 @@ def q2_demo_navigation_config() -> NavigationConfig:
         commit_horizontal_tolerance=0.05,
         commit_abort_alignment_tolerance=0.16,
         commit_abort_horizontal_tolerance=0.08,
+        track_confirmation_frames=1,
         commit_stable_frames=3,
         commit_max_center_speed=2.0,
         commit_max_size_rate=100.0,
@@ -670,9 +677,9 @@ def q2_demo_navigation_config() -> NavigationConfig:
         vertical_control_min_area_ratio=0.0,
         search_forward_mps=0.0,
         search_yaw_rate_rps=0.16,
-        track_forward_mps=0.55,
-        minimum_approach_mps=0.35,
-        maximum_approach_mps=0.65,
+        track_forward_mps=0.24,
+        minimum_approach_mps=0.18,
+        maximum_approach_mps=0.36,
         commit_forward_mps=0.40,
         recover_forward_mps=0.0,
         minimum_forward_mps=-0.12,
@@ -683,20 +690,20 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # Horizontal error primarily commands bank/translation. The earlier
         # 2.4 yaw gain centered gate two by rotating the camera while the
         # vehicle remained outside its lateral flight line.
-        horizontal_yaw_kp=0.75,
+        horizontal_yaw_kp=0.42,
         horizontal_yaw_kd=0.0,
-        lateral_kp=3.0,
+        lateral_kp=1.20,
         lateral_kd=0.0,
         vertical_kp=0.8,
         vertical_kd=0.0,
-        max_right_mps=3.0,
+        max_right_mps=0.75,
         max_down_mps=0.60,
-        max_yaw_rate_rps=0.48,
-        max_forward_acceleration=100.0,
-        max_lateral_acceleration=100.0,
-        max_vertical_acceleration=100.0,
-        max_yaw_acceleration=100.0,
-        command_lpf_alpha=1.0,
+        max_yaw_rate_rps=0.28,
+        max_forward_acceleration=1.4,
+        max_lateral_acceleration=1.8,
+        max_vertical_acceleration=1.4,
+        max_yaw_acceleration=1.0,
+        command_lpf_alpha=0.45,
         track_alignment_scale=1.0,
         # Blue-path steering is deliberately disabled for Q2. Only accepted
         # orange gates and orange next-gate look-ahead can affect flight.
@@ -713,4 +720,8 @@ def q2_demo_navigation_config() -> NavigationConfig:
         next_gate_yaw_kp=0.25,
         next_gate_max_right_mps=0.45,
         next_gate_max_yaw_rate_rps=0.12,
+        # Retain the next gate's direction, but never let it pull the drone
+        # away from the center of the gate that has not yet been cleared.
+        prepass_lookahead_weight=0.0,
+        pass_through_lookahead_delay_s=0.70,
     )

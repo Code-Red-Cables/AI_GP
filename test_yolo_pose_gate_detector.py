@@ -273,6 +273,50 @@ def test_missing_pose_uses_only_bounded_previous_frame_fallback():
     assert not expired.found
 
 
+def test_new_pose_target_requires_consecutive_confirmation_frames():
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            acquisition_confirmation_frames=3,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame(), _frame(), _frame()]),
+    )
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    first = detector.detect(image, timestamp=1.0)
+    second = detector.detect(image, timestamp=1.1)
+    confirmed = detector.detect(image, timestamp=1.2)
+
+    assert not first.found
+    assert not second.found
+    assert confirmed.found
+    assert confirmed.center_px == (200.0, 160.0)
+
+
+def test_inconsistent_pose_candidate_cannot_become_steering_target():
+    shifted = _frame(
+        rows=((360, 70, 500, 230, 0.92, 0),),
+        points=(((375, 90), (485, 90), (375, 210), (485, 210)),),
+    )
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            acquisition_confirmation_frames=3,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame(), shifted, _frame()]),
+    )
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    results = [
+        detector.detect(image, timestamp=timestamp)
+        for timestamp in (1.0, 1.1, 1.2)
+    ]
+
+    assert not any(result.found for result in results)
+
+
 def test_reliable_corners_require_all_four_points():
     candidate = _candidate(
         (100, 60, 300, 260),
