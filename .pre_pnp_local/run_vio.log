@@ -1,0 +1,1196 @@
+Waiting for heartbeat...
+Connected to system: 1
+Setting up MAVLink rx...
+Setting up Timesync loop...
+Setting up VIO state estimator...
+Loading YOLO gate model...
+YOLO gate model ready.
+Setting up planner...
+Listening for camera frames...
+Logging run to logs/run_1785191369.jsonl (and logs/latest.jsonl, truncated each run)
+Priming attitude-hold stream...
+[vis] frames=1 yolo_hits=1 published=1 (last 5s)
+[vio] anchored gate 0 at (+10.2,+0.1,-2.5) yaw=-1deg
+Sim mode map: ['ACRO', 'ALT_HOLD', 'AUTO', 'AUTOROTATE', 'AUTOTUNE', 'AUTO_RTL', 'AVOID_ADSB', 'BRAKE', 'CIRCLE', 'DRIFT', 'FLIP', 'FLOWHOLD', 'FOLLOW', 'GUIDED', 'GUIDED_NOGPS', 'LAND', 'LOITER', 'OF_LOITER', 'POSHOLD', 'POSITION', 'RTL', 'SMART_RTL', 'SPORT', 'STABILIZE', 'SYSTEMID', 'THROW', 'ZIGZAG']
+Requested control mode: STABILIZE
+Arming drone...
+Starting control loop... (DRY_RUN=False)
+[FLY] src=     pnp_track range=  9.2m vel_ned=(+1.99,-0.14,-0.70) att=(r+0.00,p-0.12,y-0.07) thr=0.44
+[FLY] src=     pnp_track range=  8.5m vel_ned=(+2.00,-0.03,-0.70) att=(r+0.16,p-0.25,y-0.01) thr=0.40
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.01,p-0.30,y+0.02) thr=0.26
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.00,p-0.30,y+0.02) thr=0.26
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.20,p-0.23,y+0.02) thr=0.26
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.08,p-0.29,y+0.02) thr=0.26
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.03,p-0.30,y+0.02) thr=0.26
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+1.00,+0.02,+0.10) att=(r+0.01,p-0.30,y+0.02) thr=0.26
+[vis] frames=90 yolo_hits=61 published=28 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.17) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.37) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.57) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.78) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.98) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.18) thr=0.22
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.38) thr=0.22
+[FLY] src=     pnp_track range= 10.7m vel_ned=(+1.98,-0.26,-0.56) att=(r-0.22,p-0.15,y-0.13) thr=0.90
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r+0.10,p-0.28,y-0.54) thr=0.28
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r+0.17,p-0.25,y-0.54) thr=0.28
+[vis] frames=91 yolo_hits=41 published=3 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r+0.17,p-0.25,y-0.54) thr=0.28
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r-0.07,p-0.27,y-0.54) thr=0.28
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r-0.07,p-0.29,y-0.54) thr=0.28
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.86,-0.51,+0.10) att=(r+0.26,p-0.16,y-0.54) thr=0.28
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y-0.33) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y-0.13) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.07) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.25) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.46) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.66) thr=0.23
+[vis] frames=86 yolo_hits=9 published=3 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+0.85) thr=0.23
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+14.9,-26.0,+47.0) yaw=-72deg
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.02) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.15) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.29) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.48) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.65) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.85) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+2.05) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+2.25) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+2.45) thr=0.23
+[vis] frames=57 yolo_hits=19 published=8 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+2.65) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+2.84) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+3.04) thr=0.23
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y-3.04) thr=0.23
+[FLY] src=     pnp_track range= 29.8m vel_ned=(-0.22,+1.99,+0.06) att=(r-0.35,p-0.35,y+1.68) thr=0.89
+[FLY] src=     pnp_track range= 29.8m vel_ned=(+0.02,+2.00,+0.14) att=(r+0.20,p-0.35,y+1.56) thr=0.90
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+14.4,+35.4,+30.1) yaw=+124deg
+[FLY] src=     pnp_track range= 30.9m vel_ned=(+0.98,+1.74,+0.15) att=(r+0.35,p+0.32,y+1.06) thr=0.38
+[FLY] src=     pnp_track range= 24.9m vel_ned=(+1.46,+1.37,-0.53) att=(r+0.25,p+0.33,y+0.75) thr=0.41
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r-0.13,p-0.27,y+0.98) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r-0.05,p-0.30,y+0.98) thr=0.33
+[vis] frames=70 yolo_hits=33 published=28 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r-0.14,p+0.26,y+0.98) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r+0.15,p+0.26,y+0.98) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r+0.15,p+0.26,y+0.98) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.55,+0.83,+0.10) att=(r+0.15,p+0.26,y+0.98) thr=0.33
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+1.07) thr=0.29
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+23.0,-28.0,+33.4) yaw=-41deg
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+1.27) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+1.47) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+1.67) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+1.87) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.05) thr=0.29
+[vis] frames=61 yolo_hits=23 published=23 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.24) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.44) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.64) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.83) thr=0.29
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+3.02) thr=0.29
+[FLY] src=     pnp_track range= 32.2m vel_ned=(-1.92,+0.56,-1.00) att=(r+0.34,p-0.34,y+2.86) thr=0.29
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.28,+0.10) att=(r+0.06,p-0.29,y+2.85) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.28,+0.10) att=(r+0.06,p-0.29,y+2.85) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.28,+0.10) att=(r+0.06,p-0.29,y+2.85) thr=0.33
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.28,+0.10) att=(r+0.10,p-0.28,y+2.85) thr=0.33
+[vis] frames=61 yolo_hits=28 published=12 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.28,+0.10) att=(r+0.16,p-0.25,y+2.85) thr=0.33
+[vio] gate 0 anchor rejected 13 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (-5.0,+37.3,+74.3) yaw=+135deg
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.09,p-0.09,y+2.87) thr=0.29
+[FLY] src=     pnp_track range= 32.9m vel_ned=(-1.83,+0.82,+0.18) att=(r-0.28,p-0.31,y+2.72) thr=0.90
+[FLY] src=     pnp_track range= 32.9m vel_ned=(-1.76,+0.95,+0.18) att=(r-0.12,p-0.32,y+2.65) thr=0.90
+[FLY] src=     pnp_track range= 33.4m vel_ned=(-1.74,+0.98,+0.18) att=(r-0.20,p-0.35,y+2.63) thr=0.90
+[FLY] src=     pnp_track range= 33.0m vel_ned=(-1.88,+0.70,+0.18) att=(r+0.31,p-0.10,y+2.79) thr=0.42
+[FLY] src=     pnp_track range= 33.4m vel_ned=(-1.95,+0.43,+0.18) att=(r+0.32,p-0.11,y+2.92) thr=0.37
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.99,+0.16,+0.10) att=(r+0.09,p-0.29,y+2.98) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.99,+0.16,+0.10) att=(r-0.17,p-0.23,y+2.98) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.99,+0.16,+0.10) att=(r+0.03,p+0.22,y+2.98) thr=0.34
+[vis] frames=52 yolo_hits=34 published=29 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.15,p+0.10,y+2.84) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.21,p+0.05,y+2.84) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.17,p-0.14,y+2.84) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.12,p+0.19,y+2.84) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.17,p+0.24,y+2.84) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,+0.30,+0.10) att=(r+0.17,p+0.24,y+2.84) thr=0.34
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+2.93) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+3.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.95) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.76) thr=0.30
+[vis] frames=56 yolo_hits=29 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y-1.63) thr=0.30
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.04,p-0.30,y+0.49) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.04,p-0.30,y+0.49) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.04,p-0.30,y+0.49) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.04,p-0.30,y+0.49) thr=0.34
+[vis] frames=67 yolo_hits=4 published=4 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.05,p-0.30,y+0.49) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.88,+0.47,+0.10) att=(r+0.25,p-0.16,y+0.49) thr=0.34
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p+0.00,y+0.60) thr=0.30
+[FLY] src=     pnp_track range= 31.0m vel_ned=(+1.61,-1.18,+0.18) att=(r-0.35,p-0.35,y-0.63) thr=0.90
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+50.6,+26.5,+106.3) yaw=-46deg
+[FLY] src=     pnp_track range= 30.9m vel_ned=(+1.62,-1.18,+0.18) att=(r-0.35,p-0.35,y-0.63) thr=0.90
+[FLY] src=     pnp_track range= 31.0m vel_ned=(+1.61,-1.19,+0.18) att=(r-0.35,p-0.35,y-0.64) thr=0.90
+[FLY] src=     pnp_track range= 31.1m vel_ned=(+1.79,-0.89,+0.18) att=(r-0.18,p+0.28,y-0.46) thr=0.31
+[FLY] src=     pnp_track range= 31.5m vel_ned=(+1.86,-0.74,+0.18) att=(r+0.11,p-0.29,y-0.38) thr=0.32
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.94,-0.33,+0.10) att=(r+0.06,p-0.29,y-0.34) thr=0.34
+[vis] frames=56 yolo_hits=36 published=28 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.94,-0.33,+0.10) att=(r+0.02,p-0.30,y-0.34) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.94,-0.33,+0.10) att=(r+0.01,p-0.30,y-0.34) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.94,-0.33,+0.10) att=(r+0.00,p-0.30,y-0.34) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.94,-0.33,+0.10) att=(r+0.00,p-0.30,y-0.34) thr=0.34
+[FLY] src=     pnp_track range= 21.6m vel_ned=(+1.95,+0.44,-1.00) att=(r+0.35,p-0.35,y+0.22) thr=0.55
+[FLY] src=     pnp_track range= 12.7m vel_ned=(+1.16,+1.63,-0.58) att=(r+0.35,p-0.35,y+0.95) thr=0.44
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r+0.08,p-0.29,y+0.97) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r+0.03,p-0.30,y+0.97) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.05,p-0.29,y+0.97) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.01,p-0.30,y+0.97) thr=0.35
+[vis] frames=63 yolo_hits=13 published=10 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.01,p-0.30,y+0.97) thr=0.35
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.08,y+0.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.43) thr=0.30
+[vis] frames=41 yolo_hits=19 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.09) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.73) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.53) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.32) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.97) thr=0.30
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (-4.1,+24.1,+88.9) yaw=+177deg
+[vis] frames=62 yolo_hits=14 published=9 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.36) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.01) thr=0.30
+[vis] frames=88 yolo_hits=28 published=17 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.63) thr=0.30
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.00,p-0.30,y+0.98) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.05,p-0.30,y+0.98) thr=0.35
+[vis] frames=122 yolo_hits=8 published=1 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.05,p-0.30,y+0.98) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.05,p-0.30,y+0.98) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.05,p-0.29,y+0.98) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.56,+0.83,+0.10) att=(r-0.08,p-0.29,y+0.98) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.05,p-0.30,y+0.83) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.04,p-0.30,y+0.83) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.04,p-0.30,y+0.83) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.04,p-0.30,y+0.83) thr=0.35
+[vio] gate 0 anchor rejected 13 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+78.3,+68.2,+124.1) yaw=-2deg
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.04,p-0.30,y+0.83) thr=0.35
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.68,+0.73,+0.10) att=(r-0.05,p-0.30,y+0.83) thr=0.35
+[vis] frames=92 yolo_hits=47 published=22 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.57) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.17) thr=0.30
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.01,p-0.30,y+1.46) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.10,p-0.28,y+1.46) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.12,p-0.27,y+1.46) thr=0.34
+[vis] frames=93 yolo_hits=14 published=5 (last 5s)
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.11,p-0.28,y+1.46) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.12,p-0.27,y+1.46) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(+0.11,+0.99,+0.10) att=(r+0.12,p-0.28,y+1.46) thr=0.34
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r+0.00,p-0.00,y+1.61) thr=0.30
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.15,+0.99,+0.10) att=(r-0.00,p-0.30,y+1.73) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.15,+0.99,+0.10) att=(r-0.29,p-0.05,y+1.73) thr=0.34
+[FLY] src=     pnp_track range= 14.9m vel_ned=(-2.00,-0.12,+0.20) att=(r-0.33,p-0.15,y-3.08) thr=0.90
+[vio] gate 0 anchor rejected 12 fixes in a row — re-anchoring
+[vio] anchored gate 0 at (+20.0,+40.2,+149.0) yaw=-167deg
+[FLY] src=     pnp_track range= 15.0m vel_ned=(-2.00,-0.12,+0.20) att=(r-0.35,p-0.35,y-3.08) thr=0.85
+[FLY] src=     pnp_track range= 15.0m vel_ned=(-2.00,-0.11,+0.20) att=(r-0.35,p-0.35,y-3.08) thr=0.90
+[FLY] src=     pnp_track range= 15.2m vel_ned=(-2.00,-0.12,+0.20) att=(r-0.35,p-0.35,y-3.08) thr=0.90
+[vis] frames=74 yolo_hits=45 published=30 (last 5s)
+[FLY] src=     pnp_track range= 15.2m vel_ned=(-2.00,-0.14,+0.20) att=(r-0.28,p-0.34,y-3.07) thr=0.51
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-1.00,-0.10,+0.10) att=(r-0.14,p-0.09,y-3.05) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r+0.04,p-0.29,y-2.87) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r+0.01,p-0.30,y-2.87) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r+0.01,p-0.30,y-2.87) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r+0.00,p-0.30,y-2.87) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r+0.00,p-0.30,y-2.87) thr=0.34
+[FLY] src=     pnp_coast range=  ?   vel_ned=(-0.96,-0.27,+0.10) att=(r-0.05,p-0.29,y-2.87) thr=0.34
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.58) thr=0.30
+[vis] frames=120 yolo_hits=59 published=20 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.77) thr=0.30
+[vis] frames=116 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.57) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.25) thr=0.30
+[vis] frames=119 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.02) thr=0.30
+[vis] frames=96 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.01) thr=0.30
+[vis] frames=117 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.02) thr=0.30
+[vis] frames=123 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.04) thr=0.30
+[vis] frames=118 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.22) thr=0.30
+[vis] frames=129 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.81) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.81) thr=0.30
+[vis] frames=131 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.62) thr=0.30
+[vis] frames=123 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.63) thr=0.30
+[vis] frames=130 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.36) thr=0.30
+[vis] frames=89 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.28) thr=0.30
+[vis] frames=74 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.99) thr=0.30
+[vis] frames=96 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.02) thr=0.30
+[vis] frames=106 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.04) thr=0.30
+[vis] frames=127 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.22) thr=0.30
+[vis] frames=127 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.20) thr=0.30
+[vis] frames=138 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.83) thr=0.30
+[vis] frames=122 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.43) thr=0.30
+[vis] frames=150 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.81) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.41) thr=0.30
+[vis] frames=135 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.63) thr=0.30
+[vis] frames=141 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[vis] frames=129 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.63) thr=0.30
+[vis] frames=80 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.19) thr=0.30
+[vis] frames=85 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.81) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.07) thr=0.30
+[vis] frames=98 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.08) thr=0.30
+[vis] frames=97 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.74) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.94) thr=0.30
+[vis] frames=100 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.74) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.92) thr=0.30
+[vis] frames=92 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.95) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.16) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.96) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.36) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.57) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.63) thr=0.30
+[vis] frames=81 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.39) thr=0.30
+[vis] frames=83 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.11) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.90) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.70) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.30) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.10) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.90) thr=0.30
+[vis] frames=79 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.70) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.30) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.10) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.90) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.70) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.03) thr=0.30
+[vis] frames=82 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.64) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.05) thr=0.30
+[vis] frames=102 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.25) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.26) thr=0.30
+[vis] frames=82 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.54) thr=0.30
+[vis] frames=81 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.74) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.53) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.91) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.86) thr=0.30
+[vis] frames=56 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.74) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.55) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.35) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.03) thr=0.30
+[vis] frames=69 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.32) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.85) thr=0.30
+[vis] frames=70 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.36) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.55) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.76) thr=0.30
+[vis] frames=68 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.95) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.93) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.55) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.35) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.96) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.55) thr=0.30
+[vis] frames=80 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.35) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.40) thr=0.30
+[vis] frames=87 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.96) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.35) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.73) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.93) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.31) thr=0.30
+[vis] frames=71 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.49) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.69) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.09) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.11) thr=0.30
+[vis] frames=66 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.91) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.46) thr=0.30
+[vis] frames=59 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.73) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.51) thr=0.30
+[vis] frames=69 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.90) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.09) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.88) thr=0.30
+[vis] frames=44 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.69) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.49) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.30) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.10) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.90) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.77) thr=0.30
+[vis] frames=69 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.57) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.36) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.00) thr=0.30
+[vis] frames=86 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.41) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.81) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.02) thr=0.30
+[vis] frames=107 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.30) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.11) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.91) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.70) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.30) thr=0.30
+[vis] frames=104 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.10) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.69) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.49) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.29) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.11) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.09) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.68) thr=0.30
+[vis] frames=78 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.66) thr=0.30
+[vis] frames=74 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.03) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.44) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.24) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.65) thr=0.30
+[vis] frames=72 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.33) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.91) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.28) thr=0.30
+[vis] frames=65 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.07) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.70) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.50) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.31) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.92) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.71) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.31) thr=0.30
+[vis] frames=70 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.68) thr=0.30
+[vis] frames=86 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.09) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.59) thr=0.30
+[vis] frames=89 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.59) thr=0.30
+[vis] frames=86 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.16) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.35) thr=0.30
+[vis] frames=55 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.74) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.95) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.53) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.92) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.96) thr=0.30
+[vis] frames=78 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.77) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.36) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.16) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.00) thr=0.30
+[vis] frames=88 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.80) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.31) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.29) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.49) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.69) thr=0.30
+[vis] frames=84 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.89) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.65) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.68) thr=0.30
+[vis] frames=70 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.11) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.92) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.31) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.28) thr=0.30
+[vis] frames=80 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.28) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.49) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.68) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.28) thr=0.30
+[vis] frames=77 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.48) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.07) thr=0.30
+[vis] frames=79 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.06) thr=0.30
+[vis] frames=77 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.33) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.92) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.32) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.91) thr=0.30
+[vis] frames=65 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.11) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.30) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.51) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.42) thr=0.30
+[vis] frames=76 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.21) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.81) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.40) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.20) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.61) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.42) thr=0.30
+[vis] frames=98 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.01) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.38) thr=0.30
+[vis] frames=87 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.99) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.38) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.76) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.95) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.93) thr=0.30
+[vis] frames=83 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.72) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.52) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.32) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.12) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.54) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.35) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.94) thr=0.30
+[vis] frames=97 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.75) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.55) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.22) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.42) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.62) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.03) thr=0.30
+[vis] frames=95 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.82) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.02) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.23) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.43) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.63) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.83) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.04) thr=0.30
+[vis] frames=125 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.04) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.84) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.65) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.46) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.25) thr=0.30
+[vis] frames=115 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.85) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.45) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.15) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.36) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.56) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.76) thr=0.30
+[vis] frames=121 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.97) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.17) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.37) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.58) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.78) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.98) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.18) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.60) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.80) thr=0.30
+[vis] frames=168 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.49) thr=0.30
+[vis] frames=108 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.32) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.14) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.94) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.73) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.53) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.34) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-0.13) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.05) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.25) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.45) thr=0.30
+[vis] frames=94 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.66) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+0.86) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.06) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.26) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.47) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+1.87) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.07) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.27) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.47) thr=0.30
+[vis] frames=150 yolo_hits=0 published=0 (last 5s)
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.67) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+2.88) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y+3.08) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-3.00) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.79) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.59) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.39) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-2.19) thr=0.30
+[FLY] src=    pnp_search range=  ?   vel_ned=(+0.00,+0.00,+0.30) att=(r-0.00,p-0.00,y-1.98) thr=0.30

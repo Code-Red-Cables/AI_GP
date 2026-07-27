@@ -1,0 +1,1172 @@
+diff --git a/controller.py b/controller.py
+index 8155ed2..5643d48 100644
+--- a/controller.py
++++ b/controller.py
+@@ -77,6 +77,12 @@ def send_velocity_ned(mavlink_conn, system_boot_ms, vn, ve, vd, yaw):
+ # Re-tune from the next log: climbs -> lower HOVER_THRUST; sinks -> raise it.
+ HOVER_THRUST = 0.27        # collective thrust (0..1) that roughly holds altitude — TUNE FIRST
+ KP_THRUST = 0.25           # extra thrust per (m/s) of vertical-velocity error (more authority)
++# Integral trim on the vertical-velocity loop (added with the VIO pipeline,
++# 2026-07-27): the measured 0.27 hover was fit on one battery/attitude state; a
++# slow integrator absorbs the residual so altitude stops sagging/ballooning when
++# the true hover point differs. Clamped hard — it is a TRIM, not an authority.
++KI_THRUST = 0.06           # thrust per (m/s * s) of integrated vertical-velocity error
++I_THRUST_MAX = 0.10        # anti-windup clamp on the integral contribution
+ THRUST_MIN, THRUST_MAX = 0.2, 0.9   # floor keeps prop wash / attitude authority while descending
+ KP_LEAN = 0.3           # rad of lean per (m/s) of desired horizontal velocity
+ MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
+@@ -99,6 +105,11 @@ MAX_LEAN_RAD = math.radians(20.0)   # cap on commanded pitch/roll angle
+ # to translate) and are low-passed first to damp vision jitter.
+ # --------------------------------------------------------------------------------------
+ KP_ATT = 3.0                        # body roll/pitch rate (rad/s) per rad of angle error
++# Derivative damping on the angle loop (added with the VIO pipeline, 2026-07-27):
++# the VIO publishes the gyro body rates alongside the attitude, so the angle loop
++# can be a proper PD — commanded rate = KP*err - KD*measured_rate. Without it the
++# P-only loop rings around the setpoint after aggressive planner re-aims.
++KD_ATT = 0.35                       # rate feedback (per rad/s of measured body rate)
+ KP_YAW = 2.0                        # body yaw rate (rad/s) per rad of heading error
+ RATE_MAX = math.radians(220.0)      # cap on any commanded body rate
+ # Yaw-rate cap kept low on purpose: the camera FOV is narrow, so a fast yaw sweeps the
+@@ -111,18 +122,24 @@ AI_ACTION_TIMEOUT_NS = 300_000_000
+ AI_RATE_SLEW_PER_TICK = math.radians(18.0)
+ AI_THRUST_SLEW_PER_TICK = 0.035
+ 
+-# Per-axis sign of the body-rate command needed for NEGATIVE feedback. This sim's
+-# SET_ATTITUDE_TARGET rate axes do NOT share a consistent convention with its reported
+-# ATTITUDE Euler angles, and roll differs from pitch (logs 2026-06-05):
+-#   * PITCH angle responds OPPOSITE to a commanded pitch rate -> negate (-1) to stabilise.
+-#     (verified: cmdPitch->measured-pitch correlation -0.97, att_err pitch ~0.30 = clean.)
+-#   * ROLL angle responds with the SAME sign as the commanded roll rate -> do NOT negate
+-#     (+1). With -1 the loop was positive feedback and roll ramped to a tumble every run.
+-#   * YAW is stable with -1 (heading-hold error ~0.04).
+-# If an axis ever diverges from level again, flip its sign here first.
+-RATE_SIGN_ROLL = +1.0
++# Per-axis sign of the body-rate command needed for NEGATIVE feedback.
++# RE-MEASURED 2026-07-27 with a direct open-loop probe (command +0.8 rad/s on one
++# axis, read the raw HIGHRES_IMU gyro): ALL THREE axes respond INVERTED, at ~2.4x
++# the commanded magnitude:
++#     cmd +0.8 roll  -> gyro p = -1.94       cmd +0.8 pitch -> gyro q = -1.94
++#     cmd +0.8 yaw   -> gyro r = -5.2 (already tumbling; sign clear)
++# The old RATE_SIGN_ROLL=+1 was tuned against the VQ1 sim's reported ATTITUDE,
++# whose roll convention was itself inverted vs. physical — two inversions
++# cancelled. The VIO estimates PHYSICAL attitude (gravity- and gate-anchored),
++# so every axis now needs -1. If an axis diverges from level, re-run the probe
++# before touching these.
++RATE_SIGN_ROLL = -1.0
+ RATE_SIGN_PITCH = -1.0
+ RATE_SIGN_YAW = -1.0
++# The sim's rate loop applies ~2.4x the commanded rate (probe above; the Dreamer
++# branch independently measured ~2.5x). Divide our commands back so the angle
++# loop's effective gain is what KP_ATT says it is.
++RATE_CMD_SCALE = 1.0 / 2.4
+ 
+ # Ignore the attitude quaternion; command the three body rates + thrust.
+ ATTITUDE_CONTROL_MASK = mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE
+@@ -175,11 +192,11 @@ def velocity_to_attitude(vel_ned, yaw_cmd, yaw_now, vel_now):
+     c, s = math.cos(yaw_now), math.sin(yaw_now)
+     e_fwd = c * en + s * ee          # body-forward velocity error
+     e_lat = -s * en + c * ee         # body-right velocity error
+-    # Pitch sign is INVERTED on this sim (same asymmetry as RATE_SIGN_PITCH=-1 vs
+-    # RATE_SIGN_ROLL=+1): the rate loop faithfully holds the commanded pitch angle, but
+-    # the textbook "nose-down to go forward" sign drove the quad BACKWARD (verified
+-    # 2026-06-05), so forward uses +KP_LEAN. Roll/lateral was already correct.
+-    pitch = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_fwd))   # forward translation
++    # TEXTBOOK signs (2026-07-27): these desired angles are now tracked against the
++    # VIO's PHYSICAL attitude, so nose-DOWN (negative pitch) accelerates forward and
++    # roll-right (positive) accelerates right. The old "+KP_LEAN forward" finding was
++    # an artifact of VQ1's inverted reported pitch — two inversions cancelling.
++    pitch = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, -KP_LEAN * e_fwd))  # nose down to go forward
+     roll = max(-MAX_LEAN_RAD, min(MAX_LEAN_RAD, KP_LEAN * e_lat))    # roll right to go right
+     return roll, pitch, yaw_cmd, thrust
+ 
+@@ -206,6 +223,7 @@ class Controller:
+         self._roll_cmd = 0.0        # last low-passed roll command (rad)
+         self._pitch_cmd = 0.0       # last low-passed pitch command (rad)
+         self._last_ai_command = [HOVER_THRUST, 0.0, 0.0, 0.0]
++        self._i_thrust = 0.0        # vertical-loop integral trim (see KI_THRUST)
+ 
+     @staticmethod
+     def _wrap(a):
+@@ -246,6 +264,9 @@ class Controller:
+         roll_now = att['roll'] if att else 0.0
+         pitch_now = att['pitch'] if att else 0.0
+         yaw_now = att['yaw'] if att else 0.0
++        # Gyro body rates for the angle loop's D-term (0 when unavailable -> pure P).
++        p_now = att.get('rollspeed', 0.0) if att else 0.0
++        q_now = att.get('pitchspeed', 0.0) if att else 0.0
+         vn_now = ve_now = vz_now = 0.0
+         if pos is not None and pos.get('vx') is not None:
+             vn_now = pos.get('vx', 0.0)
+@@ -260,7 +281,8 @@ class Controller:
+             ve_now = s * vx_b + c * vy_b
+             vz_now = vz_b
+         return (float(roll_now), float(pitch_now), float(yaw_now),
+-                float(vn_now), float(ve_now), float(vz_now))
++                float(vn_now), float(ve_now), float(vz_now),
++                float(p_now or 0.0), float(q_now or 0.0))
+ 
+     def update(self):
+         target = self.planner.compute_target() if self.planner is not None else None
+@@ -272,17 +294,38 @@ class Controller:
+             return
+ 
+         if target is not None and target['mode'] == 'velocity':
+-            roll_now, pitch_now, yaw_now, vn_now, ve_now, vz_now = self._telemetry()
++            (roll_now, pitch_now, yaw_now,
++             vn_now, ve_now, vz_now, p_now, q_now) = self._telemetry()
++            # OPEN-LOOP targets (blind coast/search from the reactive planner):
++            # the velocity belief is untrustworthy without vision fixes, so drop
++            # the feedback terms — lean becomes a bounded feedforward of the
++            # desired velocity and thrust stays at hover. Chasing a phantom
++            # velocity at max thrust is what wrecked runs 1 and 5-7.
++            open_loop = bool(target.get('open_loop'))
++            if open_loop:
++                vn_now = ve_now = vz_now = 0.0
+             roll_des, pitch_des, yaw_target, thrust = velocity_to_attitude(
+                 target['vel_ned'], target['yaw'], yaw_now, (vn_now, ve_now, vz_now))
++            # Vertical-loop integral trim: slow-integrate the vz error so the true
++            # hover point is learned instead of hard-coded. Frozen at the thrust
++            # limits (anti-windup), when flying open-loop, and hard-clamped.
++            vd_cmd = float(target['vel_ned'][2])
++            if not open_loop and THRUST_MIN < thrust < THRUST_MAX:
++                self._i_thrust += KI_THRUST * (vz_now - vd_cmd) * self._dt
++                self._i_thrust = _clamp(self._i_thrust, I_THRUST_MAX)
++            thrust = max(THRUST_MIN, min(THRUST_MAX, thrust + self._i_thrust))
+             # Smooth the desired lean angles, then close the angle loop OURSELVES and
+             # command body rates (the sim is ACRO: it tracks rates, ignores attitude).
+             roll_des, pitch_des = self._lpf_lean(roll_des, pitch_des)
+-            # Body rates with the PER-AXIS sign correction (see RATE_SIGN_* above); each
+-            # axis is tuned so its angle loop is negative feedback (roll != pitch here).
+-            roll_rate = RATE_SIGN_ROLL * _clamp(KP_ATT * self._wrap(roll_des - roll_now), RATE_MAX)
+-            pitch_rate = RATE_SIGN_PITCH * _clamp(KP_ATT * self._wrap(pitch_des - pitch_now), RATE_MAX)
+-            yaw_rate = RATE_SIGN_YAW * self._yaw_rate_cmd(yaw_target, yaw_now)
++            # PD angle loop -> body rates, with the PER-AXIS sign correction (see
++            # RATE_SIGN_* above); each axis is tuned so its angle loop is negative
++            # feedback (roll != pitch here). The -KD*rate term damps the ringing a
++            # pure P loop shows after aggressive re-aims.
++            roll_rate = RATE_SIGN_ROLL * RATE_CMD_SCALE * _clamp(
++                KP_ATT * self._wrap(roll_des - roll_now) - KD_ATT * p_now, RATE_MAX)
++            pitch_rate = RATE_SIGN_PITCH * RATE_CMD_SCALE * _clamp(
++                KP_ATT * self._wrap(pitch_des - pitch_now) - KD_ATT * q_now, RATE_MAX)
++            yaw_rate = RATE_SIGN_YAW * RATE_CMD_SCALE * self._yaw_rate_cmd(yaw_target, yaw_now)
+             if not dry_run:
+                 send_rate_target(self.sim_conn, self.system_boot_ms,
+                                  roll_rate, pitch_rate, yaw_rate, thrust)
+diff --git a/main.py b/main.py
+index 0bdf06c..dcb1af9 100644
+--- a/main.py
++++ b/main.py
+@@ -23,16 +23,20 @@ DRY_RUN = False
+ DEBUG_VISION = False
+ LOGGING = True
+ 
+-# Gate-targeting owner. "opencv" is deterministic; "existing_ai" delegates to
+-# the repository's existing learned policy through AI_POLICY_FACTORY.
++# Gate-targeting owner.
++#   "pnp"        — YOLO gate corners + solvePnP feed the VIO state estimator and
++#                  the planner's world-waypoint guidance (the default: the VQ2 sim
++#                  sends no attitude/position telemetry, so VIO is the only pose).
++#   "opencv"     — HSV detector + image-space navigator (no world pose needed).
++#   "existing_ai" — delegates to a learned policy through AI_POLICY_FACTORY.
+ GATE_NAVIGATION_MODE = os.environ.get(
+     "GATE_NAVIGATION_MODE",
+-    os.environ.get("VISION_MODE", "opencv"),  # compatibility with older launch scripts
++    os.environ.get("VISION_MODE", "pnp"),  # compatibility with older launch scripts
+ ).lower()
+ AI_POLICY_FACTORY = os.environ.get("AI_POLICY_FACTORY")
+-if GATE_NAVIGATION_MODE not in {"opencv", "existing_ai"}:
++if GATE_NAVIGATION_MODE not in {"pnp", "opencv", "existing_ai"}:
+     raise ValueError(
+-        "GATE_NAVIGATION_MODE must be one of: opencv, existing_ai"
++        "GATE_NAVIGATION_MODE must be one of: pnp, opencv, existing_ai"
+     )
+ 
+ # --------------------------------------------------------------------------------------
+@@ -61,7 +65,7 @@ shared_data = {
+     'gate_navigation_mode': GATE_NAVIGATION_MODE,
+     'ai_policy_factory': AI_POLICY_FACTORY,
+     'control_source': (
+-        'ai' if GATE_NAVIGATION_MODE == 'existing_ai' else 'opencv'
++        'ai' if GATE_NAVIGATION_MODE == 'existing_ai' else GATE_NAVIGATION_MODE
+     ),
+     'preplan': PREPLAN,
+     'learn': LEARN,
+@@ -75,6 +79,7 @@ ts_loop = components['ts_loop']
+ mavlink_rx = components['mavlink_rx']
+ vision_rx = components['vision_rx']
+ logger = components.get('logger')
++state_estimator = components.get('state_estimator')
+ 
+ # Flight-mode entry. The sim is a Betaflight-style FPV racer that boots in ACRO (raw
+ # rate control) — which has no velocity/position loop, so the armed quad ignored our
+@@ -89,6 +94,10 @@ if not DRY_RUN:
+     controller.prime_setpoint_stream(seconds=0.3)  # keep stream alive across the switch
+ 
+ print("Arming drone...", flush=True)
++# Release the VIO's pre-flight ZUPT: from here on the drone can actually move,
++# so the estimator may dead-reckon. Before this it pins vel/pos to the origin.
++with shared_data['lock']:
++    shared_data['flight_started'] = True
+ controller.arm()
+ print(f"Starting control loop... (DRY_RUN={DRY_RUN})", flush=True)
+ 
+@@ -99,13 +108,18 @@ except KeyboardInterrupt:
+     print("\nInterrupted — shutting down...", flush=True)
+ 
+ # exit: stop each RX/loop thread and join (guard against threads that never started)
+-for component in (ts_loop, mavlink_rx, vision_rx, logger):
++for component in (ts_loop, mavlink_rx, vision_rx, logger, state_estimator):
+     if component is None:
+         continue
+     thread = component.get_thread_for_join()
+     if thread is not None:
+         thread.join(timeout=1.0)
+ 
++# Persist the VIO gate anchors so later runs share one world frame.
++if state_estimator is not None:
++    state_estimator.save_anchors()
++    print(f"Gate anchors saved: {sorted(state_estimator.anchors)}", flush=True)
++
+ # Persist the learned course map so the next run can preplan from it.
+ course_map = shared_data.get('course_map')
+ if course_map is not None:
+diff --git a/planner.py b/planner.py
+index 322346e..6190b6a 100644
+--- a/planner.py
++++ b/planner.py
+@@ -143,7 +143,13 @@ ROLL_TRUST_MAX = math.radians(8.0)   # skip folding vision into the waypoint abo
+ # significantly off-centre (|az| > YAW_DEADBAND). Inside the band we hold heading, which
+ # keeps us in the stable straight-flight regime — and the first gate is dead ahead, so
+ # holding heading flies us straight through it.
+-YAW_DEADBAND_RAD = math.radians(9.0)   # within this azimuth, hold heading (no re-aim)
++# 9deg -> 3deg (2026-07-27, VIO/PnP pipeline): the wide deadband protected against
++# the HSV detector's garbage per-frame bearings, but it let the gate wander to the
++# frame edge before any correction — run 6 lost sight 1.7 s into the approach and
++# never recovered. PnP bearings are geometric and already filtered by the
++# world-consistency check (_vision_accepted), so track tightly and keep the camera
++# ON the gate: continuous sight = continuous VIO fixes = everything else works.
++YAW_DEADBAND_RAD = math.radians(3.0)   # within this azimuth, hold heading (no re-aim)
+ 
+ # Altitude-envelope safety guard. NED z is negative-up with the origin at the arm
+ # point on the ground; race gates sit only a few metres up. If we ever climb past
+@@ -180,6 +186,15 @@ class Planner:
+         self._yaw_lock = None
+         # Post-gate coast (see POST_GATE_COAST_*): keep flying forward to find the next gate.
+         self._coast_until_ns = 0
++        # True on ticks where the fresh detection AGREED with the world belief (set in
++        # _target_offset_ned). The yaw lock only re-aims on those ticks: run 4 showed a
++        # single frame whose "best gate" was a DIFFERENT gate re-aiming the heading 90deg
++        # right and driving the drone off the course line.
++        self._vision_accepted = False
++        # Reactive (pnp mode) guidance state: latched approach heading + last-seen time.
++        self._rx_heading = None
++        self._rx_last_ns = 0
++        self._rx_committed = False
+ 
+         # ---- Preplanning (learn-then-replay the DETERMINISTIC course; spec 3.5) --------
+         # The sim broadcasts no track geometry (spec 4.3), so we build our own gate map:
+@@ -241,7 +256,7 @@ class Planner:
+     def _snapshot(self):
+         """Atomically read the bits of shared_data we need."""
+         with self.data['lock']:
+-            return {
++            snap = {
+                 'vision': self.data.get('vision'),
+                 'navigation': self.data.get('navigation'),
+                 'control_source': self.data.get('control_source'),
+@@ -251,6 +266,20 @@ class Planner:
+                 'odometry': self.data.get('odometry'),
+                 'position_ned': self.data.get('position_ned'),
+             }
++            # Adapt the sim's race broadcast to the 'active_gate_index' contract this
++            # planner was written against (nothing ever published a 'race' key).
++            # PREFER the VIO's SETTLED index: the raw active_gate telemetry flickers
++            # (run 4: a flicker at 7 m out dropped the waypoint and started the
++            # post-gate coast BEFORE the gate) — the estimator debounces it 0.5 s.
++            if snap['race'] is None:
++                settled = self.data.get('gate_idx_settled')
++                rs = self.data.get('race_status')
++                if settled is not None:
++                    snap['race'] = {'active_gate_index': int(settled)}
++                elif rs is not None:
++                    # settled index not published until the first advance; 0 until then
++                    snap['race'] = {'active_gate_index': 0}
++        return snap
+ 
+     @staticmethod
+     def _pose(s):
+@@ -340,7 +369,9 @@ class Planner:
+                         updated = True
+ 
+         # Record whether vision CONFIRMED the current world belief this tick (used to
+-        # decide what is safe to learn into the course map — preplan-only seeds are not).
++        # decide what is safe to learn into the course map — preplan-only seeds are not,
++        # and the yaw lock only re-aims on a CONFIRMED detection; see _vision_accepted).
++        self._vision_accepted = bool(updated)
+         if updated:
+             self._gate_world_vis = True
+ 
+@@ -385,6 +416,64 @@ class Planner:
+             self.data['target'] = target
+         return target
+ 
++    # ------------------------------------------------------------------
++    # Gate-relative reactive guidance for the PnP pipeline (see compute_target).
++    # ------------------------------------------------------------------
++    def _pnp_reactive(self, s, now, yaw_hold, position):
++        vis = s['vision']
++        fresh = (vis and vis.get('detected')
++                 and vis.get('confidence', 0) >= CONF_MIN
++                 and vis.get('ts') and (now - vis['ts']) <= VISION_TIMEOUT_NS
++                 and vis.get('gate_body'))
++        if fresh:
++            gb = np.asarray(vis['gate_body'], float)
++            rng = float(np.linalg.norm(gb))
++            az = math.atan2(float(gb[1]), float(gb[0]))
++            if 0.0 < rng <= MAX_GATE_RANGE_M:
++                self._rx_last_ns = now
++                # Inside the commit distance the aperture fills the frame and the
++                # detection whipsaws: LATCH the heading and punch straight through.
++                if rng > YAW_FREEZE_DIST:
++                    self._rx_heading = self._wrap(yaw_hold + az)
++                self._rx_committed = rng <= YAW_FREEZE_DIST
++                speed = MAX_SPEED if rng <= PASS_THROUGH_DIST \
++                    else min(MAX_SPEED, max(0.6, KP_POS * 0.25 * rng))
++                hdg = self._rx_heading if self._rx_heading is not None \
++                    else self._wrap(yaw_hold + az)
++                vn = speed * math.cos(hdg)
++                ve = speed * math.sin(hdg)
++                # Vertical straight from the body-frame elevation (camera tilt is
++                # already folded into gate_body); aim a touch below the centre.
++                vd = speed * (float(gb[2]) + GATE_AIM_DOWN_M) / max(rng, 1e-6)
++                vd = max(-MAX_VSPEED, min(MAX_VSPEED, vd))
++                return self._publish({'mode': 'velocity',
++                                      'vel_ned': (float(vn), float(ve), float(vd)),
++                                      'yaw': float(hdg), 'range_m': rng,
++                                      'source': 'pnp_track', 'ts': now})
++
++        # ---- blind ----
++        last = getattr(self, '_rx_last_ns', 0)
++        hdg = self._rx_heading if getattr(self, '_rx_heading', None) is not None \
++            else yaw_hold
++        blind_s = (now - last) / 1e9 if last else 1e9
++        if blind_s < 3.0:
++            # Just lost sight (usually: passing through / gate at frame edge).
++            # Coast straight ahead OPEN-LOOP: gentle fixed forward lean, hover
++            # thrust — do NOT close the loop on a blind velocity belief.
++            return self._publish({'mode': 'velocity',
++                                  'vel_ned': (1.0 * math.cos(hdg), 1.0 * math.sin(hdg), 0.1),
++                                  'yaw': float(hdg), 'open_loop': True,
++                                  'source': 'pnp_coast', 'ts': now})
++        # Lost for good: slow search sweep (open-loop hover + yaw steps) with a
++        # gentle DESCENT — gates hang 2-5 m off the ground, and the 18:02 run
++        # spun a full 360 deg seeing nothing because the blind coast had carried
++        # the drone above them. Sinking while sweeping brings them back into the
++        # (upward-tilted) camera's view.
++        self._rx_heading = self._wrap(hdg + math.radians(0.4))  # ~24 deg/s at 60 Hz
++        return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.3),
++                              'yaw': float(self._rx_heading), 'open_loop': True,
++                              'source': 'pnp_search', 'ts': now})
++
+     def compute_target(self):
+         """Compute and publish the current velocity setpoint. Returns the target dict."""
+         now = time.time_ns()
+@@ -479,6 +568,16 @@ class Planner:
+             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+                                   'yaw': yaw_hold, 'source': 'opencv_stale_hover',
+                                   'ts': now})
++        if control_source == 'pnp':
++            # GATE-RELATIVE reactive guidance (2026-07-27). The world-waypoint
++            # machinery below assumes a trustworthy absolute pose; runs 4-7 showed
++            # that once the VIO position diverges (blind stretch -> anchor churn)
++            # that machinery chases ghosts at max thrust and never recovers. PnP
++            # gives the gate's BODY-frame vector directly, so while a gate is in
++            # sight we steer on it reactively (yaw-servo the azimuth, speed from
++            # range) — immune to absolute-pose drift. Blind phases fly OPEN-LOOP
++            # (level coast / slow search), never off the drifted velocity belief.
++            return self._pnp_reactive(s, now, yaw_hold, position)
+ 
+         offset, source = self._target_offset_ned(s, now)
+         if offset is None:
+@@ -493,8 +592,13 @@ class Planner:
+                     vd = 0.0
+                 return self._publish({'mode': 'velocity', 'vel_ned': (float(vn), float(ve), float(vd)),
+                                       'yaw': yaw_hold, 'source': 'post_gate_coast', 'ts': now})
++            # Blind and out of ideas: rotate slowly in place to sweep the camera
++            # across the course until a gate re-enters the frame (run 6 parked in
++            # a permanent zero-detection hover after losing sight). Slow enough
++            # (~25 deg/s) that YOLO gets several clean frames per gate crossing.
++            search_yaw = self._wrap(yaw_hold + math.radians(25.0) * 0.5)
+             return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+-                                  'yaw': yaw_hold, 'source': 'hover', 'ts': now})
++                                  'yaw': search_yaw, 'source': 'search_spin', 'ts': now})
+ 
+         # Aim a touch BELOW the estimated gate centre so we don't clip the top edge
+         # (NED +z is down). See GATE_AIM_DOWN_M.
+@@ -533,10 +637,12 @@ class Planner:
+             # First fix: aim at wherever the gate is.
+             self._yaw_lock = self._wrap(yaw_hold + az) if az is not None \
+                 else math.atan2(float(offset[1]), float(offset[0]))
+-        elif dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD:
+-            # Gate is genuinely off-centre AND we're not yet committed to the pass ->
+-            # deliberate re-aim onto it. Inside YAW_FREEZE_DIST we hold the lock and punch
+-            # straight through (point-blank azimuth is garbage; see YAW_FREEZE_DIST).
++        elif (dist > YAW_FREEZE_DIST and az is not None and abs(az) > YAW_DEADBAND_RAD
++                and self._vision_accepted):
++            # Gate is genuinely off-centre AND we're not yet committed to the pass AND
++            # the detection agreed with the world belief this tick (a frame locked onto
++            # a DIFFERENT gate must not steer us) -> deliberate re-aim onto it. Inside
++            # YAW_FREEZE_DIST we hold the lock and punch straight through.
+             self._yaw_lock = self._wrap(yaw_hold + az)
+         yaw = self._yaw_lock
+ 
+diff --git a/setup.py b/setup.py
+index 21e5cbf..4815c53 100644
+--- a/setup.py
++++ b/setup.py
+@@ -7,6 +7,7 @@ from planner import Planner
+ from logger import Logger
+ from course_map import CourseMap
+ from vision.ai_adapter import load_policy_factory
++from state_estimator import StateEstimator
+ 
+ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
+     # Optional and lazy: OpenCV-only mode never imports the learned policy's
+@@ -42,6 +43,15 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
+     print("Setting up Timesync loop...", flush=True)
+     ts_loop = TimeSync.create_timesync(sim_conn, shared_data)
+ 
++    # -------------------------------
++    # VIO state estimator — MUST exist on this sim build: VQ2 sends no ATTITUDE
++    # and no LOCAL_POSITION_NED, so this thread manufactures shared_data
++    # ['attitude'] and ['position_ned'] from HIGHRES_IMU + gate-PnP fixes.
++    # Started before VisionRX so the first PnP fix finds a live consumer.
++    # -------------------------------
++    print("Setting up VIO state estimator...", flush=True)
++    state_estimator = StateEstimator(shared_data)
++
+     # -------------------------------
+     # Connect Vision receiver
+     # -------------------------------
+@@ -82,5 +92,6 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
+         'sim_conn': sim_conn,
+         'controller': controller,
+         'planner': planner,
+-        'logger': logger
++        'logger': logger,
++        'state_estimator': state_estimator,
+     }
+diff --git a/state_estimator.py b/state_estimator.py
+new file mode 100644
+index 0000000..4716d81
+--- /dev/null
++++ b/state_estimator.py
+@@ -0,0 +1,382 @@
++"""Visual-inertial state estimator: IMU dead-reckoning + gate-PnP corrections.
++
++WHY THIS EXISTS: the VQ2 sim sends NO ATTITUDE and NO LOCAL_POSITION_NED — the
++only telemetry is HIGHRES_IMU (~114 Hz gyro/accel; baro is NaN). The planner and
++controller were written against ``shared_data['attitude']`` and
++``shared_data['position_ned']``; without them the planner sat in watchdog_hover
++forever. This module MANUFACTURES those blackboard entries:
++
++  * Attitude: quaternion complementary filter — gyro integration, accelerometer
++    gravity correction for roll/pitch, and absolute roll/pitch + yaw/position
++    corrections from gate PnP fixes (vision/yolo_pnp.py) whenever a gate is in
++    view. Gates hang upright, so a gate observation fixes roll/pitch absolutely
++    and yaw/position relative to that gate.
++  * Position/velocity (world NED, origin = arm point, yaw 0 = boot heading):
++    accelerometer dead-reckoning between PnP fixes, snapped/blended to the
++    vision solution when a gate is visible. Pure-inertial drift is unbounded,
++    so a velocity leak keeps DR bounded during (short) blind stretches.
++
++Gate anchoring: the sim broadcasts no gate poses (nulled in VQ2), so the FIRST
++good PnP of each gate index anchors that gate's world pose using the current
++belief; later fixes of the same gate correct the drone against that anchor.
++Gate index comes from race_status.active_gate. Anchors are persisted alongside
++the course map so later runs can preplan in a consistent frame.
++
++Frames (matching camera_model.py):
++  body = FRD (x fwd, y right, z down);  world = NED;
++  gate-NED = N through the gate, E right along the plane, D down, origin centre.
++"""
++from __future__ import annotations
++
++import json
++import math
++import threading
++import time
++from typing import Optional
++
++import numpy as np
++
++import camera_model as cm
++
++G = 9.80665
++G_NED = np.array([0.0, 0.0, G])
++
++# gate frame (X right, Y down, Z through) -> gate-NED (N through, E right, D down)
++P_GATE2NED = np.array([[0.0, 0.0, 1.0],
++                       [1.0, 0.0, 0.0],
++                       [0.0, 1.0, 0.0]])
++
++# ---- complementary-filter / fusion gains -------------------------------------
++ACC_TILT_GAIN = 0.02       # per-sample accel roll/pitch pull (only when |a|~g)
++ACC_NORM_TOL = 2.5         # m/s^2 window around g where accel tilt is trusted
++FIX_RP_GAIN = 0.5          # per-fix absolute roll/pitch blend from PnP
++FIX_YAW_GAIN = 0.3         # per-fix yaw blend toward the gate-anchored yaw
++FIX_POS_GAIN = 0.35        # per-fix position blend
++FIX_VEL_GAIN = 0.25        # per-fix velocity blend (finite-diff of fixes)
++# Finite-diff velocity needs a real time baseline: at 33 ms between fixes, a
++# 0.45 m corner-jitter wobble reads as 13.6 m/s (measured in run_1785180116 —
++# the belief kicked to -3.4 m/s while the drone was PARKED, and the controller
++# fought that phantom from the first armed tick). Difference over >=100 ms and
++# clamp the implied speed to something a racing quad can actually do.
++FIX_VEL_MIN_DT_S = 0.10    # min baseline between the fixes being differenced
++FIX_VEL_MAX_DT_S = 0.50    # beyond this the pair spans too much maneuvering
++FIX_VEL_CLAMP = 8.0        # m/s cap on any fix-derived velocity component
++VEL_LEAK = 0.4             # 1/s exponential decay of DR velocity (bounds drift)
++FIX_STALE_S = 0.5          # fixes older than this are ignored
++# Blind-flight damping (added after run_1785180116: the drone tumbled, vision
++# never re-acquired, and pure-IMU integration walked the position belief to
++# z=+1170 m over 95 s). With no fix recently, the velocity belief decays hard
++# toward zero so the controller degrades to a calm attitude-hold hover instead
++# of chasing integration ghosts at max thrust.
++BLIND_AFTER_S = 1.0        # no fix for this long -> "blind" regime
++BLIND_VEL_LEAK = 2.5       # 1/s velocity decay while blind (tau = 0.4 s)
++POS_SNAP_M = 3.0           # 2 consecutive self-consistent fixes farther than
++FIX_AGREE_M = 1.0          #   this from belief -> snap (DR was lost)
++INNOV_REJECT_M = 8.0       # single-fix innovation beyond this is rejected
++RP_REJECT_RAD = math.radians(60.0)   # PnP fix implying >60deg tilt is a bad solve
++# Anchor hygiene (added after run 3: a phantom "gate 1" was anchored from a
++# blind-drifted belief the moment the flickery race counter ticked over, and
++# every later REAL fix failed the innovation gate against it -> permanent
++# blindness while the drone sat crashed).
++GATE_IDX_SETTLE_S = 0.5    # a NEW race gate index must persist this long first
++REANCHOR_AFTER_REJECTS = 12   # consecutive rejected fixes -> drop + re-anchor
++                              # the gate from the current belief (the WORLD frame
++                              # absorbs the accumulated drift; guidance is
++                              # relative to the gate, so local consistency wins)
++REANCHOR_AGREE_M = 1.5        # ...but ONLY if the last two rejected gate-relative
++                              # measurements agree with each other (run 5: churning
++                              # re-anchors while tumbling created a fresh garbage
++                              # anchor every 0.4 s and dragged the frame around)
++
++
++def _rz(yaw: float) -> np.ndarray:
++    c, s = math.cos(yaw), math.sin(yaw)
++    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
++
++
++def _rpy_from_R(R: np.ndarray) -> tuple:
++    """ZYX euler (roll, pitch, yaw) from a world<-body rotation matrix."""
++    pitch = -math.asin(max(-1.0, min(1.0, R[2, 0])))
++    roll = math.atan2(R[2, 1], R[2, 2])
++    yaw = math.atan2(R[1, 0], R[0, 0])
++    return roll, pitch, yaw
++
++
++def _wrap(a: float) -> float:
++    return math.atan2(math.sin(a), math.cos(a))
++
++
++class StateEstimator:
++    """Owns shared_data['attitude'] and shared_data['position_ned']."""
++
++    def __init__(self, data: dict, anchors_path: str = "gate_anchors.json"):
++        self.data = data
++        self.anchors_path = anchors_path
++        # attitude belief (world<-body) as roll/pitch/yaw + last gyro rates
++        self._roll = 0.0
++        self._pitch = 0.0
++        self._yaw = 0.0
++        self._rates = np.zeros(3)
++        # translational belief
++        self._pos = np.zeros(3)
++        self._vel = np.zeros(3)
++        # gate anchors: idx -> {'yaw': psi_g (world yaw of through-axis), 'pos': [n,e,d]}
++        self.anchors: dict[int, dict] = {}
++        self._load_anchors()
++        # bookkeeping
++        self._last_imu_us: Optional[int] = None
++        self._last_fix_ts = 0
++        self._last_fix_wall = 0.0   # monotonic time of last ACCEPTED fix
++        self._vel_ref: Optional[dict] = None   # older fix used as the velocity baseline
++        self._prev_fix: Optional[dict] = None   # for velocity + snap logic
++        self._n_imu = 0
++        self._n_fix = 0
++        self._n_fix_rej = 0
++        # settled race gate index (see GATE_IDX_SETTLE_S); hwm ignores downward flicker
++        self._gate_idx = 0
++        self._gate_idx_raw = 0
++        self._gate_idx_since = 0.0
++        self._consec_rej = 0
++        self._last_rej_pgb: Optional[np.ndarray] = None   # gate-relative pos of last reject
++        self.is_running = True
++        self.thread = threading.Thread(target=self._loop, daemon=False)
++        self.thread.start()
++
++    # ------------------------------------------------------------------
++    def get_thread_for_join(self):
++        self.is_running = False
++        return self.thread
++
++    def _load_anchors(self):
++        try:
++            with open(self.anchors_path) as f:
++                raw = json.load(f)
++            self.anchors = {int(k): v for k, v in raw.items()}
++            print(f"[vio] gate anchors loaded: {sorted(self.anchors)}", flush=True)
++        except (OSError, ValueError):
++            self.anchors = {}
++
++    def save_anchors(self):
++        try:
++            with open(self.anchors_path, "w") as f:
++                json.dump(self.anchors, f, indent=1)
++        except OSError:
++            pass
++
++    # ------------------------------------------------------------------
++    def _loop(self):
++        last_pub = 0.0
++        while self.is_running:
++            with self.data['lock']:
++                imu = self.data.get('highres_imu')
++                fix = self.data.get('pnp_fix')
++                race = self.data.get('race_status')
++            if imu is not None and imu.get('ts_us') != self._last_imu_us:
++                self._propagate(imu)
++            self._settle_gate_idx(race)
++            if fix is not None and fix['ts'] != self._last_fix_ts:
++                self._last_fix_ts = fix['ts']
++                if time.time_ns() - fix['ts'] < FIX_STALE_S * 1e9:
++                    self._apply_fix(fix, self._gate_idx)
++            now = time.monotonic()
++            if now - last_pub >= 0.005:
++                self._publish()
++                last_pub = now
++            time.sleep(0.002)
++
++    # ------------------------------------------------------------------
++    # IMU propagation (complementary filter + accel dead-reckoning)
++    # ------------------------------------------------------------------
++    def _propagate(self, imu: dict):
++        ts_us = imu['ts_us']
++        if self._last_imu_us is None:
++            self._last_imu_us = ts_us
++            return
++        dt = (ts_us - self._last_imu_us) * 1e-6
++        self._last_imu_us = ts_us
++        if not (0.0 < dt < 0.1):        # reset/rollover glitch — skip this sample
++            return
++        self._n_imu += 1
++
++        p, q, r = imu['xgyro'], imu['ygyro'], imu['zgyro']    # body rates, rad/s
++        self._rates = np.array([p, q, r])
++        # body rates -> euler-angle rates (standard aerospace kinematics)
++        sr, cr = math.sin(self._roll), math.cos(self._roll)
++        tp = math.tan(self._pitch)
++        cp = max(0.2, math.cos(self._pitch))    # keep kinematics sane near +/-90
++        self._roll += (p + sr * tp * q + cr * tp * r) * dt
++        self._pitch += (cr * q - sr * r) * dt
++        self._yaw = _wrap(self._yaw + ((sr / cp) * q + (cr / cp) * r) * dt)
++
++        acc = np.array([imu['xacc'], imu['yacc'], imu['zacc']])   # specific force
++        anorm = float(np.linalg.norm(acc))
++        if abs(anorm - G) < ACC_NORM_TOL:
++            # low dynamics: accel ~ -gravity in body frame -> absolute tilt
++            roll_acc = math.atan2(-acc[1], -acc[2])
++            pitch_acc = math.asin(max(-1.0, min(1.0, acc[0] / anorm)))
++            self._roll += ACC_TILT_GAIN * _wrap(roll_acc - self._roll)
++            self._pitch += ACC_TILT_GAIN * _wrap(pitch_acc - self._pitch)
++
++        # Pre-flight ZUPT: until the client actually arms, the drone is parked on
++        # its spawn point — hold velocity/position at the origin and let only the
++        # attitude converge. (run_1785180116: DR ran through the ~40 s YOLO model
++        # load, so the first flight tick already believed a 2 m/s phantom fall and
++        # slammed the thrust to 0.9.)
++        if not self.data.get('flight_started'):
++            self._vel[:] = 0.0
++            self._pos[:] = 0.0
++            return
++
++        # dead-reckon velocity/position in NED; leak bounds pure-inertial drift.
++        # While BLIND (no recent PnP fix) the leak is much stronger — a wrong
++        # velocity belief is worse than a conservative one (see BLIND_VEL_LEAK).
++        R_wb = cm.rot_world_body(self._roll, self._pitch, self._yaw)
++        a_ned = R_wb @ acc + G_NED
++        leak = (VEL_LEAK if time.monotonic() - self._last_fix_wall < BLIND_AFTER_S
++                else BLIND_VEL_LEAK)
++        self._vel += a_ned * dt
++        self._vel *= max(0.0, 1.0 - leak * dt)
++        self._pos += self._vel * dt
++
++    # ------------------------------------------------------------------
++    def _settle_gate_idx(self, race: Optional[dict]):
++        """Adopt a new race gate index only after it persists GATE_IDX_SETTLE_S.
++
++        The sim's active_gate telemetry flickers (measured on the Dreamer
++        branch); a single flickered reading must not anchor a phantom gate.
++        Downward readings are ignored outright (the race counter is monotonic
++        within a run).
++        """
++        if race is None:
++            return
++        raw = int(race.get('active_gate', 0))
++        now = time.monotonic()
++        if raw != self._gate_idx_raw:
++            self._gate_idx_raw = raw
++            self._gate_idx_since = now
++            return
++        if (raw > self._gate_idx
++                and now - self._gate_idx_since >= GATE_IDX_SETTLE_S):
++            self._gate_idx = raw
++            self._consec_rej = 0
++            with self.data['lock']:
++                self.data['gate_idx_settled'] = raw
++            print(f"[vio] active gate -> {raw}", flush=True)
++
++    # ------------------------------------------------------------------
++    # PnP fix fusion
++    # ------------------------------------------------------------------
++    def _apply_fix(self, fix: dict, gate_idx: int):
++        """fix = {'ts', 'R_cg' (3x3 list), 't_cg' (3,), 'reproj_err_px'}"""
++        R_cg = np.asarray(fix['R_cg'], float)
++        t_cg = np.asarray(fix['t_cg'], float)
++        # body pose in gate-NED
++        R_gb = P_GATE2NED @ R_cg.T @ cm.R_CB        # gate-NED <- body
++        p_gb = P_GATE2NED @ (-R_cg.T @ t_cg)        # body origin in gate-NED
++        roll_m, pitch_m, yaw_g = _rpy_from_R(R_gb)  # yaw_g: heading rel. to gate
++        if abs(roll_m) > RP_REJECT_RAD or abs(pitch_m) > RP_REJECT_RAD:
++            self._n_fix_rej += 1
++            return
++
++        # A poisoned anchor (created from a drifted belief) rejects every real
++        # fix forever. If that happens — AND the rejected measurements are
++        # SELF-consistent (a stable view of a real gate, not tumbling noise) —
++        # drop the anchor and re-anchor from the current belief: the world
++        # frame absorbs the drift, local guidance recovers.
++        if self._consec_rej >= REANCHOR_AFTER_REJECTS and gate_idx in self.anchors:
++            stable = (self._last_rej_pgb is not None
++                      and float(np.linalg.norm(p_gb - self._last_rej_pgb)) < REANCHOR_AGREE_M)
++            if stable:
++                print(f"[vio] gate {gate_idx} anchor rejected {self._consec_rej} fixes"
++                      f" in a row — re-anchoring", flush=True)
++                del self.anchors[gate_idx]
++                self._consec_rej = 0
++
++        anchor = self.anchors.get(gate_idx)
++        if anchor is None:
++            # First sight of this gate: anchor it in the world using the belief.
++            psi_g = _wrap(self._yaw - yaw_g)
++            p_wg = self._pos - _rz(psi_g) @ p_gb
++            self.anchors[gate_idx] = {'yaw': psi_g, 'pos': p_wg.tolist()}
++            print(f"[vio] anchored gate {gate_idx} at "
++                  f"({p_wg[0]:+.1f},{p_wg[1]:+.1f},{p_wg[2]:+.1f}) "
++                  f"yaw={math.degrees(psi_g):+.0f}deg", flush=True)
++            anchor = self.anchors[gate_idx]
++
++        psi_g = float(anchor['yaw'])
++        p_wg = np.asarray(anchor['pos'], float)
++        yaw_m = _wrap(psi_g + yaw_g)
++        pos_m = p_wg + _rz(psi_g) @ p_gb
++
++        innov = float(np.linalg.norm(pos_m - self._pos))
++        if innov > INNOV_REJECT_M:
++            self._n_fix_rej += 1
++            self._consec_rej += 1
++            self._last_rej_pgb = p_gb.copy()
++            self._prev_fix = None
++            return
++
++        # DR-lost recovery: two consecutive fixes that agree with each other but
++        # not with the belief mean vision is right and dead-reckoning walked off.
++        snap = False
++        if innov > POS_SNAP_M:
++            if (self._prev_fix is not None
++                    and np.linalg.norm(pos_m - self._prev_fix['pos']) < FIX_AGREE_M
++                    and fix['ts'] - self._prev_fix['ts'] < 0.3e9):
++                snap = True
++            else:
++                self._prev_fix = {'ts': fix['ts'], 'pos': pos_m}
++                return
++
++        # attitude correction (roll/pitch absolute — gates hang upright)
++        self._roll += FIX_RP_GAIN * _wrap(roll_m - self._roll)
++        self._pitch += FIX_RP_GAIN * _wrap(pitch_m - self._pitch)
++        self._yaw = _wrap(self._yaw + FIX_YAW_GAIN * _wrap(yaw_m - self._yaw))
++
++        if snap:
++            self._pos = pos_m.copy()
++            self._vel[:] = 0.0
++            self._vel_ref = None
++        else:
++            self._pos += FIX_POS_GAIN * (pos_m - self._pos)
++            # Fix-derived velocity over a >=FIX_VEL_MIN_DT_S baseline (see above:
++            # consecutive-frame differencing amplified corner jitter into m/s).
++            if self._vel_ref is not None:
++                dt = (fix['ts'] - self._vel_ref['ts']) * 1e-9
++                if dt > FIX_VEL_MAX_DT_S:
++                    self._vel_ref = None
++                elif dt >= FIX_VEL_MIN_DT_S:
++                    v_m = (pos_m - self._vel_ref['pos']) / dt
++                    v_m = np.clip(v_m, -FIX_VEL_CLAMP, FIX_VEL_CLAMP)
++                    self._vel += FIX_VEL_GAIN * (v_m - self._vel)
++                    self._vel_ref = {'ts': fix['ts'], 'pos': pos_m}
++            if self._vel_ref is None:
++                self._vel_ref = {'ts': fix['ts'], 'pos': pos_m}
++        self._prev_fix = {'ts': fix['ts'], 'pos': pos_m}
++        self._last_fix_wall = time.monotonic()
++        self._n_fix += 1
++        self._consec_rej = 0
++
++    # ------------------------------------------------------------------
++    def _publish(self):
++        ts = time.time_ns()
++        with self.data['lock']:
++            self.data['attitude'] = {
++                'roll': self._roll, 'pitch': self._pitch, 'yaw': self._yaw,
++                'rollspeed': float(self._rates[0]),
++                'pitchspeed': float(self._rates[1]),
++                'yawspeed': float(self._rates[2]),
++                'ts': ts, 'source': 'vio',
++            }
++            self.data['position_ned'] = {
++                'x': float(self._pos[0]), 'y': float(self._pos[1]),
++                'z': float(self._pos[2]),
++                'vx': float(self._vel[0]), 'vy': float(self._vel[1]),
++                'vz': float(self._vel[2]),
++                'ts': ts, 'source': 'vio',
++            }
++            self.data['vio_stats'] = {
++                'imu_samples': self._n_imu, 'fixes': self._n_fix,
++                'fixes_rejected': self._n_fix_rej,
++                'anchored_gates': sorted(self.anchors),
++            }
+diff --git a/vision/yolo_pnp.py b/vision/yolo_pnp.py
+new file mode 100644
+index 0000000..ad50cbf
+--- /dev/null
++++ b/vision/yolo_pnp.py
+@@ -0,0 +1,159 @@
++"""YOLO gate corners -> PnP pose (the perception core of the VIO pipeline).
++
++A YOLOv8n-pose model (trained on 256 sim frames, box mAP50 0.925 / corner mAP50
++0.959) finds every gate in frame with its 4 OUTER corners in TL, TR, BL, BR
++order. The outer gate square is 2.7 m x 2.7 m (spec 3.7); with the pinhole
++intrinsics from spec 3.8 (fx=fy=320, cx=320, cy=180, no distortion) a single
++gate view is a textbook planar-square PnP problem: cv2.solvePnP(IPPE_SQUARE)
++returns the gate's pose in the camera-optical frame.
++
++From that one solve we get, at up to 30 Hz:
++  * range + bearing to the gate (far better than the HSV size-method estimate)
++  * the drone's ABSOLUTE roll & pitch (gates hang upright, so the gate's
++    vertical axis is the world's gravity axis)
++  * the drone's yaw + position relative to the gate plane (which the state
++    estimator anchors into the world frame)
++
++Gate frame convention used here:
++  X = right along the gate plane (approach view), Y = down (gravity),
++  Z = X x Y = the gate normal pointing AWAY from the approaching camera —
++  i.e. the direction of flight THROUGH the gate.
++The origin is the gate centre. solvePnP maps X_cam = R_cg @ X_gate + t_cg.
++"""
++from __future__ import annotations
++
++import math
++from dataclasses import dataclass
++from typing import List, Optional
++
++import cv2
++import numpy as np
++
++import camera_model as cm
++
++GATE_OUTER_M = 2.7          # outer square side (spec 3.7) — the labeled corners
++_HALF = GATE_OUTER_M / 2.0
++
++# Corner order matches the dataset labels: TL, TR, BL, BR (X right, Y down).
++OBJECT_POINTS = np.array([
++    [-_HALF, -_HALF, 0.0],   # TL
++    [+_HALF, -_HALF, 0.0],   # TR
++    [-_HALF, +_HALF, 0.0],   # BL
++    [+_HALF, +_HALF, 0.0],   # BR
++], dtype=np.float64)
++
++# Solved with generic SOLVEPNP_IPPE (planar target). IPPE_SQUARE was tried first
++# but it requires the exact ArUco object layout (Y-up, TL,TR,BR,BL) — fed our
++# Y-down points it returned garbage (0.2 m range on a 10 m gate, 8000 px reproj).
++
++# Confidence floor 0.35 -> 0.50 (2026-07-27, runs 4/5): station signs/markers
++# detect as "gates" at conf 0.35-0.45 and, being NEARER than the real gate,
++# were picked as the primary target — the VIO anchored gate 0 on a SIGN and the
++# whole world frame was born wrong (z sign flipped run-to-run). Real gates
++# score 0.8-0.9 even far out.
++# 0.50 -> 0.45: partial/edge-clipped views of REAL gates during the approach
++# score below 0.5 and were dropped, starving the VIO of fixes exactly when the
++# gate nears the frame edge. Junk detections sit at <=0.42 measured, so 0.45
++# still excludes them while keeping degraded-but-real views.
++DEFAULT_CONF = 0.45          # YOLO box confidence floor
++MIN_CORNER_SPREAD_PX = 12.0  # degenerate/far quads solve badly; skip below this
++MAX_RANGE_M = 45.0           # beyond this the corner pixels are sub-pixel noise
++# Discard solves that cannot re-draw their corners. Validation on the dataset:
++# good solves sit at 0.3-1.0 px; the flipped planar-ambiguity solutions show up
++# at 3-4.3 px with wild attitudes (roll +39deg) — 2.0 px separates them cleanly.
++REPROJ_ERR_MAX_PX = 2.0
++
++
++@dataclass
++class GatePnP:
++    corners_px: np.ndarray        # (4,2) TL,TR,BL,BR
++    confidence: float
++    bbox: tuple                   # (x1, y1, x2, y2) px
++    # PnP solution (None if the solve failed / was rejected)
++    R_cg: Optional[np.ndarray] = None   # gate -> camera-optical rotation
++    t_cg: Optional[np.ndarray] = None   # gate origin in camera-optical frame (m)
++    reproj_err_px: float = float("inf")
++
++    @property
++    def solved(self) -> bool:
++        return self.R_cg is not None
++
++    @property
++    def range_m(self) -> float:
++        return float(np.linalg.norm(self.t_cg)) if self.solved else float("inf")
++
++    def center_body(self) -> np.ndarray:
++        """Gate centre as a body-frame vector (x fwd, y right, z down)."""
++        return cm.cam_to_body(self.t_cg)
++
++    def cam_pose_in_gate(self) -> tuple[np.ndarray, np.ndarray]:
++        """(R_gc, p_g): camera rotation and position expressed in the gate frame."""
++        R_gc = self.R_cg.T
++        p_g = -R_gc @ self.t_cg
++        return R_gc, p_g
++
++
++class YoloGatePnP:
++    """Wraps the trained YOLOv8n-pose model + per-gate PnP solves."""
++
++    def __init__(self, weights: str = "yolo26n.pt", conf: float = DEFAULT_CONF,
++                 device: Optional[str] = None):
++        from ultralytics import YOLO   # lazy: heavy import
++        self.model = YOLO(weights)
++        self.conf = conf
++        self.device = device
++        # one warmup inference so the first live frame isn't a 2 s stall
++        self.model.predict(np.zeros((360, 640, 3), dtype=np.uint8),
++                           verbose=False, conf=conf, device=device)
++
++    # ------------------------------------------------------------------
++    def detect(self, img_bgr: np.ndarray) -> List[GatePnP]:
++        """All gates in the frame (sorted best-first), PnP-solved where possible."""
++        res = self.model.predict(img_bgr, verbose=False, conf=self.conf,
++                                 device=self.device)[0]
++        gates: List[GatePnP] = []
++        if res.boxes is None or len(res.boxes) == 0:
++            return gates
++        kps = res.keypoints.xy.cpu().numpy()          # (N, 4, 2)
++        confs = res.boxes.conf.cpu().numpy()
++        boxes = res.boxes.xyxy.cpu().numpy()
++        for corners, conf, box in zip(kps, confs, boxes):
++            g = GatePnP(corners_px=corners.astype(np.float64),
++                        confidence=float(conf), bbox=tuple(box.tolist()))
++            self._solve(g)
++            gates.append(g)
++        # Primary target = the gate we are actually flying at: rank by
++        # confidence x apparent size, NOT by range — ranking by range made a
++        # nearer spurious detection (a station sign) the primary and poisoned
++        # the VIO anchor (see DEFAULT_CONF note).
++        def score(g: GatePnP) -> float:
++            x1, y1, x2, y2 = g.bbox
++            return g.confidence * math.sqrt(max(1.0, (x2 - x1) * (y2 - y1)))
++        gates.sort(key=lambda g: (not g.solved, -score(g)))
++        return gates
++
++    # ------------------------------------------------------------------
++    def _solve(self, g: GatePnP) -> None:
++        c = g.corners_px
++        spread = max(np.ptp(c[:, 0]), np.ptp(c[:, 1]))
++        if spread < MIN_CORNER_SPREAD_PX:
++            return
++        img_pts = c.reshape(-1, 1, 2)
++        try:
++            ok, rvec, tvec = cv2.solvePnP(
++                OBJECT_POINTS.reshape(-1, 1, 3), img_pts, cm.K, None,
++                flags=cv2.SOLVEPNP_IPPE)
++        except cv2.error:
++            return
++        if not ok:
++            return
++        t = tvec.ravel()
++        if not (0.5 < t[2] < MAX_RANGE_M):      # gate must be in front, in range
++            return
++        proj, _ = cv2.projectPoints(OBJECT_POINTS, rvec, tvec, cm.K, None)
++        err = float(np.linalg.norm(proj.reshape(-1, 2) - img_pts.reshape(-1, 2),
++                                   axis=1).mean())
++        if err > REPROJ_ERR_MAX_PX:
++            return
++        R, _ = cv2.Rodrigues(rvec)
++        g.R_cg, g.t_cg, g.reproj_err_px = R, t, err
+diff --git a/vision_rx.py b/vision_rx.py
+index 8d71fb9..f9b0b7c 100644
+--- a/vision_rx.py
++++ b/vision_rx.py
+@@ -17,6 +17,7 @@ from vision.mode_router import (
+ )
+ from vision.ai_adapter import validate_ai_action
+ from gate_estimator import estimate_gate
++import camera_model as cm
+ 
+ 
+ def _quat_to_rpy(q):
+@@ -44,6 +45,16 @@ VIS_JUMP_MAX_M = 8.0               # reject a range that jumps this far from the
+ VIS_BELIEF_TIMEOUT_NS = 500_000_000  # belief older than this is stale -> reseed
+ VIS_EMA_ALPHA = 0.5                # gate_body low-pass (1.0 = no smoothing)
+ 
++# PnP target continuity (2026-07-27 run: the published "best" gate alternated
++# between the 8.6 m gate ahead and 22-39 m background gates frame to frame; the
++# reactive planner re-aimed at each in turn and yawed 70 deg off the course in
++# 1 s). Once we are flying at a gate, only detections that MATCH it (similar
++# range + azimuth) may steer; mismatches are dropped. If the target vanishes
++# for PNP_TARGET_MEMORY_S (passed it / left the frame) we adopt the best fresh
++# detection again.
++PNP_TARGET_MEMORY_S = 1.5
++PNP_TARGET_MATCH_COST = 0.55       # ~30% range diff + ~0.25 rad azimuth change
++
+ 
+ class VisionRX:
+ 
+@@ -60,8 +71,22 @@ class VisionRX:
+         requested_mode = str(
+             self.data.get('gate_navigation_mode', 'opencv')
+         ).lower()
++        # 'pnp' mode: YOLO corner detection + solvePnP is the perception source
++        # (feeds the VIO state estimator AND the planner's world-waypoint path).
++        # It bypasses the HSV detector and the opencv/ai mode router entirely.
++        self.pnp_mode = requested_mode == 'pnp'
++        self.pnp_detector = None
++        self._pnp_last = None      # {'ts','range','az'} of the gate we are flying at
++        self._pnp_stats = [0, 0, 0]   # frames, frames-with-yolo-boxes, published
++        self._pnp_stats_t = time.monotonic()
++        if self.pnp_mode:
++            from vision.yolo_pnp import YoloGatePnP
++            print("Loading YOLO gate model...", flush=True)
++            self.pnp_detector = YoloGatePnP()
++            print("YOLO gate model ready.", flush=True)
+         self.mode_router = VisionModeRouter(
+-            ModeRouterConfig(mode=GateNavigationMode(requested_mode))
++            ModeRouterConfig(mode=GateNavigationMode(
++                'opencv' if self.pnp_mode else requested_mode))
+         )
+         self.thread = threading.Thread(
+             target=self._vision_loop,
+@@ -172,6 +197,98 @@ class VisionRX:
+                     del frames[stale_id]
+         sock.close()
+ 
++    def _pick_pnp_gate(self, gates, now):
++        """Continuity-aware target choice: stick with the gate we're flying at.
++
++        Ranks solved candidates against the last published target by range +
++        azimuth similarity. A frame whose best match is still too different is
++        DROPPED (returns None) — the planner coasts on its latched heading —
++        until the memory window lapses and we adopt the best fresh detection.
++        """
++        solved = [g for g in gates if g.solved]
++        if not solved:
++            return None
++        last = self._pnp_last
++        if last is not None and (now - last['ts']) < PNP_TARGET_MEMORY_S * 1e9:
++            def cost(g):
++                gb = g.center_body()
++                az = math.atan2(float(gb[1]), float(gb[0]))
++                d_rng = abs(g.range_m - last['range']) / max(last['range'], 2.0)
++                d_az = abs(math.atan2(math.sin(az - last['az']),
++                                      math.cos(az - last['az'])))
++                return d_rng + d_az
++            cand = min(solved, key=cost)
++            return cand if cost(cand) < PNP_TARGET_MATCH_COST else None
++        return solved[0]
++
++    def _process_frame_pnp(self, frame_id, img, sim_time_ns=None):
++        """YOLO corners -> PnP pose. Publishes shared_data['vision'] (for the
++        planner's world-waypoint path) and shared_data['pnp_fix'] (for the VIO
++        state estimator). Perception only — no flight commands here."""
++        t0 = time.perf_counter()
++        gates = self.pnp_detector.detect(img)
++        now = time.time_ns()
++        best = self._pick_pnp_gate(gates, now)
++        self._pnp_stats[0] += 1
++        self._pnp_stats[1] += bool(gates)
++        self._pnp_stats[2] += best is not None
++        if time.monotonic() - self._pnp_stats_t >= 5.0:
++            n, raw, pub = self._pnp_stats
++            print(f"[vis] frames={n} yolo_hits={raw} published={pub}"
++                  f" (last 5s)", flush=True)
++            self._pnp_stats = [0, 0, 0]
++            self._pnp_stats_t = time.monotonic()
++        est = {'ts': now, 'detected': False, 'confidence': 0.0,
++               'frame_id': frame_id, 'sim_time_ns': sim_time_ns,
++               'n_gates': len(gates)}
++        if best is not None:
++            gb = best.center_body()
++            x, y, z = (float(v) for v in gb)
++            self._pnp_last = {'ts': now, 'range': best.range_m,
++                              'az': math.atan2(y, x)}
++            est.update({
++                'detected': True,
++                'confidence': best.confidence,
++                'gate_body': (x, y, z),
++                'range_m': best.range_m,
++                'bearing': (math.atan2(y, x), math.atan2(-z, math.hypot(x, y))),
++                'corners_px': best.corners_px.tolist(),
++                'reproj_err_px': best.reproj_err_px,
++            })
++        with self.data['lock']:
++            att = self.data.get('attitude')
++            pos = self.data.get('position_ned')
++            debug = self.data.get('debug_vision', False)
++        if best is not None and att is not None:
++            offset_ned = cm.body_to_ned(
++                np.asarray(est['gate_body'], float),
++                att['roll'], att['pitch'], att['yaw'])
++            p = (pos['x'], pos['y'], pos['z']) if pos is not None else (0.0, 0.0, 0.0)
++            est['gate_ned'] = tuple(float(a + b) for a, b in zip(p, offset_ned))
++        est['vision_total_time_ms'] = (time.perf_counter() - t0) * 1000.0
++        with self.data['lock']:
++            self.data['vision'] = est
++            self.data['control_source'] = 'pnp'
++            if best is not None:
++                self.data['pnp_fix'] = {
++                    'ts': now,
++                    'R_cg': best.R_cg.tolist(),
++                    't_cg': best.t_cg.tolist(),
++                    'reproj_err_px': best.reproj_err_px,
++                    'range_m': best.range_m,
++                }
++        if debug:
++            overlay = img.copy()
++            for g in gates:
++                color = (0, 255, 0) if g.solved else (0, 128, 255)
++                for (u, v) in g.corners_px.astype(int):
++                    cv2.circle(overlay, (u, v), 3, color, -1)
++                if g.solved:
++                    x1, y1 = int(g.bbox[0]), int(g.bbox[1])
++                    cv2.putText(overlay, f"{g.range_m:.1f}m", (x1, max(12, y1 - 4)),
++                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
++            cv2.imwrite(f"_vision_{frame_id % 20:02d}.png", overlay)
++
+     def process_frame(self, frame_id, img, sim_time_ns=None):
+         """Detect the gate, estimate its pose, and publish to shared_data['vision'].
+ 
+@@ -180,6 +297,8 @@ class VisionRX:
+         the planner can fuse it. Returns None on no detection (still publishes a
+         'detected': False record so downstream code can detect staleness).
+         """
++        if self.pnp_mode:
++            return self._process_frame_pnp(frame_id, img, sim_time_ns)
+         frame_time = time.monotonic()
+         frame_started = time.perf_counter()
+         hint = self.tracker.hint(frame_time)
