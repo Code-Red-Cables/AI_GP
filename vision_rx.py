@@ -45,6 +45,16 @@ VIS_JUMP_MAX_M = 8.0               # reject a range that jumps this far from the
 VIS_BELIEF_TIMEOUT_NS = 500_000_000  # belief older than this is stale -> reseed
 VIS_EMA_ALPHA = 0.5                # gate_body low-pass (1.0 = no smoothing)
 
+# PnP target continuity (2026-07-27 run: the published "best" gate alternated
+# between the 8.6 m gate ahead and 22-39 m background gates frame to frame; the
+# reactive planner re-aimed at each in turn and yawed 70 deg off the course in
+# 1 s). Once we are flying at a gate, only detections that MATCH it (similar
+# range + azimuth) may steer; mismatches are dropped. If the target vanishes
+# for PNP_TARGET_MEMORY_S (passed it / left the frame) we adopt the best fresh
+# detection again.
+PNP_TARGET_MEMORY_S = 1.5
+PNP_TARGET_MATCH_COST = 0.55       # ~30% range diff + ~0.25 rad azimuth change
+
 
 class VisionRX:
 
@@ -66,6 +76,9 @@ class VisionRX:
         # It bypasses the HSV detector and the opencv/ai mode router entirely.
         self.pnp_mode = requested_mode == 'pnp'
         self.pnp_detector = None
+        self._pnp_last = None      # {'ts','range','az'} of the gate we are flying at
+        self._pnp_stats = [0, 0, 0]   # frames, frames-with-yolo-boxes, published
+        self._pnp_stats_t = time.monotonic()
         if self.pnp_mode:
             from vision.yolo_pnp import YoloGatePnP
             print("Loading YOLO gate model...", flush=True)
@@ -184,6 +197,30 @@ class VisionRX:
                     del frames[stale_id]
         sock.close()
 
+    def _pick_pnp_gate(self, gates, now):
+        """Continuity-aware target choice: stick with the gate we're flying at.
+
+        Ranks solved candidates against the last published target by range +
+        azimuth similarity. A frame whose best match is still too different is
+        DROPPED (returns None) — the planner coasts on its latched heading —
+        until the memory window lapses and we adopt the best fresh detection.
+        """
+        solved = [g for g in gates if g.solved]
+        if not solved:
+            return None
+        last = self._pnp_last
+        if last is not None and (now - last['ts']) < PNP_TARGET_MEMORY_S * 1e9:
+            def cost(g):
+                gb = g.center_body()
+                az = math.atan2(float(gb[1]), float(gb[0]))
+                d_rng = abs(g.range_m - last['range']) / max(last['range'], 2.0)
+                d_az = abs(math.atan2(math.sin(az - last['az']),
+                                      math.cos(az - last['az'])))
+                return d_rng + d_az
+            cand = min(solved, key=cost)
+            return cand if cost(cand) < PNP_TARGET_MATCH_COST else None
+        return solved[0]
+
     def _process_frame_pnp(self, frame_id, img, sim_time_ns=None):
         """YOLO corners -> PnP pose. Publishes shared_data['vision'] (for the
         planner's world-waypoint path) and shared_data['pnp_fix'] (for the VIO
@@ -191,13 +228,24 @@ class VisionRX:
         t0 = time.perf_counter()
         gates = self.pnp_detector.detect(img)
         now = time.time_ns()
-        best = next((g for g in gates if g.solved), None)
+        best = self._pick_pnp_gate(gates, now)
+        self._pnp_stats[0] += 1
+        self._pnp_stats[1] += bool(gates)
+        self._pnp_stats[2] += best is not None
+        if time.monotonic() - self._pnp_stats_t >= 5.0:
+            n, raw, pub = self._pnp_stats
+            print(f"[vis] frames={n} yolo_hits={raw} published={pub}"
+                  f" (last 5s)", flush=True)
+            self._pnp_stats = [0, 0, 0]
+            self._pnp_stats_t = time.monotonic()
         est = {'ts': now, 'detected': False, 'confidence': 0.0,
                'frame_id': frame_id, 'sim_time_ns': sim_time_ns,
                'n_gates': len(gates)}
         if best is not None:
             gb = best.center_body()
             x, y, z = (float(v) for v in gb)
+            self._pnp_last = {'ts': now, 'range': best.range_m,
+                              'az': math.atan2(y, x)}
             est.update({
                 'detected': True,
                 'confidence': best.confidence,

@@ -464,9 +464,13 @@ class Planner:
                                   'vel_ned': (1.0 * math.cos(hdg), 1.0 * math.sin(hdg), 0.1),
                                   'yaw': float(hdg), 'open_loop': True,
                                   'source': 'pnp_coast', 'ts': now})
-        # Lost for good: slow level search sweep (open-loop hover + yaw steps).
+        # Lost for good: slow search sweep (open-loop hover + yaw steps) with a
+        # gentle DESCENT — gates hang 2-5 m off the ground, and the 18:02 run
+        # spun a full 360 deg seeing nothing because the blind coast had carried
+        # the drone above them. Sinking while sweeping brings them back into the
+        # (upward-tilted) camera's view.
         self._rx_heading = self._wrap(hdg + math.radians(0.4))  # ~24 deg/s at 60 Hz
-        return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.0),
+        return self._publish({'mode': 'velocity', 'vel_ned': (0.0, 0.0, 0.3),
                               'yaw': float(self._rx_heading), 'open_loop': True,
                               'source': 'pnp_search', 'ts': now})
 
