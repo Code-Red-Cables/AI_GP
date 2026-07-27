@@ -1,0 +1,18 @@
+train: /mnt/d/Code/Competitions/AI_GP/datasets/gate_yolo/train/images
+val: /mnt/d/Code/Competitions/AI_GP/datasets/gate_yolo/valid/images
+test: /mnt/d/Code/Competitions/AI_GP/datasets/gate_yolo/test/images
+
+kpt_shape: [4, 3]
+# corners are ordered TL, TR, BL, BR -> horizontal flip must swap L/R pairs.
+# (Roboflow exported [0,1,2,3], which corrupts fliplr augmentation.)
+flip_idx: [1, 0, 3, 2]
+
+nc: 1
+names: ['gate']
+
+roboflow:
+  workspace: legons-workspace
+  project: ai_gp
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/legons-workspace/ai_gp/dataset
