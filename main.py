@@ -58,8 +58,20 @@ def run_opencv():
         controller.arm()
     print('Control loop running -- Ctrl+C to exit', flush=True)
 
+    run_started_at = time.monotonic()
     try:
         while True:
+            if (
+                config.OPENCV_MAX_SECONDS > 0.0
+                and time.monotonic() - run_started_at
+                >= config.OPENCV_MAX_SECONDS
+            ):
+                print(
+                    f'[SIM] bounded run reached '
+                    f'{config.OPENCV_MAX_SECONDS:.1f}s',
+                    flush=True,
+                )
+                break
             shared_data['planner_target'] = planner.compute_target(shared_data)
             if config.PERCEPTION_ONLY:
                 time.sleep(1.0 / config.CONTROL_HZ)
@@ -68,6 +80,8 @@ def run_opencv():
     except KeyboardInterrupt:
         pass
     finally:
+        if not config.PERCEPTION_ONLY:
+            controller.disarm()
         logger.stop()
         for name in ('ts_loop', 'mavlink_rx', 'vision_rx'):
             components[name].get_thread_for_join().join(timeout=1.0)

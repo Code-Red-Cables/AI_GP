@@ -40,6 +40,13 @@ class HybridGateConfig:
     inference_size: int = 640
     device: Optional[str] = None
     log_interval_s: float = 1.0
+    score_confidence_weight: float = 0.40
+    score_center_weight: float = 0.30
+    score_area_weight: float = 0.30
+    score_reference_area_ratio: float = 0.08
+    target_association_center_span: float = 0.75
+    target_association_min_area_ratio: float = 0.0
+    target_association_max_area_ratio: float = math.inf
     minimum_opening_area_px: float = 45.0
     minimum_opening_side_px: float = 12.0
     minimum_opening_aspect: float = 0.45
@@ -219,6 +226,50 @@ def _bbox_iou(left: YoloGateBox, right: YoloGateBox) -> float:
     return intersection / max(union, 1e-6)
 
 
+def score_gate_candidate(
+    detection: YoloGateBox,
+    frame_shape: tuple[int, ...],
+    config: HybridGateConfig,
+) -> float:
+    """Score a valid gate without making raw orange/box area authoritative."""
+    frame_height, frame_width = frame_shape[:2]
+    frame_area = max(float(frame_height * frame_width), 1.0)
+    center_x, center_y = detection.center
+    normalized_x = (center_x - frame_width / 2.0) / max(
+        frame_width / 2.0, 1.0
+    )
+    normalized_y = (center_y - frame_height / 2.0) / max(
+        frame_height / 2.0, 1.0
+    )
+    center_quality = float(
+        np.clip(
+            1.0 - math.hypot(normalized_x, normalized_y) / math.sqrt(2.0),
+            0.0,
+            1.0,
+        )
+    )
+    reference_area = max(config.score_reference_area_ratio, 1e-6)
+    area_quality = float(
+        np.clip(math.sqrt(detection.area / frame_area / reference_area), 0.0, 1.0)
+    )
+    weights = np.asarray(
+        [
+            max(0.0, config.score_confidence_weight),
+            max(0.0, config.score_center_weight),
+            max(0.0, config.score_area_weight),
+        ],
+        dtype=np.float64,
+    )
+    if float(weights.sum()) <= 1e-9:
+        weights[:] = 1.0
+    weights /= weights.sum()
+    return float(
+        weights[0] * np.clip(detection.confidence, 0.0, 1.0)
+        + weights[1] * center_quality
+        + weights[2] * area_quality
+    )
+
+
 def select_target_gate(
     detections: Sequence[YoloGateBox],
     previous_target: Optional[YoloGateBox],
@@ -227,7 +278,7 @@ def select_target_gate(
     *,
     lock_active: bool,
 ) -> Optional[YoloGateBox]:
-    """Select the largest gate at acquisition and preserve target identity.
+    """Select a scored gate at acquisition and preserve target identity.
 
     While locked, overlap with the old box is authoritative. Center and size
     similarity break ties when two overlapping gates have comparable IoU.
@@ -244,7 +295,19 @@ def select_target_gate(
     if not valid:
         return None
     if previous_target is None or not lock_active:
-        return max(valid, key=lambda item: (item.area, item.confidence))
+        # A newly acquired target must be the largest visible gate.  Center
+        # proximity is not a safe primary signal after a pass: a tiny,
+        # high-confidence distant gate near image center can otherwise beat
+        # the substantially larger next gate at the edge of the frame.
+        # Detector confidence and the composite score remain tie-breakers.
+        return max(
+            valid,
+            key=lambda item: (
+                item.area,
+                item.confidence,
+                score_gate_candidate(item, frame_shape, config),
+            ),
+        )
 
     previous_span = max(
         previous_target.bbox[2] - previous_target.bbox[0],
@@ -262,14 +325,25 @@ def select_target_gate(
         size_similarity = math.exp(
             -abs(math.log(max(detection.area, 1.0) / max(previous_target.area, 1.0)))
         )
-        # A non-overlapping, far-away gate is not a continuation of the lock.
-        if overlap < 0.02 and center_distance > 0.75 * previous_span:
-            continue
+        # A locked gate can move by more than one old box width between slow
+        # pose inferences when a yaw correction pulls it in from the frame
+        # edge. Permit that motion only when its scale remains consistent;
+        # this retains the physical-instance lock without accepting a larger
+        # unrelated gate elsewhere in the scene.
+        if overlap < 0.02:
+            area_ratio = detection.area / max(previous_target.area, 1.0)
+            if (
+                center_distance
+                > config.target_association_center_span * previous_span
+                or area_ratio < config.target_association_min_area_ratio
+                or area_ratio > config.target_association_max_area_ratio
+            ):
+                continue
         association = (
             0.65 * overlap
             + 0.23 * center_similarity
             + 0.10 * size_similarity
-            + 0.02 * detection.confidence
+            + 0.02 * score_gate_candidate(detection, frame_shape, config)
         )
         matches.append((association, detection))
     return max(matches, key=lambda item: item[0])[1] if matches else None

@@ -10,6 +10,7 @@ from vision.yolo_pose_gate_detector import (
     PoseGateCandidate,
     PoseGateConfig,
     YoloPoseGateDetector,
+    build_pose_orange_mask,
     detect_gate_poses,
     reliable_pose_corners,
     select_pose_target,
@@ -193,6 +194,34 @@ def test_largest_pose_instance_is_acquired_without_merging():
     assert selected.keypoints[0].tolist() == [200, 70]
 
 
+def test_acquisition_prefers_large_edge_gate_over_tiny_center_gate():
+    candidates = [
+        _candidate(
+            (500, 100, 580, 171),
+            0.55,
+            0,
+            ((505, 105), (575, 105), (505, 166), (575, 166)),
+        ),
+        _candidate(
+            (344, 177, 362, 208),
+            0.99,
+            1,
+            ((346, 179), (360, 179), (346, 206), (360, 206)),
+        ),
+    ]
+
+    selected = select_pose_target(
+        candidates,
+        None,
+        (360, 640, 3),
+        PoseGateConfig(minimum_gate_area_px=100),
+        lock_active=False,
+    )
+
+    assert selected is not None
+    assert selected.box.source_index == 0
+
+
 def test_lock_keeps_the_same_physical_pose_instance():
     previous = YoloGateBox((190, 90, 350, 250), 0.82)
     candidates = [
@@ -222,6 +251,164 @@ def test_lock_keeps_the_same_physical_pose_instance():
     assert selected.box.source_index == 1
 
 
+def test_lock_reacquires_fast_same_scale_gate_after_edge_yaw():
+    previous = YoloGateBox((603, 172, 640, 251), 0.89)
+    candidates = [
+        _candidate(
+            (487, 249, 537, 335),
+            0.84,
+            0,
+            ((492, 254), (532, 254), (492, 330), (532, 330)),
+        ),
+        _candidate(
+            (361, 217, 386, 265),
+            0.91,
+            1,
+            ((364, 220), (383, 220), (364, 262), (383, 262)),
+        ),
+    ]
+
+    selected = select_pose_target(
+        candidates,
+        previous,
+        (360, 640, 3),
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            target_association_center_span=1.85,
+            target_association_min_area_ratio=0.45,
+            target_association_max_area_ratio=2.20,
+        ),
+        lock_active=True,
+    )
+
+    assert selected is not None
+    assert selected.box.source_index == 0
+
+
+def test_lock_does_not_reacquire_distant_different_scale_gate():
+    previous = YoloGateBox((603, 172, 640, 251), 0.89)
+    candidates = [
+        _candidate(
+            (350, 190, 455, 350),
+            0.98,
+            0,
+            ((360, 200), (445, 200), (360, 340), (445, 340)),
+        ),
+    ]
+
+    selected = select_pose_target(
+        candidates,
+        previous,
+        (360, 640, 3),
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            target_association_center_span=1.85,
+            target_association_min_area_ratio=0.45,
+            target_association_max_area_ratio=2.20,
+        ),
+        lock_active=True,
+    )
+
+    assert selected is None
+
+
+def test_persistent_lock_survives_timeout_and_requires_explicit_reset():
+    continuation_and_larger_gate = _frame(
+        rows=(
+            (110, 65, 310, 265, 0.72, 0),
+            (350, 30, 630, 330, 0.98, 0),
+        ),
+        points=(
+            ((130, 85), (290, 85), (130, 245), (290, 245)),
+            ((375, 55), (605, 55), (375, 305), (605, 305)),
+        ),
+        confidences=(
+            (0.9, 0.9, 0.9, 0.9),
+            (0.9, 0.9, 0.9, 0.9),
+        ),
+    )
+    unrelated_gate = _frame(
+        rows=((350, 30, 630, 330, 0.98, 0),),
+        points=(
+            ((375, 55), (605, 55), (375, 305), (605, 305)),
+        ),
+    )
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            target_lock_seconds=0.25,
+            persistent_target_lock=True,
+            previous_center_frames=1,
+            log_interval_s=999,
+        ),
+        model=_FakeModel(
+            [
+                _frame(),
+                continuation_and_larger_gate,
+                unrelated_gate,
+                unrelated_gate,
+                unrelated_gate,
+            ]
+        ),
+    )
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    first = detector.detect(image, timestamp=1.0)
+    continued = detector.detect(image, hint=first, timestamp=2.0)
+    fallback = detector.detect(image, hint=continued, timestamp=3.0)
+    missing = detector.detect(image, hint=fallback, timestamp=3.1)
+
+    assert first.center_px == (200.0, 160.0)
+    assert continued.center_px == (210.0, 165.0)
+    assert fallback.predicted
+    assert fallback.center_px == continued.center_px
+    assert not missing.found
+    assert detector._previous_target is not None
+
+    detector.reset_target_lock()
+    reacquired = detector.detect(image, timestamp=4.0)
+
+    assert reacquired.found
+    assert reacquired.center_px == (490.0, 180.0)
+
+
+def test_post_pass_acquisition_rejects_oversized_gate_remnant():
+    post_pass_scene = _frame(
+        rows=(
+            (0, 0, 430, 360, 0.96, 0),
+            (500, 90, 620, 230, 0.86, 0),
+        ),
+        points=(
+            ((10, 10), (420, 10), (10, 350), (420, 350)),
+            ((510, 100), (610, 100), (510, 220), (610, 220)),
+        ),
+        confidences=(
+            (0.9, 0.9, 0.9, 0.9),
+            (0.9, 0.9, 0.9, 0.9),
+        ),
+    )
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            post_pass_rejection_seconds=0.8,
+            post_pass_max_area_ratio=0.18,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([post_pass_scene, post_pass_scene]),
+    )
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+
+    detector.begin_next_gate_acquisition(1.0)
+    next_gate = detector.detect(image, timestamp=1.1)
+    detector.reset_target_lock()
+    after_guard = detector.detect(image, timestamp=2.0)
+
+    assert next_gate.found
+    assert next_gate.center_px == (560.0, 160.0)
+    assert after_guard.found
+    assert after_guard.center_px == (215.0, 180.0)
+
+
 def test_low_confidence_corner_uses_box_center_fallback():
     rows, points, confidences = _frame(
         confidences=((0.9, 0.1, 0.9, 0.9),)
@@ -242,6 +429,7 @@ def test_low_confidence_corner_uses_box_center_fallback():
     assert result.found
     assert result.method == "yolo_pose_box_center_no_orientation"
     assert result.center_px == (200.0, 160.0)
+    assert result.confidence == pytest.approx(0.90)
     assert not result.corners_reliable
 
 
@@ -359,6 +547,67 @@ def test_hsv_confirmation_accepts_orange_supported_gate_frame():
     assert candidate.hsv_supported_sides == 4
     assert 0.12 <= candidate.hsv_orange_ratio <= 0.72
     assert np.count_nonzero(detector.last_debug.cleaned_mask) > 0
+
+
+def test_pose_mask_blur_and_opening_remove_isolated_noise():
+    image = np.zeros((120, 160, 3), dtype=np.uint8)
+    image[10, 10] = (0, 105, 255)
+    cv2.rectangle(image, (40, 25), (120, 95), (0, 105, 255), 5)
+
+    mask = build_pose_orange_mask(
+        image,
+        PoseGateConfig(
+            hsv_blur_kernel=3,
+            hsv_opening_kernel=3,
+            hsv_closing_kernel=3,
+        ),
+    )
+
+    assert mask[10, 10] == 0
+    assert np.count_nonzero(mask[25:96, 40:121]) > 0
+
+
+def test_hsv_refined_center_is_used_only_for_small_supported_shift():
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(image, (112, 65), (292, 255), (0, 105, 255), -1)
+    cv2.rectangle(image, (145, 100), (260, 220), (0, 0, 0), -1)
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            require_hsv_confirmation=True,
+            hsv_center_blend=0.5,
+            hsv_center_max_shift_fraction=0.20,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([_frame()]),
+    )
+
+    result = detector.detect(image, timestamp=1.0)
+
+    assert result.found
+    assert result.method.startswith("yolo_pose_hsv_refined_center")
+    assert result.center_x > 200.0
+    assert detector.last_pose_debug.center_source == "hsv_refined_center"
+
+
+def test_global_hsv_fallback_is_explicit_and_lower_confidence():
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(image, (170, 80), (330, 280), (0, 105, 255), -1)
+    cv2.rectangle(image, (210, 120), (290, 240), (0, 0, 0), -1)
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            global_hsv_fallback_enabled=True,
+            global_hsv_fallback_confidence_scale=0.5,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([([], [], [])]),
+    )
+
+    result = detector.detect(image, timestamp=1.0)
+
+    assert result.found
+    assert result.method == "global_hsv_fallback"
+    assert result.confidence <= 0.5
 
 
 def test_hsv_confirmation_rejects_local_orange_reflection_patch():

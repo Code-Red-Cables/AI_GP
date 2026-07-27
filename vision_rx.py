@@ -87,8 +87,24 @@ def create_gate_detector():
             ),
             nms_iou_threshold=config.YOLO_NMS_IOU_THRESHOLD,
             target_lock_seconds=config.YOLO_TARGET_LOCK_SECONDS,
+            persistent_target_lock=config.YOLO_PERSISTENT_TARGET_LOCK,
+            target_association_center_span=(
+                config.YOLO_TARGET_ASSOCIATION_CENTER_SPAN
+            ),
+            target_association_min_area_ratio=(
+                config.YOLO_TARGET_ASSOCIATION_MIN_AREA_RATIO
+            ),
+            target_association_max_area_ratio=(
+                config.YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO
+            ),
             acquisition_confirmation_frames=(
                 config.YOLO_ACQUISITION_CONFIRMATION_FRAMES
+            ),
+            post_pass_rejection_seconds=(
+                config.YOLO_POST_PASS_REJECTION_SECONDS
+            ),
+            post_pass_max_area_ratio=(
+                config.YOLO_POST_PASS_MAX_AREA_RATIO
             ),
             require_hsv_confirmation=config.YOLO_REQUIRE_HSV_CONFIRMATION,
             hsv_ranges=hsv_ranges,
@@ -105,6 +121,25 @@ def create_gate_detector():
             device=config.YOLO_DEVICE,
             log_interval_s=config.YOLO_LOG_INTERVAL_S,
             minimum_opening_area_px=config.GATE_MIN_CONTOUR_AREA,
+            score_confidence_weight=config.YOLO_SCORE_CONFIDENCE_WEIGHT,
+            score_center_weight=config.YOLO_SCORE_CENTER_WEIGHT,
+            score_area_weight=config.YOLO_SCORE_AREA_WEIGHT,
+            score_reference_area_ratio=(
+                config.YOLO_SCORE_REFERENCE_AREA_RATIO
+            ),
+            hsv_blur_kernel=config.YOLO_HSV_BLUR_KERNEL,
+            hsv_opening_kernel=config.YOLO_HSV_OPENING_KERNEL,
+            hsv_closing_kernel=config.YOLO_HSV_CLOSING_KERNEL,
+            hsv_center_blend=config.YOLO_HSV_CENTER_BLEND,
+            hsv_center_max_shift_fraction=(
+                config.YOLO_HSV_CENTER_MAX_SHIFT_FRACTION
+            ),
+            global_hsv_fallback_enabled=(
+                config.GLOBAL_HSV_FALLBACK_ENABLED
+            ),
+            global_hsv_fallback_confidence_scale=(
+                config.GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE
+            ),
         )
         try:
             detector = YoloPoseGateDetector(pose_config)
@@ -155,6 +190,10 @@ def create_gate_detector():
         log_interval_s=config.YOLO_LOG_INTERVAL_S,
         minimum_opening_area_px=config.GATE_MIN_CONTOUR_AREA,
         hsv_ranges=hsv_ranges,
+        score_confidence_weight=config.YOLO_SCORE_CONFIDENCE_WEIGHT,
+        score_center_weight=config.YOLO_SCORE_CENTER_WEIGHT,
+        score_area_weight=config.YOLO_SCORE_AREA_WEIGHT,
+        score_reference_area_ratio=config.YOLO_SCORE_REFERENCE_AREA_RATIO,
     )
     try:
         detector = YoloHybridGateDetector(hybrid_config)
@@ -281,11 +320,17 @@ class VisionRX:
             return
         if active_gate > self._last_active_gate:
             self.tracker.reset()
-            reset_target_lock = getattr(
-                self.detector, 'reset_target_lock', None
+            begin_next_gate = getattr(
+                self.detector, 'begin_next_gate_acquisition', None
             )
-            if reset_target_lock is not None:
-                reset_target_lock()
+            if begin_next_gate is not None:
+                begin_next_gate(now)
+            else:
+                reset_target_lock = getattr(
+                    self.detector, 'reset_target_lock', None
+                )
+                if reset_target_lock is not None:
+                    reset_target_lock()
             self.navigator.confirm_gate_pass(now)
         self._last_active_gate = max(self._last_active_gate, active_gate)
 
@@ -630,6 +675,28 @@ class VisionRX:
             'confidence': command.confidence,
             'predicted': command.predicted,
             'alignment_error': command.alignment_error,
+            'requested_forward_mps': command.requested_forward_mps,
+            'framing_limited': command.framing_limited,
+            'framing_edge': command.framing_edge,
+            # Tracker velocity is normalized image width per second. It is the
+            # observed angular motion of the target and therefore captures the
+            # combined effect of lateral velocity and yaw rate.
+            'gate_velocity_x': (
+                tracked.velocity_x if tracked is not None else None
+            ),
+            'gate_velocity_y': (
+                tracked.velocity_y if tracked is not None else None
+            ),
+            'horizontal_lead_error': (
+                tracked.normalized_x
+                + (
+                    self.navigator.config.lateral_kd
+                    / max(self.navigator.config.lateral_kp, 1e-6)
+                )
+                * tracked.velocity_x
+                if tracked is not None
+                else None
+            ),
             'next_gate_horizontal': next_gate_horizontal,
             'active_gate': self._last_active_gate,
         }

@@ -21,21 +21,95 @@ def _env_int_tuple(name, default):
     return parsed
 
 # ---- Flight controller ----
-HOVER_THRUST    = 0.25      # open-loop hover baseline (no baro in VQ2)
-TAKEOFF_THRUST  = 0.31      # short launch boost before settling to hover
+HOVER_THRUST    = 0.27      # open-loop hover baseline (no baro in VQ2)
+TAKEOFF_THRUST  = 0.27      # short launch boost before settling to hover
 TAKEOFF_DURATION_S = 1.0
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
-KP_LEAN         = 0.10      # body velocity (m/s) → desired lean angle (rad)
+# Gate-two telemetry saturated the optical descent command for 1.6 seconds at
+# ~0.263 tilt-compensated thrust while its image speed still accelerated to
+# 0.476 normalized/s toward the bottom edge. Permit a 0.256-ish tilted level
+# only while vision explicitly requests descent; hover/takeoff remain 0.27.
+# Gate-two telemetry held the previous 0.014 reduction continuously while the
+# target still fell from y=152 to y=209 in 0.9 s. Preserve the calibrated
+# 0.27 hover/takeoff baseline, but give a confirmed low gate enough downward
+# authority to arrest that climb.
+MAX_DESCENT_THRUST_REDUCTION = 0.025
+MAX_ASCENT_THRUST_INCREASE = 0.010
+MIN_TILT_COMPENSATION_COSINE = 0.70
+KP_LEAN         = 0.10      # demonstrated forward command → pitch mapping
+OPENCV_KP_LEAN  = 0.16      # stronger gate-racing forward pitch mapping
+OPENCV_LATERAL_LEAN_SIGN = float(
+    # Direct A/B runs show negative desired roll moves a right-side gate
+    # farther inward than positive desired roll in the live VQ2 rate path.
+    os.environ.get('OPENCV_LATERAL_LEAN_SIGN', '-1.0')
+)
 MAX_LEAN_RAD    = math.radians(25.0)
+# VQ2's accelerometer magnitude looks gravity-like while its lateral component
+# does not rotate with the visibly banked camera. The demonstration filter's
+# 0.95 gyro weight therefore erases real Q2 bank in roughly 0.2 seconds.
+# Retain slow drift correction, but let the racing controller observe the
+# 1-2 second roll motion that determines lateral momentum.
+OPENCV_AHRS_GYRO_WEIGHT = float(
+    os.environ.get('OPENCV_AHRS_GYRO_WEIGHT', '0.995')
+)
 KP_ATT          = 1.8       # demo: 0.6 normalized gain * 3.0 max rate
 KD_ATT          = 0.09      # demo: 0.03 normalized damping * 3.0 max rate
+KI_ATT          = float(os.environ.get('KI_ATT', '0.0'))
+KP_ROLL_ATT     = 2.6       # faster bank reversal for gate counter-steering
+# The gate-two trace reverses desired bank before centre crossing, but the
+# measured roll rate keeps carrying the vehicle through the old direction.
+# Add rate damping without weakening the lateral position command.
+KD_ROLL_ATT     = 0.22
+KI_ROLL_ATT     = float(os.environ.get('KI_ROLL_ATT', '0.0'))
+ATTITUDE_INTEGRAL_LIMIT = float(
+    os.environ.get('ATTITUDE_INTEGRAL_LIMIT', '0.20')
+)
+ATTITUDE_DERIVATIVE_FILTER_TAU_S = float(
+    os.environ.get('ATTITUDE_DERIVATIVE_FILTER_TAU_S', '0.0')
+)
 RATE_SIGN_PITCH = -1.0      # sim pitch rate axis is inverted
 RATE_SIGN_ROLL  = -1.0      # measured demo ActionConfig: all rate axes inverted
+RATE_SIGN_YAW   = -1.0      # preserve the recorded demonstration convention
+# Keep OpenCV explicit so the live axis can be calibrated independently.
+# Yaw-only A/B traces isolate this from lateral bank: positive sent yaw moved
+# a right-side gate inward from x=524 to x=492, whereas negative sent yaw
+# moved it outward. Positive is therefore the rightward navigation mapping.
+OPENCV_RATE_SIGN_YAW = float(
+    os.environ.get('OPENCV_RATE_SIGN_YAW', '1.0')
+)
+# Positive sent yaw produces negative raw body-z gyro in VQ2. Convert that
+# sensor axis into the positive/right navigation convention before applying
+# rate feedback.
+OPENCV_YAW_GYRO_SIGN = float(
+    os.environ.get('OPENCV_YAW_GYRO_SIGN', '-1.0')
+)
+OPENCV_YAW_RATE_FEEDBACK_KP = float(
+    os.environ.get('OPENCV_YAW_RATE_FEEDBACK_KP', '0.45')
+)
+OPENCV_YAW_RATE_FEEDBACK_LIMIT = float(
+    os.environ.get('OPENCV_YAW_RATE_FEEDBACK_LIMIT', '0.30')
+)
+# A zero yaw request means "capture the current heading", not "snap to an
+# equal-and-opposite turn".  The simulator responds strongly enough that the
+# normal tracking gain can reverse a +0.58 rad/s turn in one vision interval.
+# Use a deliberately softer brake while the planner requests zero yaw.
+OPENCV_YAW_BRAKE_FEEDBACK_KP = float(
+    os.environ.get('OPENCV_YAW_BRAKE_FEEDBACK_KP', '0.0')
+)
+OPENCV_YAW_BRAKE_FEEDBACK_LIMIT = float(
+    os.environ.get('OPENCV_YAW_BRAKE_FEEDBACK_LIMIT', '0.0')
+)
+OPENCV_YAW_BRAKE_REQUEST_DEADBAND = float(
+    os.environ.get('OPENCV_YAW_BRAKE_REQUEST_DEADBAND', '0.02')
+)
 MAX_RATE_RAD_S  = 1.05      # demo rate_cap 0.35 * 3.0 max rate
 MAX_THRUST      = 0.90
 MIN_THRUST      = 0.05
 CONTROL_HZ      = 100
-TELEMETRY_TIMEOUT_S = 0.35
+TELEMETRY_TIMEOUT_S = 1.25
+SENSOR_FUTURE_TOLERANCE_S = 0.05
+CONTROL_MIN_DT_S = 1.0 / 500.0
+CONTROL_MAX_DT_S = 0.05
 
 # ---- Mode selection ----
 # Exactly one racing command owner is selected at process start.  ``opencv``
@@ -82,10 +156,20 @@ CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward
 # ---- OpenCV vision runtime ----
 VISION_UDP_IP             = '0.0.0.0'
 VISION_UDP_PORT           = 5600
-VISION_COMMAND_TIMEOUT_S  = 0.35
+VISION_COMMAND_TIMEOUT_S  = 1.25
 VISION_DEBUG              = _env_bool('VISION_DEBUG', False)
 VISION_DISPLAY            = _env_bool('VISION_DISPLAY', False)
 PERCEPTION_ONLY           = _env_bool('PERCEPTION_ONLY', False)
+RESET_SIM_ON_START        = _env_bool('RESET_SIM_ON_START', False)
+SIM_RESET_SETTLE_S        = float(
+    os.environ.get('SIM_RESET_SETTLE_S', '1.5')
+)
+# Zero preserves the normal race client, which runs until Ctrl+C. A positive
+# value is useful for bounded simulator test attempts and exits through the
+# regular cleanup/disarm path.
+OPENCV_MAX_SECONDS        = float(
+    os.environ.get('OPENCV_MAX_SECONDS', '0')
+)
 VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
 VISION_DEBUG_INTERVAL_S   = float(
     os.environ.get('VISION_DEBUG_INTERVAL_S', '5.0')
@@ -122,7 +206,7 @@ YOLO_MODEL_PATH = os.environ.get(
 )
 YOLO_GATE_CLASS_NAME = os.environ.get('YOLO_GATE_CLASS_NAME', 'gate')
 YOLO_CONFIDENCE_THRESHOLD = float(
-    os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.50')
+    os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.45')
 )
 YOLO_KEYPOINT_CONFIDENCE_THRESHOLD = float(
     os.environ.get('YOLO_KEYPOINT_CONFIDENCE_THRESHOLD', '0.25')
@@ -133,30 +217,56 @@ YOLO_NMS_IOU_THRESHOLD = float(
 YOLO_TARGET_LOCK_SECONDS = float(
     os.environ.get('YOLO_TARGET_LOCK_SECONDS', '0.75')
 )
+YOLO_PERSISTENT_TARGET_LOCK = _env_bool(
+    'YOLO_PERSISTENT_TARGET_LOCK', True
+)
+YOLO_TARGET_ASSOCIATION_CENTER_SPAN = float(
+    os.environ.get('YOLO_TARGET_ASSOCIATION_CENTER_SPAN', '1.85')
+)
+YOLO_TARGET_ASSOCIATION_MIN_AREA_RATIO = float(
+    os.environ.get('YOLO_TARGET_ASSOCIATION_MIN_AREA_RATIO', '0.45')
+)
+YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO = float(
+    os.environ.get('YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO', '2.20')
+)
 YOLO_ACQUISITION_CONFIRMATION_FRAMES = int(
-    os.environ.get('YOLO_ACQUISITION_CONFIRMATION_FRAMES', '3')
+    # YOLO pose detections are already required to have orange HSV support.
+    # At the model's ~5 Hz inference rate, a second acquisition frame leaves
+    # roughly 0.2-0.4 s of uncontrolled motion after a gate pass.  Accept the
+    # first jointly confirmed instance so an edge gate can be captured before
+    # it exits the camera.
+    os.environ.get('YOLO_ACQUISITION_CONFIRMATION_FRAMES', '1')
+)
+# Immediately after a confirmed pass the gate behind the drone can remain as a
+# very large partial YOLO box for a few frames.  It must not win the normal
+# "largest visible gate" acquisition policy over the smaller next gate.
+YOLO_POST_PASS_REJECTION_SECONDS = float(
+    os.environ.get('YOLO_POST_PASS_REJECTION_SECONDS', '0.80')
+)
+YOLO_POST_PASS_MAX_AREA_RATIO = float(
+    os.environ.get('YOLO_POST_PASS_MAX_AREA_RATIO', '0.18')
 )
 YOLO_REQUIRE_HSV_CONFIRMATION = _env_bool(
     'YOLO_REQUIRE_HSV_CONFIRMATION', True
 )
 YOLO_HSV_MIN_ORANGE_RATIO = float(
-    os.environ.get('YOLO_HSV_MIN_ORANGE_RATIO', '0.12')
+    os.environ.get('YOLO_HSV_MIN_ORANGE_RATIO', '0.08')
 )
 YOLO_HSV_MAX_ORANGE_RATIO = float(
-    os.environ.get('YOLO_HSV_MAX_ORANGE_RATIO', '0.72')
+    os.environ.get('YOLO_HSV_MAX_ORANGE_RATIO', '0.85')
 )
 YOLO_HSV_SIDE_BAND_FRACTION = float(
     os.environ.get('YOLO_HSV_SIDE_BAND_FRACTION', '0.28')
 )
 YOLO_HSV_MIN_SIDE_DENSITY = float(
-    os.environ.get('YOLO_HSV_MIN_SIDE_DENSITY', '0.10')
+    os.environ.get('YOLO_HSV_MIN_SIDE_DENSITY', '0.06')
 )
 YOLO_HSV_MIN_SUPPORTED_SIDES = int(
-    os.environ.get('YOLO_HSV_MIN_SUPPORTED_SIDES', '3')
+    os.environ.get('YOLO_HSV_MIN_SUPPORTED_SIDES', '2')
 )
 YOLO_CROP_PADDING_PX = int(os.environ.get('YOLO_CROP_PADDING_PX', '14'))
 YOLO_MIN_GATE_AREA_PX = float(
-    os.environ.get('YOLO_MIN_GATE_AREA_PX', '400')
+    os.environ.get('YOLO_MIN_GATE_AREA_PX', '250')
 )
 YOLO_MAX_OUTSIDE_FRACTION = float(
     os.environ.get('YOLO_MAX_OUTSIDE_FRACTION', '0.35')
@@ -170,11 +280,45 @@ YOLO_ESTIMATED_OPENING_SCALE = float(
 YOLO_INFERENCE_SIZE = int(os.environ.get('YOLO_INFERENCE_SIZE', '640'))
 YOLO_DEVICE = os.environ.get('YOLO_DEVICE', '').strip() or None
 YOLO_LOG_INTERVAL_S = float(os.environ.get('YOLO_LOG_INTERVAL_S', '1.0'))
+YOLO_SCORE_CONFIDENCE_WEIGHT = float(
+    os.environ.get('YOLO_SCORE_CONFIDENCE_WEIGHT', '0.40')
+)
+YOLO_SCORE_CENTER_WEIGHT = float(
+    os.environ.get('YOLO_SCORE_CENTER_WEIGHT', '0.30')
+)
+YOLO_SCORE_AREA_WEIGHT = float(
+    os.environ.get('YOLO_SCORE_AREA_WEIGHT', '0.30')
+)
+YOLO_SCORE_REFERENCE_AREA_RATIO = float(
+    os.environ.get('YOLO_SCORE_REFERENCE_AREA_RATIO', '0.08')
+)
+YOLO_HSV_BLUR_KERNEL = int(os.environ.get('YOLO_HSV_BLUR_KERNEL', '5'))
+YOLO_HSV_OPENING_KERNEL = int(
+    os.environ.get('YOLO_HSV_OPENING_KERNEL', '3')
+)
+YOLO_HSV_CLOSING_KERNEL = int(
+    os.environ.get('YOLO_HSV_CLOSING_KERNEL', '5')
+)
+YOLO_HSV_CENTER_BLEND = float(
+    os.environ.get('YOLO_HSV_CENTER_BLEND', '0.25')
+)
+YOLO_HSV_CENTER_MAX_SHIFT_FRACTION = float(
+    os.environ.get('YOLO_HSV_CENTER_MAX_SHIFT_FRACTION', '0.12')
+)
+# Strict YOLO+HSV is the safe default used for racing. This optional, lower
+# confidence fallback exists for offline evaluation or a deliberately enabled
+# recovery experiment.
+GLOBAL_HSV_FALLBACK_ENABLED = _env_bool(
+    'GLOBAL_HSV_FALLBACK_ENABLED', False
+)
+GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE = float(
+    os.environ.get('GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE', '0.55')
+)
 
 # Initial crop-local segmentation uses the calibrated Q2 values. These remain
 # environment-configurable without modifying detector code.
-GATE_HSV_LOWER = _env_int_tuple('GATE_HSV_LOWER', (3, 105, 180))
-GATE_HSV_UPPER = _env_int_tuple('GATE_HSV_UPPER', (17, 255, 255))
+GATE_HSV_LOWER = _env_int_tuple('GATE_HSV_LOWER', (0, 75, 140))
+GATE_HSV_UPPER = _env_int_tuple('GATE_HSV_UPPER', (23, 255, 255))
 GATE_MIN_CONTOUR_AREA = float(
-    os.environ.get('GATE_MIN_CONTOUR_AREA', '45')
+    os.environ.get('GATE_MIN_CONTOUR_AREA', '30')
 )

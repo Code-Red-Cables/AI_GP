@@ -15,6 +15,7 @@ Interactive keys:
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 import time
 from dataclasses import replace
@@ -31,8 +32,14 @@ from vision.gate_detector import (  # noqa: E402
     OrangeGateDetector,
     draw_detection,
 )
-from vision.gate_tracker import GateTracker  # noqa: E402
-from vision.navigation import GateNavigator  # noqa: E402
+from vision.gate_tracker import (  # noqa: E402
+    GateTracker,
+    q2_demo_tracker_config,
+)
+from vision.navigation import (  # noqa: E402
+    GateNavigator,
+    q2_demo_navigation_config,
+)
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp"}
@@ -215,6 +222,20 @@ def main() -> int:
     parser.add_argument("--video-out", type=Path, help="record the debug panels")
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument(
+        "--backend",
+        choices=("hsv", "live"),
+        default="hsv",
+        help=(
+            "hsv uses the interactive legacy detector; live replays the exact "
+            "configured YOLO-pose/YOLO-hybrid/HSV runtime backend"
+        ),
+    )
+    parser.add_argument(
+        "--commands-csv",
+        type=Path,
+        help="write frame-by-frame detections, states, and dry-run commands",
+    )
+    parser.add_argument(
         "--display-scale",
         type=float,
         default=0.65,
@@ -225,9 +246,18 @@ def main() -> int:
         args.show = True
 
     base_config = GateVisionConfig()
-    detector = OrangeGateDetector(base_config)
-    tracker = GateTracker()
-    navigator = GateNavigator()
+    if args.backend == "live":
+        if args.tune_hsv:
+            parser.error("--tune-hsv requires --backend hsv")
+        from vision_rx import create_gate_detector
+
+        detector = create_gate_detector()
+        tracker = GateTracker(q2_demo_tracker_config())
+        navigator = GateNavigator(q2_demo_navigation_config())
+    else:
+        detector = OrangeGateDetector(base_config)
+        tracker = GateTracker()
+        navigator = GateNavigator()
     paths = image_paths(args.input)
     capture = None if paths else cv2.VideoCapture(str(args.input))
     if not paths and (capture is None or not capture.isOpened()):
@@ -257,6 +287,32 @@ def main() -> int:
         print("HSV tuning enabled: adjust sliders, then press r to reprocess.")
 
     writer = None
+    command_file = None
+    command_writer = None
+    if args.commands_csv:
+        args.commands_csv.parent.mkdir(parents=True, exist_ok=True)
+        command_file = args.commands_csv.open("w", newline="")
+        command_writer = csv.DictWriter(
+            command_file,
+            fieldnames=[
+                "frame",
+                "timestamp_s",
+                "raw_method",
+                "tracked_method",
+                "predicted",
+                "confidence",
+                "normalized_x",
+                "normalized_y",
+                "state",
+                "forward_mps",
+                "right_mps",
+                "down_mps",
+                "yaw_rate_rps",
+                "alignment_error",
+                "framing_limited",
+            ],
+        )
+        command_writer.writeheader()
     index = 0
     unique_processed = 0
     measured_detections = 0
@@ -295,6 +351,9 @@ def main() -> int:
             raw_detection=raw_detection,
             total_time_ms=total_ms,
         )
+        draw_backend_overlay = getattr(detector, "draw_debug_overlay", None)
+        if draw_backend_overlay is not None:
+            overlay = draw_backend_overlay(overlay)
         empty = np.zeros(frame.shape[:2], dtype=np.uint8)
         raw_mask = debug.raw_mask if debug else empty
         cleaned_mask = debug.cleaned_mask if debug else empty
@@ -326,6 +385,30 @@ def main() -> int:
             f"state={command.state.value:<18} detector={detector_ms:6.2f}ms "
             f"tracker={tracker_ms:5.2f}ms total={total_ms:6.2f}ms"
         )
+        if command_writer is not None:
+            command_writer.writerow(
+                {
+                    "frame": index,
+                    "timestamp_s": f"{timestamp:.6f}",
+                    "raw_method": raw_detection.method,
+                    "tracked_method": tracked_method,
+                    "predicted": int(bool(tracked and tracked.predicted)),
+                    "confidence": f"{tracked_confidence:.6f}",
+                    "normalized_x": (
+                        f"{tracked.normalized_x:.6f}" if tracked else "nan"
+                    ),
+                    "normalized_y": (
+                        f"{tracked.normalized_y:.6f}" if tracked else "nan"
+                    ),
+                    "state": command.state.value,
+                    "forward_mps": f"{command.forward_mps:.6f}",
+                    "right_mps": f"{command.right_mps:.6f}",
+                    "down_mps": f"{command.down_mps:.6f}",
+                    "yaw_rate_rps": f"{command.yaw_rate_rps:.6f}",
+                    "alignment_error": f"{command.alignment_error:.6f}",
+                    "framing_limited": int(command.framing_limited),
+                }
+            )
 
         if args.save_dir:
             cv2.imwrite(str(args.save_dir / f"{name}_overlay.png"), overlay)
@@ -382,6 +465,8 @@ def main() -> int:
         capture.release()
     if writer is not None:
         writer.release()
+    if command_file is not None:
+        command_file.close()
     cv2.destroyAllWindows()
 
     def mean(values: list[float]) -> float:

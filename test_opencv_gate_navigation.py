@@ -597,6 +597,165 @@ class NavigationTests(unittest.TestCase):
             command.yaw_rate_rps, navigator.config.max_yaw_rate_rps
         )
 
+    def test_25b_climb_uses_separate_upward_limit(self):
+        navigator = navigator_for_tests(
+            recovery_alignment_error=2.0,
+            max_up_mps=0.15,
+            max_down_mps=0.60,
+        )
+        gate = detection_at(nx=0.0, ny=-1.0, opening_width=60)
+        command = advance_to_align(navigator, gate)
+
+        self.assertLess(command.down_mps, 0.0)
+        self.assertGreaterEqual(command.down_mps, -0.15)
+
+    def test_25c_capture_waits_for_projected_center_corridor(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_capture_outward_release_speed=0.06,
+            inward_capture_max_lateral_mps=0.0,
+            inward_capture_max_yaw_rate_rps=0.0,
+        )
+
+        far = detection_at(nx=0.60, velocity_x=-0.04)
+        navigator._horizontal_control(far, 0.60, 0.2)
+        self.assertEqual(navigator._horizontal_capture_side, 0.0)
+
+        approaching = detection_at(nx=0.50, velocity_x=-0.11)
+        navigator._horizontal_control(approaching, 0.50, 0.2)
+        self.assertEqual(navigator._horizontal_capture_side, 1.0)
+
+    def test_25d_capture_releases_when_gate_moves_outward_again(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_capture_outward_release_speed=0.06,
+            inward_capture_max_lateral_mps=0.0,
+            inward_capture_max_yaw_rate_rps=0.0,
+        )
+        approaching = detection_at(nx=0.50, velocity_x=-0.11)
+        navigator._horizontal_control(approaching, 0.50, 0.2)
+        self.assertEqual(navigator._horizontal_capture_side, 1.0)
+
+        escaping = detection_at(nx=0.52, velocity_x=0.08)
+        navigator._horizontal_control(escaping, 0.52, 0.2)
+        self.assertEqual(navigator._horizontal_capture_side, 0.0)
+
+    def test_25e_projected_capture_actively_brakes_inward_motion(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_capture_outward_release_speed=0.06,
+            horizontal_capture_brake_lateral_gain=1.5,
+            horizontal_capture_brake_yaw_gain=1.0,
+            countersteer_max_lateral_mps=0.40,
+            max_yaw_rate_rps=0.65,
+        )
+        approaching = detection_at(nx=0.50, velocity_x=-0.15)
+
+        lateral, yaw = navigator._horizontal_control(
+            approaching, 0.50, 0.2
+        )
+
+        self.assertLess(lateral, 0.0)
+        self.assertAlmostEqual(lateral, -0.225)
+        self.assertLess(yaw, 0.0)
+        self.assertAlmostEqual(yaw, -0.15)
+
+    def test_25f_yaw_capture_can_brake_before_lateral_capture(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_yaw_capture_prediction_horizon_s=7.0,
+            horizontal_capture_outward_release_speed=0.06,
+            horizontal_capture_brake_lateral_gain=1.5,
+            horizontal_capture_brake_yaw_gain=1.0,
+            countersteer_max_lateral_mps=0.40,
+            max_yaw_rate_rps=0.65,
+        )
+        approaching = detection_at(nx=0.62, velocity_x=-0.055)
+
+        lateral, yaw = navigator._horizontal_control(
+            approaching, 0.62, 0.2
+        )
+
+        self.assertEqual(navigator._horizontal_capture_side, 0.0)
+        self.assertEqual(navigator._yaw_capture_side, 1.0)
+        self.assertGreater(lateral, 0.0)
+        self.assertAlmostEqual(yaw, -0.055)
+
+    def test_25g_yaw_capture_hands_off_to_bounded_lateral_translation(self):
+        navigator = navigator_for_tests(
+            lateral_kp=1.0,
+            lateral_kd=0.0,
+            max_right_mps=1.0,
+            yaw_first_lateral_full_normalized=0.35,
+            yaw_first_lateral_zero_normalized=0.75,
+            yaw_first_lateral_minimum_scale=0.25,
+            yaw_capture_lateral_scale=0.55,
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_yaw_capture_prediction_horizon_s=8.0,
+            horizontal_capture_outward_release_speed=0.06,
+            inward_capture_max_yaw_rate_rps=0.0,
+        )
+        approaching = detection_at(nx=0.70, velocity_x=-0.06)
+
+        lateral, _ = navigator._horizontal_control(
+            approaching, 0.70, 0.2
+        )
+
+        self.assertEqual(navigator._horizontal_capture_side, 0.0)
+        self.assertEqual(navigator._yaw_capture_side, 1.0)
+        self.assertAlmostEqual(lateral, 0.385)
+
+    def test_25h_yaw_capture_waits_until_gate_enters_turn_corridor(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=2.5,
+            horizontal_yaw_capture_prediction_horizon_s=8.0,
+            horizontal_yaw_capture_max_error_normalized=0.50,
+            inward_capture_max_yaw_rate_rps=0.0,
+        )
+
+        navigator._horizontal_control(
+            detection_at(nx=0.62, velocity_x=-0.06),
+            0.62,
+            0.2,
+        )
+        self.assertEqual(navigator._yaw_capture_side, 0.0)
+
+        navigator._horizontal_control(
+            detection_at(nx=0.48, velocity_x=-0.06),
+            0.48,
+            0.2,
+        )
+        self.assertEqual(navigator._yaw_capture_side, 1.0)
+
+    def test_25i_yaw_capture_ignores_single_outward_velocity_rebound(self):
+        navigator = navigator_for_tests(
+            horizontal_capture_release_normalized=0.25,
+            horizontal_yaw_capture_prediction_horizon_s=8.0,
+            horizontal_yaw_capture_max_error_normalized=0.65,
+            horizontal_yaw_capture_outward_release_speed=float('inf'),
+            inward_capture_max_yaw_rate_rps=0.0,
+        )
+        navigator._horizontal_control(
+            detection_at(nx=0.58, velocity_x=-0.08),
+            0.58,
+            0.2,
+        )
+        self.assertEqual(navigator._yaw_capture_side, 1.0)
+
+        _, yaw = navigator._horizontal_control(
+            detection_at(nx=0.60, velocity_x=0.12),
+            0.60,
+            0.2,
+        )
+        self.assertEqual(navigator._yaw_capture_side, 1.0)
+        self.assertAlmostEqual(yaw, 0.0)
+
     def test_26_forward_speed_rewards_alignment(self):
         aligned_nav = navigator_for_tests(commit_opening_area_ratio=0.5)
         poor_nav = navigator_for_tests(
@@ -609,6 +768,41 @@ class NavigationTests(unittest.TestCase):
             poor_nav, detection_at(nx=0.55, opening_width=60)
         )
         self.assertGreater(aligned.forward_mps, poor.forward_mps)
+
+    def test_26b_severe_horizontal_error_caps_forward_without_reversing(self):
+        navigator = navigator_for_tests(
+            minimum_approach_mps=0.28,
+            maximum_approach_mps=0.50,
+            severe_horizontal_error_normalized=0.50,
+            severe_horizontal_forward_cap_mps=0.16,
+        )
+        command = advance_to_align(
+            navigator,
+            detection_at(nx=0.65, opening_width=60),
+        )
+
+        self.assertGreater(command.forward_mps, 0.0)
+        self.assertLessEqual(command.requested_forward_mps, 0.16)
+
+    def test_26c_off_axis_countersteer_does_not_defeat_forward_cap(self):
+        navigator = navigator_for_tests(
+            minimum_approach_mps=0.28,
+            maximum_approach_mps=0.50,
+            severe_horizontal_error_normalized=0.50,
+            severe_horizontal_forward_cap_mps=0.16,
+            countersteer_forward_floor_mps=0.34,
+            horizontal_capture_release_normalized=0.25,
+            horizontal_capture_prediction_horizon_s=8.0,
+            horizontal_capture_brake_lateral_gain=1.5,
+            countersteer_max_lateral_mps=0.40,
+        )
+        command = advance_to_align(
+            navigator,
+            detection_at(nx=0.65, velocity_x=-0.06, opening_width=60),
+        )
+
+        self.assertLess(command.right_mps, 0.0)
+        self.assertLessEqual(command.requested_forward_mps, 0.16)
 
     def test_27_commit_requires_stability_and_size(self):
         navigator = navigator_for_tests(track_confirmation_frames=1)

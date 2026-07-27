@@ -21,6 +21,13 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
 
     mavlink_rx = MAVLinkRX.create_mavlink_rx(sim_conn, shared_data)
     ts_loop    = TimeSync.create_timesync(sim_conn, shared_data)
+    controller = Controller(sim_conn, shared_data, system_boot_ms)
+    if config.RESET_SIM_ON_START:
+        print('[SIM] resetting race/drone with MAVLink command 31000', flush=True)
+        controller.send_sim_reset()
+        logger.log_event('SIM_RESET', 'command=31000')
+        import time
+        time.sleep(max(0.0, config.SIM_RESET_SETTLE_S))
     vision_rx  = VisionRX(shared_data)
 
     # Planner selection. Racing modes are exclusive; OpenCV never blends with
@@ -40,8 +47,6 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
 
     logger.log_event('PLANNER', planner.name)
     shared_data['planner'] = planner
-
-    controller = Controller(sim_conn, shared_data, system_boot_ms)
 
     return {
         'logger':     logger,

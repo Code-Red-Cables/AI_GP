@@ -22,6 +22,8 @@ from .gate_detector import (
     CandidateDebug,
     DetectorDebug,
     GateDetection,
+    GateVisionConfig,
+    OrangeGateDetector,
     normalized_image_coordinates,
     order_corners,
 )
@@ -40,6 +42,7 @@ class PoseGateConfig:
     keypoint_confidence_threshold: float = 0.25
     nms_iou_threshold: float = 0.70
     target_lock_seconds: float = 0.75
+    persistent_target_lock: bool = False
     acquisition_confirmation_frames: int = 1
     require_hsv_confirmation: bool = False
     hsv_ranges: tuple[
@@ -59,6 +62,22 @@ class PoseGateConfig:
     inference_size: int = 640
     device: Optional[str] = None
     log_interval_s: float = 1.0
+    score_confidence_weight: float = 0.40
+    score_center_weight: float = 0.30
+    score_area_weight: float = 0.30
+    score_reference_area_ratio: float = 0.08
+    target_association_center_span: float = 0.75
+    target_association_min_area_ratio: float = 0.0
+    target_association_max_area_ratio: float = math.inf
+    post_pass_rejection_seconds: float = 0.0
+    post_pass_max_area_ratio: float = 1.0
+    hsv_blur_kernel: int = 5
+    hsv_opening_kernel: int = 3
+    hsv_closing_kernel: int = 5
+    hsv_center_blend: float = 0.25
+    hsv_center_max_shift_fraction: float = 0.12
+    global_hsv_fallback_enabled: bool = False
+    global_hsv_fallback_confidence_scale: float = 0.55
     gate_inner_width_m: float = cm.GATE_INNER_M
     focal_length_px: float = cm.FX
 
@@ -71,6 +90,8 @@ class PoseGateCandidate:
     hsv_confirmed: bool = True
     hsv_orange_ratio: float = 1.0
     hsv_supported_sides: int = 4
+    hsv_refined_center: Optional[tuple[float, float]] = None
+    hsv_geometry_score: float = 0.0
 
     @property
     def keypoint_center(self) -> tuple[float, float]:
@@ -224,7 +245,15 @@ def build_pose_orange_mask(
     config: PoseGateConfig,
 ) -> np.ndarray:
     """Build the calibrated orange mask used to confirm YOLO proposals."""
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    blur_kernel = max(1, int(config.hsv_blur_kernel))
+    if blur_kernel % 2 == 0:
+        blur_kernel += 1
+    filtered = (
+        cv2.GaussianBlur(frame, (blur_kernel, blur_kernel), 0)
+        if blur_kernel > 1
+        else frame
+    )
+    hsv = cv2.cvtColor(filtered, cv2.COLOR_BGR2HSV)
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
     for lower, upper in config.hsv_ranges:
         mask = cv2.bitwise_or(
@@ -235,6 +264,16 @@ def build_pose_orange_mask(
                 np.asarray(upper, dtype=np.uint8),
             ),
         )
+    for operation, size in (
+        (cv2.MORPH_OPEN, config.hsv_opening_kernel),
+        (cv2.MORPH_CLOSE, config.hsv_closing_kernel),
+    ):
+        size = max(1, int(size))
+        if size > 1:
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_RECT, (size, size)
+            )
+            mask = cv2.morphologyEx(mask, operation, kernel, iterations=1)
     return mask
 
 
@@ -286,6 +325,27 @@ def confirm_pose_candidates_with_hsv(
             for density in side_densities
         )
         orange_ratio = float(np.count_nonzero(crop)) / crop.size
+        orange_y, orange_x = np.nonzero(crop)
+        refined_center = None
+        geometry_score = 0.0
+        if orange_x.size >= 20:
+            x_low, x_high = np.percentile(orange_x, (2.0, 98.0))
+            y_low, y_high = np.percentile(orange_y, (2.0, 98.0))
+            span_x = max(float(x_high - x_low), 1.0)
+            span_y = max(float(y_high - y_low), 1.0)
+            refined_center = (
+                float(left + 0.5 * (x_low + x_high)),
+                float(top + 0.5 * (y_low + y_high)),
+            )
+            aspect_quality = min(span_x, span_y) / max(span_x, span_y)
+            geometry_score = float(
+                np.clip(
+                    0.65 * aspect_quality
+                    + 0.35 * supported_sides / 4.0,
+                    0.0,
+                    1.0,
+                )
+            )
         is_confirmed = bool(
             config.hsv_min_orange_ratio
             <= orange_ratio
@@ -298,6 +358,8 @@ def confirm_pose_candidates_with_hsv(
                 hsv_confirmed=is_confirmed,
                 hsv_orange_ratio=orange_ratio,
                 hsv_supported_sides=supported_sides,
+                hsv_refined_center=refined_center,
+                hsv_geometry_score=geometry_score,
             )
         )
     return confirmed
@@ -312,8 +374,31 @@ def select_pose_target(
     lock_active: bool,
 ) -> Optional[PoseGateCandidate]:
     """Apply the shared largest-acquisition and identity-locking policy."""
+    selection_boxes = []
+    for candidate in candidates:
+        if config.require_hsv_confirmation:
+            hsv_quality = float(
+                np.clip(
+                    0.65 * candidate.hsv_geometry_score
+                    + 0.35 * candidate.hsv_supported_sides / 4.0,
+                    0.0,
+                    1.0,
+                )
+            )
+            confidence = float(
+                np.clip(
+                    0.80 * candidate.box.confidence + 0.20 * hsv_quality,
+                    0.0,
+                    1.0,
+                )
+            )
+            selection_boxes.append(
+                replace(candidate.box, confidence=confidence)
+            )
+        else:
+            selection_boxes.append(candidate.box)
     selected_box = select_target_gate(
-        [candidate.box for candidate in candidates],
+        selection_boxes,
         previous_target,
         frame_shape,
         config,
@@ -486,6 +571,17 @@ class YoloPoseGateDetector:
         self._pending_target: Optional[YoloGateBox] = None
         self._pending_target_frames = 0
         self._last_log_at = -math.inf
+        self._last_association_target: Optional[YoloGateBox] = None
+        self._post_pass_rejection_until = -math.inf
+        self._global_hsv_detector = OrangeGateDetector(
+            GateVisionConfig(
+                hsv_ranges=config.hsv_ranges,
+                blur_kernel=config.hsv_blur_kernel,
+                opening_kernel_size=config.hsv_opening_kernel,
+                closing_kernel_size=config.hsv_closing_kernel,
+                min_contour_area=config.minimum_opening_area_px,
+            )
+        )
 
     def _load_model(self):
         model_path = Path(self.config.model_path)
@@ -515,6 +611,38 @@ class YoloPoseGateDetector:
         self._missing_frames = 0
         self._pending_target = None
         self._pending_target_frames = 0
+        self._last_association_target = None
+
+    def begin_next_gate_acquisition(self, timestamp: float) -> None:
+        """Reset identity and briefly reject the just-passed gate remnant."""
+        self.reset_target_lock()
+        self._post_pass_rejection_until = (
+            float(timestamp)
+            + max(0.0, self.config.post_pass_rejection_seconds)
+        )
+
+    def _target_from_hint(
+        self,
+        hint: Optional[GateDetection],
+    ) -> Optional[YoloGateBox]:
+        """Translate a tracker prediction into an association-only YOLO box."""
+        if hint is None or not hint.found:
+            return None
+        _, _, bbox_width, bbox_height = hint.bbox
+        if bbox_width <= 0 or bbox_height <= 0:
+            return None
+        half_width = 0.5 * float(bbox_width)
+        half_height = 0.5 * float(bbox_height)
+        return YoloGateBox(
+            bbox=(
+                float(hint.center_x) - half_width,
+                float(hint.center_y) - half_height,
+                float(hint.center_x) + half_width,
+                float(hint.center_y) + half_height,
+            ),
+            confidence=float(hint.confidence),
+            label=self.config.gate_class_name,
+        )
 
     @staticmethod
     def _same_acquisition_candidate(
@@ -581,6 +709,24 @@ class YoloPoseGateDetector:
             int(round(y2 - y1)),
         )
         center_x, center_y = candidate.box.center
+        center_source = "yolo_box_center"
+        if (
+            self.config.require_hsv_confirmation
+            and candidate.hsv_confirmed
+            and candidate.hsv_refined_center is not None
+        ):
+            refined_x, refined_y = candidate.hsv_refined_center
+            box_diagonal = max(math.hypot(x2 - x1, y2 - y1), 1.0)
+            shift_fraction = (
+                math.hypot(refined_x - center_x, refined_y - center_y)
+                / box_diagonal
+            )
+            if shift_fraction <= self.config.hsv_center_max_shift_fraction:
+                blend = float(np.clip(self.config.hsv_center_blend, 0.0, 1.0))
+                center_x = (1.0 - blend) * center_x + blend * refined_x
+                center_y = (1.0 - blend) * center_y + blend * refined_y
+                if blend > 0.0:
+                    center_source = "hsv_refined_center"
         opening_scale = float(
             np.clip(self.config.estimated_opening_scale, 0.05, 1.0)
         )
@@ -589,25 +735,48 @@ class YoloPoseGateDetector:
         if pose_corners is not None:
             polygon = pose_corners.as_polygon()
             method = (
-                "yolo_pose_hsv_box_center"
+                (
+                    "yolo_pose_hsv_refined_center"
+                    if center_source == "hsv_refined_center"
+                    else "yolo_pose_hsv_box_center"
+                )
                 if self.config.require_hsv_confirmation
                 else "yolo_pose_box_center"
             )
             point_quality = float(
                 np.mean(candidate.keypoint_confidences)
             )
-            confidence = (
-                0.70 * candidate.box.confidence + 0.30 * point_quality
-            )
+            if self.config.require_hsv_confirmation:
+                confidence = (
+                    0.65 * candidate.box.confidence
+                    + 0.20 * point_quality
+                    + 0.15 * candidate.hsv_geometry_score
+                )
+            else:
+                confidence = (
+                    0.70 * candidate.box.confidence + 0.30 * point_quality
+                )
             top_edge = polygon[1] - polygon[0]
             angle = math.degrees(math.atan2(top_edge[1], top_edge[0]))
         else:
             method = (
-                "yolo_pose_hsv_box_center_no_orientation"
+                (
+                    "yolo_pose_hsv_refined_center_no_orientation"
+                    if center_source == "hsv_refined_center"
+                    else "yolo_pose_hsv_box_center_no_orientation"
+                )
                 if self.config.require_hsv_confirmation
                 else "yolo_pose_box_center_no_orientation"
             )
-            confidence = 0.70 * candidate.box.confidence
+            # The box center is the steering measurement; missing orientation
+            # keypoints must not demote an otherwise YOLO+HSV-confirmed gate
+            # below the tracker/navigation acquisition thresholds.
+            confidence = (
+                0.80 * candidate.box.confidence
+                + 0.20 * candidate.hsv_geometry_score
+                if self.config.require_hsv_confirmation
+                else candidate.box.confidence
+            )
             angle = 0.0
         normalized_x, normalized_y = normalized_image_coordinates(
             center_x, center_y, width, height
@@ -762,6 +931,26 @@ class YoloPoseGateDetector:
                 separator=",",
             )
         )
+        association = self._last_association_target
+        association_text = (
+            "none"
+            if association is None
+            else (
+                f"({association.center[0]:.1f},{association.center[1]:.1f};"
+                f"{association.bbox[2] - association.bbox[0]:.1f}x"
+                f"{association.bbox[3] - association.bbox[1]:.1f})"
+            )
+        )
+        candidate_text = ";".join(
+            (
+                f"{candidate.box.source_index}:"
+                f"({candidate.box.center[0]:.1f},{candidate.box.center[1]:.1f};"
+                f"{candidate.box.bbox[2] - candidate.box.bbox[0]:.1f}x"
+                f"{candidate.box.bbox[3] - candidate.box.bbox[1]:.1f};"
+                f"hsv={int(candidate.hsv_confirmed)})"
+            )
+            for candidate in debug.candidates
+        ) or "none"
         print(
             "[YOLO_POSE] "
             f"detections={len(debug.candidates)} "
@@ -771,7 +960,9 @@ class YoloPoseGateDetector:
             f"keypoint_conf={point_confidences} "
             f"keypoints={debug.keypoint_reason} "
             f"center={debug.center} "
-            f"source={debug.center_source}",
+            f"source={debug.center_source} "
+            f"association={association_text} "
+            f"candidates={candidate_text}",
             flush=True,
         )
         self._last_log_at = now
@@ -785,7 +976,6 @@ class YoloPoseGateDetector:
         hint: Optional[GateDetection] = None,
         timestamp: Optional[float] = None,
     ) -> GateDetection:
-        del hint
         started = time.perf_counter()
         now = time.monotonic() if timestamp is None else float(timestamp)
         if frame is None or not isinstance(frame, np.ndarray) or frame.size == 0:
@@ -816,14 +1006,43 @@ class YoloPoseGateDetector:
             for candidate in candidates
             if candidate.hsv_confirmed
         ]
+        if now <= self._post_pass_rejection_until:
+            frame_area = max(float(frame.shape[0] * frame.shape[1]), 1.0)
+            maximum_area = (
+                float(
+                    np.clip(
+                        self.config.post_pass_max_area_ratio,
+                        0.0,
+                        1.0,
+                    )
+                )
+                * frame_area
+            )
+            eligible_candidates = [
+                candidate
+                for candidate in eligible_candidates
+                if candidate.box.area <= maximum_area
+            ]
+        persistent_lock = bool(
+            self.config.persistent_target_lock
+            and self._previous_target is not None
+        )
+        association_target = self._previous_target
+        if persistent_lock:
+            predicted_target = self._target_from_hint(hint)
+            if predicted_target is not None:
+                association_target = predicted_target
+        self._last_association_target = association_target
         selected = select_pose_target(
             eligible_candidates,
-            self._previous_target,
+            association_target,
             frame.shape,
             self.config,
-            lock_active=now <= self._lock_until,
+            lock_active=persistent_lock or now <= self._lock_until,
         )
-        acquiring = self._previous_target is None or now > self._lock_until
+        acquiring = self._previous_target is None or (
+            not persistent_lock and now > self._lock_until
+        )
         if acquiring:
             selected = self._confirm_acquisition(selected)
             if selected is None:
@@ -850,11 +1069,15 @@ class YoloPoseGateDetector:
             corners, reason = reliable_pose_corners(
                 selected, self.config
             )
-            source = "yolo_box_center"
             result = self._to_gate_detection(
                 selected, corners, frame.shape, now
             )
             center = result.center_px
+            source = (
+                "hsv_refined_center"
+                if "hsv_refined_center" in result.method
+                else "yolo_box_center"
+            )
             self._previous_target = selected.box
             self._previous_valid_detection = result
             self._lock_until = now + self.config.target_lock_seconds
@@ -881,8 +1104,36 @@ class YoloPoseGateDetector:
             elif (
                 now > self._lock_until
                 and self._pending_target is None
+                and not persistent_lock
             ):
                 self.reset_target_lock()
+        if (
+            not result.found
+            and self.config.global_hsv_fallback_enabled
+            and self._previous_target is None
+            and self._pending_target is None
+        ):
+            fallback = self._global_hsv_detector.detect(
+                frame,
+                hint=None,
+                timestamp=now,
+            )
+            if fallback.found:
+                result = replace(
+                    fallback,
+                    confidence=float(
+                        np.clip(
+                            fallback.confidence
+                            * self.config.global_hsv_fallback_confidence_scale,
+                            0.0,
+                            1.0,
+                        )
+                    ),
+                    method="global_hsv_fallback",
+                )
+                center = result.center_px
+                source = "global_hsv_fallback"
+                reason = "yolo_missing_global_hsv"
         extraction_done = time.perf_counter()
         timings = {
             "pose_inference": (inference_done - inference_started) * 1000.0,

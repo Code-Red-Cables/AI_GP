@@ -17,6 +17,11 @@ class GateTrackerConfig:
     maximum_missing_frames: int = 5
     maximum_center_jump_ratio: float = 0.48
     maximum_size_change_ratio: float = 0.75
+    # When unset, growth and shrink use the same limit for backward
+    # compatibility.  A detector with persistent target identity can permit
+    # faster apparent growth during approach while keeping shrink strict
+    # enough to reject a nested or more distant gate.
+    maximum_growth_change_ratio: Optional[float] = None
     minimum_update_confidence: float = 0.22
     prediction_confidence_decay: float = 0.78
     alpha: float = 0.48
@@ -36,6 +41,15 @@ class GateTrackerConfig:
     minimum_seed_area_ratio: float = 0.0
     maximum_seed_abs_horizontal: float = 1.0
     maximum_seed_normalized_y: float = 1.0
+    # A temporally confirmed YOLO pose proposal that also passed HSV support
+    # is much stronger evidence than an unconfirmed contour. Permit those
+    # trusted proposals to seed near image edges without weakening the legacy
+    # reflection filters above.
+    trusted_seed_method_prefix: str = ""
+    trusted_minimum_seed_confidence: float = 0.0
+    trusted_minimum_seed_area_ratio: float = 0.0
+    trusted_maximum_seed_abs_horizontal: float = 1.0
+    trusted_maximum_seed_normalized_y: float = 1.0
 
 
 # Compatibility name retained for existing imports/tests.
@@ -208,14 +222,42 @@ class GateTracker:
         assert detection is not None
         if self._track is None:
             cfg = self.config
+            trusted_seed = bool(
+                cfg.trusted_seed_method_prefix
+                and detection.method.startswith(
+                    cfg.trusted_seed_method_prefix
+                )
+            )
+            if trusted_seed:
+                minimum_seed_confidence = (
+                    cfg.trusted_minimum_seed_confidence
+                )
+                minimum_seed_area_ratio = (
+                    cfg.trusted_minimum_seed_area_ratio
+                )
+                maximum_seed_abs_horizontal = (
+                    cfg.trusted_maximum_seed_abs_horizontal
+                )
+                maximum_seed_normalized_y = (
+                    cfg.trusted_maximum_seed_normalized_y
+                )
+            else:
+                minimum_seed_confidence = cfg.minimum_seed_confidence
+                minimum_seed_area_ratio = cfg.minimum_seed_area_ratio
+                maximum_seed_abs_horizontal = (
+                    cfg.maximum_seed_abs_horizontal
+                )
+                maximum_seed_normalized_y = (
+                    cfg.maximum_seed_normalized_y
+                )
             plausible_seed = bool(
-                detection.confidence >= cfg.minimum_seed_confidence
+                detection.confidence >= minimum_seed_confidence
                 and detection.opening_area_ratio
-                >= cfg.minimum_seed_area_ratio
+                >= minimum_seed_area_ratio
                 and abs(detection.normalized_x)
-                <= cfg.maximum_seed_abs_horizontal
+                <= maximum_seed_abs_horizontal
                 and detection.normalized_y
-                <= cfg.maximum_seed_normalized_y
+                <= maximum_seed_normalized_y
             )
             if not plausible_seed:
                 self.last_update_ms = (
@@ -260,6 +302,14 @@ class GateTracker:
         new_area = max(detection.opening_width * detection.opening_height, 1.0)
         area_ratio = new_area / old_area
         size_change = max(area_ratio, 1.0 / area_ratio) - 1.0
+        growth_change_limit = self.config.maximum_growth_change_ratio
+        if growth_change_limit is None:
+            growth_change_limit = self.config.maximum_size_change_ratio
+        size_change_limit = (
+            growth_change_limit
+            if area_ratio >= 1.0
+            else self.config.maximum_size_change_ratio
+        )
         edge_limited_close_gate = bool(
             previous.opening_area_ratio
             >= self.config.near_gate_minimum_area_ratio
@@ -279,7 +329,7 @@ class GateTracker:
         )
         if (
             center_jump > self.config.maximum_center_jump_ratio
-            or size_change > self.config.maximum_size_change_ratio
+            or size_change > size_change_limit
             or (
                 edge_limited_close_gate
                 and unexpected_close_gate_shrink
@@ -368,9 +418,19 @@ class GateTracker:
 def q2_demo_tracker_config() -> GateTrackerConfig:
     """Reject the post-pass false tracks observed in the Q2 FlightSim run."""
     return GateTrackerConfig(
-        maximum_size_change_ratio=0.40,
+        # Keep shrink strict: a nested/more-distant gate produces the size
+        # collapse observed after gate one. The persistent pose detector owns
+        # target identity, so allow the locked gate to grow rapidly as the
+        # aircraft closes; the recorded 76x70 -> 110x118 jump is 144%.
+        maximum_size_change_ratio=0.65,
+        maximum_growth_change_ratio=1.75,
         minimum_seed_confidence=0.55,
-        minimum_seed_area_ratio=0.004,
+        minimum_seed_area_ratio=0.0032,
         maximum_seed_abs_horizontal=0.60,
         maximum_seed_normalized_y=0.70,
+        trusted_seed_method_prefix="yolo_pose_hsv_",
+        trusted_minimum_seed_confidence=0.30,
+        trusted_minimum_seed_area_ratio=0.0012,
+        trusted_maximum_seed_abs_horizontal=0.95,
+        trusted_maximum_seed_normalized_y=0.95,
     )

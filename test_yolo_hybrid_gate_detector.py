@@ -17,6 +17,7 @@ from vision.yolo_gate_detector import (
     crop_target_gate,
     detect_gates_yolo,
     extract_inner_gate_corners,
+    score_gate_candidate,
     select_target_gate,
 )
 
@@ -111,6 +112,26 @@ class TargetSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(selected.bbox, detections[1].bbox)
+
+    def test_scoring_can_prefer_centered_confident_gate_over_larger_edge_box(self):
+        detections = [
+            YoloGateBox((0, 5, 360, 355), 0.42),
+            YoloGateBox((245, 105, 395, 255), 0.94),
+        ]
+
+        selected = select_target_gate(
+            detections,
+            None,
+            (360, 640, 3),
+            self.config,
+            lock_active=False,
+        )
+
+        self.assertEqual(selected.bbox, detections[1].bbox)
+        self.assertGreater(
+            score_gate_candidate(detections[1], (360, 640, 3), self.config),
+            score_gate_candidate(detections[0], (360, 640, 3), self.config),
+        )
 
     def test_tiny_and_mostly_outside_boxes_are_rejected(self):
         config = HybridGateConfig(

@@ -55,10 +55,12 @@ python main.py
 2. `YoloPoseGateDetector` runs one inference on that frame. Ultralytics is
    called with class-aware NMS (`agnostic_nms=False`) and a configurable
    default IoU threshold of `0.70`, preserving separately labeled overlapping
-   gates when the trained model supports them. Acquisition selects the largest
-   valid YOLO gate only when the calibrated orange HSV mask independently
-   confirms it. Confirmation requires 12–72% orange coverage inside the YOLO
-   box and orange support on at least three of its four border bands; this
+   gates when the trained model supports them. Acquisition scores each valid
+   instance using configurable YOLO-confidence, image-center, and apparent-area
+   terms; raw box size is not authoritative. The calibrated orange HSV mask
+   must independently confirm the selected proposal. The mask applies Gaussian
+   blur, morphological opening, and morphological closing before measuring
+   orange coverage and border support. This
    preserves angled/partly occluded gates while rejecting isolated reflections
    and solid orange patches. The surviving proposal must then remain spatially
    consistent for three consecutive inference frames. A one-frame or
@@ -73,7 +75,11 @@ python main.py
    top-left, top-right, bottom-left, and bottom-right. Dataset inspection shows
    that these points span a median 97.3% of the YOLO box and share virtually
    the same labeled center, so they are not inner-opening corners. The selected
-   YOLO box center is therefore authoritative for steering and target scale.
+   YOLO box center remains the stable steering prior. When the cleaned HSV
+   support spans the gate rails and its refined center stays within a
+   configurable fraction of the YOLO-box diagonal, a bounded blend refines
+   that center without allowing text, clipping, or an asymmetric reflection
+   to drag the target away.
    High-confidence keypoints contribute only the gate's image-plane
    orientation angle and remain visible in the debug overlay. They are not
    published as `GateDetection.corners`, preventing physically invalid
@@ -84,11 +90,11 @@ python main.py
    It runs orange opening extraction only inside the selected YOLO crop.
 4. With no custom model, `auto` mode uses `OrangeGateDetector`, which finds the
    flyable opening rather than the orange
-   material centroid. Acquisition selects the largest valid opening in view.
-   The deployed HSV mask is calibrated to the illuminated gate face
-   (`H=3..17`, `S>=105`, `V>=180`), rejecting the dimmer `H=18..20`
-   floor/wall glow visible in the Q2 course. Reconstructed openings must also
-   be at least 18 pixels on both axes, excluding small reflection geometry.
+   material centroid. Acquisition scores valid openings using confidence,
+   proximity to image center, and projected area; it does not blindly select
+   the largest contour. The deployed HSV mask defaults to the deliberately
+   broad illuminated-gate range (`H=0..23`, `S>=75`, `V>=140`), followed by
+   geometry checks that reject floor/wall glow and small reflection geometry.
    Once tracked, center-and-size hysteresis holds that gate until it disappears
    or becomes implausible, preventing a farther off-axis gate from stealing
    control during normal contour-area fluctuations.
@@ -151,23 +157,42 @@ python main.py
    The race timer's active-gate increment is used only to confirm a completed
    pass and release the old visual track immediately; it supplies no steering
    geometry.
-   If the selected gate approaches any image edge, forward speed is reduced
-   and then reversed while centering continues. With no measured gate, blind
-   forward flight stops and the vehicle scans toward the last known direction.
+   If the selected gate approaches a lateral image edge, forward speed is
+   reduced while centering continues. A low gate that already has a corrective
+   descent command retains approach speed because both descent and forward
+   pitch move it back upward in the image; this prevents the framing guard from
+   stopping at Training One's second gate. With no measured gate, blind
+   forward flight stops.
    Gate commit requires three stable frames with horizontal error within
-   `0.05` normalized image units (about 16 pixels at 640-wide input). Lateral
+   `0.08` normalized image units (about 26 pixels at 640-wide input). Lateral
    centering remains live during commit; drift beyond `0.08` (about 26 pixels)
    aborts the pass attempt back to alignment rather than clipping a side.
-7. `OpenCVGatePlanner` rejects commands older than 350 ms and maps body
-   forward/right/down to Q2 NED velocity.
-8. `Controller` reuses the demonstration AHRS from
-   `dreamer/src/dreamer_drone/env/ahrs.py`, applies the demonstrated P+D
-   attitude gains and inverted rate axes. Forward pitch keeps the demonstrated
+7. `OpenCVGatePlanner` rejects stale, future-dated, or non-finite commands and
+   maps body forward/right/down to Q2 NED velocity. Safety activation is
+   event-logged and produces a neutral target.
+8. `GateNavigator` uses the reusable timestamped PID for lateral image error,
+   vertical image error, and yaw alignment. Tracker center velocity supplies
+   derivative-on-measurement braking, while integral gains remain zero by
+   default to avoid visual windup. Each navigation-state transition resets
+   PID history. When inward gate motion projects into the center corridor, a
+   capture latch commands bounded opposite lateral and yaw motion
+   proportional to measured image velocity. This actively arrests momentum;
+   merely leveling the controls allowed the gate to rebound and produced the
+   repeated left-right oscillation at Training One gate two. Forward speed
+   remains a confidence/alignment/size scheduler, because VQ2 exposes no
+   reliable forward-velocity measurement.
+9. `Controller` reuses the demonstration AHRS from
+   `dreamer/src/dreamer_drone/env/ahrs.py`. Roll and pitch use the reusable
+   timestamped PID in `control/pid.py`, with output/integral clamps,
+   conditional anti-windup, optional derivative filtering, and
+   derivative-on-measurement. Integral gains default to zero, reproducing the
+   demonstrated P+D response until simulation evidence supports adding
+   integral action. Forward pitch keeps the demonstrated
    gain, while lateral requests use a stronger bank mapping for the Q2 gate
-   spacing. Gate-navigation yaw is capped at 0.48 rad/s; body pitch and roll
+   spacing. Q2 gate-navigation yaw is capped at 0.65 rad/s; body pitch and roll
    retain the demonstrated 1.05 rad/s safety cap. A stale-IMU watchdog
-   commands neutral hover. Arming applies a one-second `0.31` takeoff boost,
-   then returns to the calibrated `0.25` hover baseline.
+   commands neutral hover. Arming and disarming reset controller state.
+   Takeoff and hover currently use the calibrated `0.27` collective baseline.
 
 The profile is grounded in the saved demonstration corpus: 105 inspected
 episodes contain a gate pass, with the original demo set passing its first gate
@@ -211,23 +236,33 @@ Primary runtime tuning variables:
 
 - `YOLO_POSE_MODEL_PATH` (default `models/gate_pose.pt`)
 - `YOLO_MODEL_PATH` (default `models/gate_detector.pt`)
-- `YOLO_CONFIDENCE_THRESHOLD` (default `0.50`)
+- `YOLO_CONFIDENCE_THRESHOLD` (default `0.45`)
 - `YOLO_KEYPOINT_CONFIDENCE_THRESHOLD` (default `0.25`)
 - `YOLO_NMS_IOU_THRESHOLD` (default `0.70`)
 - `YOLO_TARGET_LOCK_SECONDS` (default `0.75`)
-- `YOLO_ACQUISITION_CONFIRMATION_FRAMES` (default `3`)
+- `YOLO_ACQUISITION_CONFIRMATION_FRAMES` (default `1`; the pose prediction
+  must still pass the orange-HSV confirmation before it can steer)
 - `YOLO_REQUIRE_HSV_CONFIRMATION` (default `true`)
 - `YOLO_HSV_MIN_ORANGE_RATIO` / `YOLO_HSV_MAX_ORANGE_RATIO` (defaults
-  `0.12` / `0.72`)
+  `0.08` / `0.85`)
 - `YOLO_HSV_SIDE_BAND_FRACTION` (default `0.28`)
-- `YOLO_HSV_MIN_SIDE_DENSITY` (default `0.10`)
-- `YOLO_HSV_MIN_SUPPORTED_SIDES` (default `3`)
+- `YOLO_HSV_MIN_SIDE_DENSITY` (default `0.06`)
+- `YOLO_HSV_MIN_SUPPORTED_SIDES` (default `2`)
 - `YOLO_CROP_PADDING_PX` (default `14`)
-- `YOLO_MIN_GATE_AREA_PX` (default `400`)
+- `YOLO_MIN_GATE_AREA_PX` (default `250`)
 - `YOLO_PREVIOUS_CENTER_FRAMES` (default `5`)
 - `YOLO_ESTIMATED_OPENING_SCALE` (default `0.72`)
+- `YOLO_SCORE_CONFIDENCE_WEIGHT` / `YOLO_SCORE_CENTER_WEIGHT` /
+  `YOLO_SCORE_AREA_WEIGHT` (defaults `0.40` / `0.30` / `0.30`)
+- `YOLO_HSV_BLUR_KERNEL` / `YOLO_HSV_OPENING_KERNEL` /
+  `YOLO_HSV_CLOSING_KERNEL` (defaults `5` / `3` / `5`)
+- `YOLO_HSV_CENTER_BLEND` (default `0.25`) and
+  `YOLO_HSV_CENTER_MAX_SHIFT_FRACTION` (default `0.12`)
+- `GLOBAL_HSV_FALLBACK_ENABLED` (default `false`). Enabling it permits a
+  deliberately lower-confidence legacy HSV acquisition only after the YOLO
+  target and pending lock have fully expired.
 - `GATE_HSV_LOWER` / `GATE_HSV_UPPER` (comma-separated HSV triples)
-- `GATE_MIN_CONTOUR_AREA` (default `45`)
+- `GATE_MIN_CONTOUR_AREA` (default `30`)
 
 ## Diagnostics and tests
 
@@ -271,11 +306,16 @@ accepted detections. Press `q` or Escape to close only the window, or `Ctrl+C`
 to stop the client. Reset the simulator before using perception-only mode so
 the vehicle is not left armed from an earlier run.
 
-Use the offline viewer without sending flight commands:
+Replay the exact configured live perception/tracker/navigation stack without
+arming or sending flight commands:
 
 ```bash
-python tools/offline_gate_viewer.py frames/f_00070.png
+python tools/offline_gate_viewer.py frames \
+  --backend live \
+  --commands-csv artifacts/replay_commands.csv
 ```
+
+Use `--backend hsv --tune-hsv --show` for interactive HSV calibration.
 
 Run the deterministic detector, tracker, navigation, camera-model,
 demo-profile, and Q2 planner-contract tests:

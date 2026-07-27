@@ -5,6 +5,7 @@ optimizers), single-step recurrent inference (`act`), and the deployment-clean e
 reload path. No simulator required.
 """
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -120,20 +121,26 @@ def test_deploy_export_and_reload_match():
     from dreamer_drone.deploy.controller import DeployPolicy
     cfg = _tiny_cfg()
     agent = DreamerAgent(cfg, device="cpu")
-    path = "/tmp/_dreamer_export_test.pt"
-    agent.export_deploy(path)
+    with tempfile.TemporaryDirectory() as directory:
+        path = str(Path(directory) / "_dreamer_export_test.pt")
+        agent.export_deploy(path)
 
-    policy = DeployPolicy(cfg)
-    policy.load_export(path, map_location="cpu")
-    policy.eval()
-    state = policy.initial_state(torch.device("cpu"))
-    image = torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8)
-    vector = torch.randn(1, VECTOR_DIM)
-    prev = torch.zeros(1, ACTION_DIM)
-    action, _ = policy.act(image, vector, state, prev)
-    # deployed actor must reproduce the trained actor's mode for the same latent
-    agent_action, _ = agent.act({"image": image, "vector": vector}, state, prev, training=False)
-    assert torch.allclose(action, agent_action, atol=1e-5)
+        policy = DeployPolicy(cfg)
+        policy.load_export(path, map_location="cpu")
+        policy.eval()
+        state = policy.initial_state(torch.device("cpu"))
+        image = torch.randint(0, 256, (1, 64, 64, 3), dtype=torch.uint8)
+        vector = torch.randn(1, VECTOR_DIM)
+        prev = torch.zeros(1, ACTION_DIM)
+        action, _ = policy.act(image, vector, state, prev)
+        # Deployment must reproduce the trained actor for the same latent.
+        agent_action, _ = agent.act(
+            {"image": image, "vector": vector},
+            state,
+            prev,
+            training=False,
+        )
+        assert torch.allclose(action, agent_action, atol=1e-5)
 
 
 if __name__ == "__main__":

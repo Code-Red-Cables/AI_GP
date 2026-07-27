@@ -45,6 +45,8 @@ class Logger:
 
     def stop(self) -> None:
         self._running = False
+        if threading.current_thread() is not self._thread:
+            self._thread.join(timeout=1.0)
 
     # ------------------------------------------------------------------
     def _loop(self):
@@ -78,6 +80,9 @@ class Logger:
         vis  = d.get('vision')          or {}
         tel  = d.get('teleop_cmd')      or {}
         tgt  = d.get('planner_target')  or {}
+        gate_body = vis.get('gate_body') or (None, None, None)
+        gate_normal = vis.get('normal_body') or (None, None, None)
+        gate_ned = vis.get('gate_ned') or (None, None, None)
 
         row = {
             # time
@@ -103,10 +108,27 @@ class Logger:
             'cmd_roll_rate':  self._f(ctrl.get('roll_rate')),
             'cmd_pitch_rate': self._f(ctrl.get('pitch_rate')),
             'cmd_yaw_rate':   self._f(ctrl.get('yaw_rate')),
+            'requested_yaw_rate': self._f(
+                ctrl.get('requested_yaw_rate')
+            ),
+            'measured_yaw_rate': self._f(
+                ctrl.get('measured_yaw_rate')
+            ),
+            'yaw_rate_feedback': self._f(
+                ctrl.get('yaw_rate_feedback')
+            ),
             'ahrs_roll':      self._f(ctrl.get('ahrs_roll')),
             'ahrs_pitch':     self._f(ctrl.get('ahrs_pitch')),
             'desired_roll':   self._f(ctrl.get('desired_roll')),
             'desired_pitch':  self._f(ctrl.get('desired_pitch')),
+            'vertical_lift_fraction': self._f(
+                ctrl.get('vertical_lift_fraction')
+            ),
+            'hover_thrust':   self._f(ctrl.get('hover_thrust')),
+            'thrust_adjustment': self._f(ctrl.get('thrust_adjustment')),
+            'vertical_command': self._f(ctrl.get('vertical_command')),
+            'vertical_velocity': self._f(ctrl.get('vertical_velocity')),
+            'control_safety': ctrl.get('safety_reason') or 'none',
             # planner target (NED velocity)
             'tgt_vn':         self._f(tgt.get('vn')),
             'tgt_ve':         self._f(tgt.get('ve')),
@@ -120,13 +142,32 @@ class Logger:
             'gate_method':    gate.get('method', 'none') if gate else 'none',
             'gate_predicted': str(int(bool(gate and gate.get('predicted')))),
             'gate_range':     self._f(vis.get('range_m')),
+            'gate_pose_method': vis.get('method', 'none'),
+            'gate_body_x':    self._f(gate_body[0]),
+            'gate_body_y':    self._f(gate_body[1]),
+            'gate_body_z':    self._f(gate_body[2]),
+            'gate_normal_x':  self._f(gate_normal[0]),
+            'gate_normal_y':  self._f(gate_normal[1]),
+            'gate_normal_z':  self._f(gate_normal[2]),
+            'gate_ned_n':     self._f(gate_ned[0]),
+            'gate_ned_e':     self._f(gate_ned[1]),
+            'gate_ned_d':     self._f(gate_ned[2]),
+            'gate_pnp_error': self._f(
+                vis.get('pnp_reprojection_error')
+            ),
             # OpenCV body-frame navigator output
             'nav_state':      nav.get('state', 'none'),
             'nav_fwd':        self._f(nav.get('forward_mps')),
+            'nav_req_fwd':    self._f(nav.get('requested_forward_mps')),
+            'nav_frame_limited': str(int(bool(nav.get('framing_limited')))),
+            'nav_frame_edge': self._f(nav.get('framing_edge')),
             'nav_right':      self._f(nav.get('right_mps')),
             'nav_down':       self._f(nav.get('down_mps')),
             'nav_yaw_rate':   self._f(nav.get('yaw_rate_rps')),
             'nav_align_err':  self._f(nav.get('alignment_error')),
+            'gate_vel_x':      self._f(nav.get('gate_velocity_x')),
+            'gate_vel_y':      self._f(nav.get('gate_velocity_y')),
+            'nav_lead_x':      self._f(nav.get('horizontal_lead_error')),
             # optional simulator telemetry and pass confirmation
             'vel_n':          self._f(pos.get('vx')),
             'vel_e':          self._f(pos.get('vy')),
