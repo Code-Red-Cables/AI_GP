@@ -1,13 +1,2 @@
-# Comms
+# Keyboard teleop flight client
 pymavlink
-
-# Vision
-#cv2
-opencv-python
-numpy
-ultralytics>=8.4.106
-
-# Debug
-matplotlib
-keyboard
-pytest>=8
