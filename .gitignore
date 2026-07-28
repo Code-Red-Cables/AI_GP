@@ -12,21 +12,14 @@ winvenv/
 logs/
 ./logs/
 
-
-# DreamerV3 training outputs (large / regenerable)
-dreamer/artifacts/runs/
-artifacts/runs/
+# Trained weights (large / regenerable)
 *.pt
 *.ckpt
-train.log
-
-# Recorded demos (large binaries; regenerate with collect_demos --policy stabilized)
-artifacts/demos/
 
 # Simulator install (large binary, not source)
 AIGP_3385/
 
-# Old vision debug/capture output (regenerable)
+# Vision debug/capture output (regenerable)
 _vision_debug/
 frames/
 datasets/
@@ -39,5 +32,3 @@ logs/*.txt
 # and `git add` then fails with "unable to index file 'nul'".
 nul
 NUL
-
-# Kept intentionally (measured data): artifacts/probe/

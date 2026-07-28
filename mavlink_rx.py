@@ -1,3 +1,4 @@
+import math
 import struct
 import time
 import threading
@@ -78,17 +79,9 @@ class MAVLinkRX:
 
     def on_attitude(self, msg):
         # NOTE: ATTITUDE is marked disabled in VQ2 spec but still arrives.
-        # When VIO or the dual-gate EKF owns shared_data['attitude'], the sim
+        # The dual-gate PnP EKF owns shared_data['attitude'], so the sim
         # message is published as 'attitude_raw' for logging/comparison only.
-        estimator_owns_attitude = (
-            config.USE_VIO
-            or (
-                config.GATE_NAVIGATION_MODE == 'kalman'
-                and config.USE_KALMAN_EKF
-            )
-        )
-        key = 'attitude_raw' if estimator_owns_attitude else 'attitude'
-        self.data[key] = {
+        self.data['attitude_raw'] = {
             'roll':       msg.roll,
             'pitch':      msg.pitch,
             'yaw':        msg.yaw,
@@ -107,12 +100,33 @@ class MAVLinkRX:
         }
 
     def on_odometry(self, msg):
-        # Disabled in VQ2 — stored here for VQ1 compatibility.
-        self.data['odometry'] = {
+        # Removed in VQ2; present on the VQ1 tuning build. Richer than
+        # LOCAL_POSITION_NED: carries a pose quaternion and body rates, which
+        # make it the only external check on gyro sign conventions and on the
+        # EKF's velocity estimate. Ground truth only — nothing in the control
+        # path may read this.
+        entry = {
             'x': msg.x, 'y': msg.y, 'z': msg.z,
             'vx': msg.vx, 'vy': msg.vy, 'vz': msg.vz,
+            'rollspeed': getattr(msg, 'rollspeed', None),
+            'pitchspeed': getattr(msg, 'pitchspeed', None),
+            'yawspeed': getattr(msg, 'yawspeed', None),
             'ts': time.time_ns(),
         }
+        q = getattr(msg, 'q', None)
+        if q is not None and len(q) == 4:
+            entry['q'] = [float(v) for v in q]
+            w, x, y, z = entry['q']
+            # ZYX Euler from quaternion (MAVLink q is w,x,y,z).
+            entry['roll'] = math.atan2(
+                2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y)
+            )
+            sin_pitch = max(-1.0, min(1.0, 2.0 * (w * y - z * x)))
+            entry['pitch'] = math.asin(sin_pitch)
+            entry['yaw'] = math.atan2(
+                2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)
+            )
+        self.data['odometry'] = entry
 
     def on_highres_imu(self, msg):
         self.data['highres_imu'] = {

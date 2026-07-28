@@ -23,7 +23,7 @@ class KalmanDualGatePlanner:
 
     def __init__(self):
         max_yaw = min(config.YAW_RATE_MAX_RAD_S, math.radians(25.0))
-        max_rate = 0.9
+        max_rate = config.KALMAN_MAX_RATE_RAD_S
         self._max_lean = math.radians(
             getattr(config, 'KALMAN_MAX_LEAN_DEG', 12.0)
         )
@@ -40,12 +40,18 @@ class KalmanDualGatePlanner:
         self._last_yaw_cmd = 0.0
         self._roll_pid = PIDController(
             PIDConfig(
-                kp=2.2, kd=0.10, output_min=-max_rate, output_max=max_rate
+                kp=config.KALMAN_KP_ATT,
+                kd=config.KALMAN_KD_ATT,
+                output_min=-max_rate,
+                output_max=max_rate,
             )
         )
         self._pitch_pid = PIDController(
             PIDConfig(
-                kp=2.2, kd=0.10, output_min=-max_rate, output_max=max_rate
+                kp=config.KALMAN_KP_ATT,
+                kd=config.KALMAN_KD_ATT,
+                output_min=-max_rate,
+                output_max=max_rate,
             )
         )
         self._last_t = None

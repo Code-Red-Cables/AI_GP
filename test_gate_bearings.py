@@ -14,10 +14,7 @@ from vision.gate_bearings import (
     clamp_contact_vertical,
     near_course_observations,
     observe_pose_candidates,
-    post_pass_lock_allowed,
-    select_visible_next_observation,
 )
-from vision.navigation import GateNavigator, NavigationState, q2_demo_navigation_config
 from vision.yolo_gate_detector import YoloGateBox
 
 
@@ -120,31 +117,6 @@ class GateBearingTests(unittest.TestCase):
         self.assertIsNotNone(nxt)
         self.assertAlmostEqual(nxt.horizontal_normalized, 0.55)
 
-    def test_navigator_searches_toward_seeded_bearing_after_pass(self):
-        navigator = GateNavigator(q2_demo_navigation_config())
-        navigator.seed_next_gate_bearing(0.60, -0.40, freeze_for_slew=True)
-        navigator.confirm_gate_pass(1.0)
-        command = navigator.update(None, 1.1)
-        self.assertEqual(command.state, NavigationState.SEARCH)
-        # Open-loop post-pass yaw is sign-flipped vs image IBVS on VQ2.
-        self.assertLess(command.yaw_rate_rps, 0.0)
-        self.assertLess(command.down_mps, 0.0)
-
-    def test_post_pass_visible_gate_switches_to_ibvs_track(self):
-        from test_opencv_gate_navigation import detection_at
-
-        navigator = GateNavigator(q2_demo_navigation_config())
-        navigator.seed_next_gate_bearing(0.55, -0.50, freeze_for_slew=True)
-        navigator.confirm_gate_pass(1.0)
-        # A real visible next gate must be IBVS-tracked to keep it in view,
-        # not ignored by open-loop slew (run 022637 had gate at v=16).
-        visible = detection_at(nx=0.20, ny=-0.85, opening_width=40)
-        command = navigator.update(visible, 1.2)
-        self.assertEqual(command.state, NavigationState.TRACK)
-        self.assertFalse(navigator.in_post_pass_slew(1.2))
-        # High in the image => climb to keep it centered.
-        self.assertLess(command.down_mps, 0.0)
-
     def test_bearing_table_rejects_collapsed_near_gate_refresh(self):
         table = GateBearingTable()
         good = [
@@ -233,51 +205,6 @@ class GateBearingTests(unittest.TestCase):
         self.assertEqual(len(near), 2)
         self.assertAlmostEqual(near[1].range_m, 20.0)
 
-        # Only the far end gate is visible after the pass — do not chase it.
-        chosen = select_visible_next_observation(
-            [far_end],
-            look_horizontal=0.40,
-            expected_range_m=20.0,
-        )
-        self.assertIsNone(chosen)
-
-        # A nearby gate on the remembered side is accepted.
-        chosen = select_visible_next_observation(
-            [far_end, near_next],
-            look_horizontal=0.40,
-            expected_range_m=20.0,
-        )
-        self.assertIsNotNone(chosen)
-        self.assertAlmostEqual(chosen.range_m, 20.0)
-
-    def test_post_pass_rejects_sky_speck_lock(self):
-        self.assertAlmostEqual(clamp_contact_vertical(-0.73), -0.35)
-        sky = GateObservation(
-            range_m=26.0,
-            horizontal_normalized=0.40,
-            vertical_normalized=-0.80,
-            yaw_offset_rad=0.2,
-            pitch_offset_rad=-0.4,
-            confidence=0.6,
-            source="pnp",
-            center_xy=(500.0, 18.0),
-        )
-        self.assertIsNone(
-            select_visible_next_observation(
-                [sky],
-                look_horizontal=0.40,
-                expected_range_m=24.0,
-            )
-        )
-        fake = SimpleNamespace(
-            found=True,
-            predicted=False,
-            normalized_y=-0.90,
-            distance_m=26.0,
-        )
-        self.assertFalse(
-            post_pass_lock_allowed(fake, expected_range_m=24.0)
-        )
 
     def test_rejects_through_opening_contact_when_primary_close(self):
         current = GateObservation(

@@ -1,13 +1,4 @@
-import os
-import sys
 import time
-from pathlib import Path
-
-# Windows-friendly mode select (PowerShell `set VAR=...` does NOT set env vars).
-# Must run before `import config`.
-if '--pose-debug' in sys.argv:
-    os.environ['GATE_NAVIGATION_MODE'] = 'pose_debug'
-    sys.argv = [a for a in sys.argv if a != '--pose-debug']
 
 import config
 
@@ -15,9 +6,22 @@ SIM_SERVER_UDP_IP   = '127.0.0.1'
 SIM_SERVER_UDP_PORT = 14550
 
 
+def _z_sources():
+    """Altitude keys for crash logic, best first.
+
+    VQ2 publishes no LOCAL_POSITION_NED, so this is always ('position_ned',)
+    there. The VQ1 build does publish it, which makes crash detection more
+    reliable but no longer representative — set CRASH_USE_SIM_ODOMETRY=0 to
+    rehearse VQ2 behaviour on the richer build.
+    """
+    if config.CRASH_USE_SIM_ODOMETRY:
+        return ('local_position_ned', 'position_ned')
+    return ('position_ned',)
+
+
 def _read_z(shared_data):
     """Prefer sim odometry for crash logic; EKF drifts across resets."""
-    for key in ('local_position_ned', 'position_ned'):
+    for key in _z_sources():
         pos = shared_data.get(key) or {}
         z = pos.get('z')
         if z is None:
@@ -32,7 +36,7 @@ def _read_z(shared_data):
 def _max_abs_z(shared_data):
     """Worst |z| across sources — catch EKF runaway even if local looks fine."""
     best = None
-    for key in ('local_position_ned', 'position_ned'):
+    for key in _z_sources():
         pos = shared_data.get(key) or {}
         z = pos.get('z')
         if z is None:
@@ -246,37 +250,12 @@ def _reset_after_crash(
     print('[SIM] reset complete — re-armed', flush=True)
 
 
-def run_existing_ai():
-    """Delegate exclusively to Q2_new's unchanged Dreamer deploy controller."""
-    if not config.DREAMER_CHECKPOINT:
-        raise RuntimeError(
-            'existing_ai mode requires DREAMER_CHECKPOINT=/path/to/deploy_*.pt'
-        )
-
-    dreamer_src = Path(__file__).resolve().parent / 'dreamer' / 'src'
-    sys.path.insert(0, str(dreamer_src))
-    from dreamer_drone.config import load_config
-    from dreamer_drone.deploy.controller import DeployController
-
-    dreamer_config = load_config(config.DREAMER_CONFIG)
-    controller = DeployController(dreamer_config, config.DREAMER_CHECKPOINT)
-    print('[MODE] existing_ai (Dreamer owns all flight commands)', flush=True)
-    try:
-        controller.run(arm=True, max_seconds=config.DREAMER_MAX_SECONDS)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        controller.close()
-
-
 def run_racing():
-    """Run the Q2 rate controller with the configured racing planner."""
+    """Run the Q2 rate controller with the dual-gate PnP + EKF planner."""
     from setup import setup_components
 
     system_boot_ms = int(time.time() * 1000)
-    shared_data = {
-        'gate_navigation_mode': config.GATE_NAVIGATION_MODE,
-    }
+    shared_data = {}
     components = setup_components(
         shared_data,
         system_boot_ms,
@@ -289,11 +268,7 @@ def run_racing():
     state_estimator = components.get('state_estimator')
     monitor = CrashMonitor()
 
-    print(
-        f'[MODE] {config.GATE_NAVIGATION_MODE} '
-        f'(planner={planner.name})',
-        flush=True,
-    )
+    print(f'[MODE] dual_gate_pnp+ekf (planner={planner.name})', flush=True)
     if config.PERCEPTION_ONLY:
         print(
             '[SAFE] perception-only: not arming and not sending flight commands',
@@ -313,13 +288,12 @@ def run_racing():
         while True:
             now = time.monotonic()
             if (
-                config.OPENCV_MAX_SECONDS > 0.0
-                and now - run_started_at
-                >= config.OPENCV_MAX_SECONDS
+                config.RUN_MAX_SECONDS > 0.0
+                and now - run_started_at >= config.RUN_MAX_SECONDS
             ):
                 print(
                     f'[SIM] bounded run reached '
-                    f'{config.OPENCV_MAX_SECONDS:.1f}s',
+                    f'{config.RUN_MAX_SECONDS:.1f}s',
                     flush=True,
                 )
                 break
@@ -354,22 +328,11 @@ def run_racing():
                 joiner = getattr(component, 'get_thread_for_join', None)
                 if joiner is not None:
                     joiner().join(timeout=1.0)
-        if state_estimator is not None and hasattr(
-            state_estimator, 'save_anchors'
-        ):
-            state_estimator.save_anchors()
-            print(
-                f'Gate anchors saved: {sorted(state_estimator.anchors)}',
-                flush=True,
-            )
         print('Client exited!', flush=True)
 
 
 def main():
-    if config.GATE_NAVIGATION_MODE == 'existing_ai':
-        run_existing_ai()
-    else:
-        run_racing()
+    run_racing()
 
 
 if __name__ == '__main__':

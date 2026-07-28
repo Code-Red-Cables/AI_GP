@@ -22,58 +22,6 @@ def _env_int_tuple(name, default):
 
 # ---- Flight controller ----
 HOVER_THRUST    = float(os.environ.get('HOVER_THRUST', '0.24'))
-# Pose-debug start-pad hover — micro righting only (big gains → forward drift).
-# 141553: hover 0.26 scraped (21k collisions, thr dipped to 0.245).
-POSE_DEBUG_HOVER_THRUST = float(os.environ.get('POSE_DEBUG_HOVER_THRUST', '0.285'))
-# Clear the deck — 0.25s×0.263 never got off the floor.
-POSE_DEBUG_TAKEOFF_S = float(os.environ.get('POSE_DEBUG_TAKEOFF_S', '1.0'))
-POSE_DEBUG_TAKEOFF_THRUST = float(
-    os.environ.get('POSE_DEBUG_TAKEOFF_THRUST', '0.30')
-)
-POSE_DEBUG_THRUST_MIN = float(os.environ.get('POSE_DEBUG_THRUST_MIN', '0.270'))
-POSE_DEBUG_KP_VZ = float(os.environ.get('POSE_DEBUG_KP_VZ', '0.02'))
-POSE_DEBUG_KI_VZ = float(os.environ.get('POSE_DEBUG_KI_VZ', '0.002'))
-# RATE_SIGN leveling (required). 124812 leveled at ~0.10; 0.03 was too weak.
-POSE_DEBUG_KP_LEVEL = float(os.environ.get('POSE_DEBUG_KP_LEVEL', '3.0'))
-# Filtered range → pitch (rad/m). Blind hover uses HOVER_BIAS only.
-POSE_DEBUG_KP_RANGE = float(os.environ.get('POSE_DEBUG_KP_RANGE', '0.02'))
-POSE_DEBUG_KP_NX = float(os.environ.get('POSE_DEBUG_KP_NX', '0.06'))
-POSE_DEBUG_KP_NY = float(os.environ.get('POSE_DEBUG_KP_NY', '0.0'))
-# Continuous rate leveling (132257 proved attitude-hold is ignored).
-POSE_DEBUG_MAX_LEVEL_RATE = float(
-    os.environ.get('POSE_DEBUG_MAX_LEVEL_RATE', '0.25')
-)
-# Kill residual horizontal accel (m/s^2 → rad/s). Sign: -ax → +pitch_rate.
-POSE_DEBUG_KP_AX = float(os.environ.get('POSE_DEBUG_KP_AX', '0.08'))
-# Brake coasting: high-pass -ax → v_fwd; tip opposite (+pitch=forward).
-POSE_DEBUG_KP_VFWD = float(os.environ.get('POSE_DEBUG_KP_VFWD', '0.06'))
-POSE_DEBUG_MAX_BRAKE_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_MAX_BRAKE_DEG', '4.0'))
-)
-# Nose-back only while PnP is blind — keep tiny (0.8° crawled while scraping).
-POSE_DEBUG_HOVER_BIAS_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_HOVER_BIAS_DEG', '0.3'))
-)
-POSE_DEBUG_MAX_FWD_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_MAX_FWD_DEG', '1.2'))
-)
-POSE_DEBUG_MAX_YAW_RATE = float(
-    os.environ.get('POSE_DEBUG_MAX_YAW_RATE', '0.05')
-)
-POSE_DEBUG_MAX_LEAN_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_MAX_LEAN_DEG', '1.5'))
-)
-# 130438: freeze at |pitch|<=1.5° left ~1° lean → slow forward. Tighter exit
-# + wider re-entry (hysteresis) so we don't chatter or cruise on a tip.
-POSE_DEBUG_LEVEL_DONE_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_LEVEL_DONE_DEG', '0.4'))
-)
-POSE_DEBUG_LEVEL_START_RAD = math.radians(
-    float(os.environ.get('POSE_DEBUG_LEVEL_START_DEG', '1.2'))
-)
-POSE_DEBUG_AX_DONE = float(os.environ.get('POSE_DEBUG_AX_DONE', '0.12'))
-POSE_DEBUG_AX_START = float(os.environ.get('POSE_DEBUG_AX_START', '0.40'))
-POSE_DEBUG_RANGE_BRAKE_M = float(os.environ.get('POSE_DEBUG_RANGE_BRAKE_M', '0.8'))
 TAKEOFF_THRUST  = 0.30      # boost until ~0.55 m AGL (see controller)
 TAKEOFF_DURATION_S = 2.5
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
@@ -86,22 +34,13 @@ MAX_DESCENT_THRUST_REDUCTION = 0.020
 # forward lean when VIO thrust PI was not yet tracking a climb command.
 MAX_ASCENT_THRUST_INCREASE = 0.030
 MIN_TILT_COMPENSATION_COSINE = 0.70
-KP_LEAN         = 0.10      # demonstrated forward command → pitch mapping
-OPENCV_KP_LEAN  = 0.16      # stronger gate-racing forward pitch mapping
-OPENCV_LATERAL_LEAN_SIGN = float(
+KP_LEAN         = 0.10      # forward command → pitch mapping
+LATERAL_LEAN_SIGN = float(
     # Direct A/B runs show negative desired roll moves a right-side gate
     # farther inward than positive desired roll in the live VQ2 rate path.
-    os.environ.get('OPENCV_LATERAL_LEAN_SIGN', '-1.0')
+    os.environ.get('LATERAL_LEAN_SIGN', '-1.0')
 )
 MAX_LEAN_RAD    = math.radians(25.0)
-# VQ2's accelerometer magnitude looks gravity-like while its lateral component
-# does not rotate with the visibly banked camera. The demonstration filter's
-# 0.95 gyro weight therefore erases real Q2 bank in roughly 0.2 seconds.
-# Retain slow drift correction, but let the racing controller observe the
-# 1-2 second roll motion that determines lateral momentum.
-OPENCV_AHRS_GYRO_WEIGHT = float(
-    os.environ.get('OPENCV_AHRS_GYRO_WEIGHT', '0.995')
-)
 KP_ATT          = 1.8       # demo: 0.6 normalized gain * 3.0 max rate
 KD_ATT          = 0.09      # demo: 0.03 normalized damping * 3.0 max rate
 KI_ATT          = float(os.environ.get('KI_ATT', '0.0'))
@@ -120,38 +59,6 @@ ATTITUDE_DERIVATIVE_FILTER_TAU_S = float(
 RATE_SIGN_PITCH = -1.0      # sim pitch rate axis is inverted
 RATE_SIGN_ROLL  = -1.0      # measured demo ActionConfig: all rate axes inverted
 RATE_SIGN_YAW   = -1.0      # preserve the recorded demonstration convention
-# Keep OpenCV explicit so the live axis can be calibrated independently.
-# Yaw-only A/B traces isolate this from lateral bank: positive sent yaw moved
-# a right-side gate inward from x=524 to x=492, whereas negative sent yaw
-# moved it outward. Positive is therefore the rightward navigation mapping.
-OPENCV_RATE_SIGN_YAW = float(
-    os.environ.get('OPENCV_RATE_SIGN_YAW', '1.0')
-)
-# Positive sent yaw produces negative raw body-z gyro in VQ2. Convert that
-# sensor axis into the positive/right navigation convention before applying
-# rate feedback.
-OPENCV_YAW_GYRO_SIGN = float(
-    os.environ.get('OPENCV_YAW_GYRO_SIGN', '-1.0')
-)
-OPENCV_YAW_RATE_FEEDBACK_KP = float(
-    os.environ.get('OPENCV_YAW_RATE_FEEDBACK_KP', '0.45')
-)
-OPENCV_YAW_RATE_FEEDBACK_LIMIT = float(
-    os.environ.get('OPENCV_YAW_RATE_FEEDBACK_LIMIT', '0.30')
-)
-# A zero yaw request means "capture the current heading", not "snap to an
-# equal-and-opposite turn".  The simulator responds strongly enough that the
-# normal tracking gain can reverse a +0.58 rad/s turn in one vision interval.
-# Use a deliberately softer brake while the planner requests zero yaw.
-OPENCV_YAW_BRAKE_FEEDBACK_KP = float(
-    os.environ.get('OPENCV_YAW_BRAKE_FEEDBACK_KP', '0.0')
-)
-OPENCV_YAW_BRAKE_FEEDBACK_LIMIT = float(
-    os.environ.get('OPENCV_YAW_BRAKE_FEEDBACK_LIMIT', '0.0')
-)
-OPENCV_YAW_BRAKE_REQUEST_DEADBAND = float(
-    os.environ.get('OPENCV_YAW_BRAKE_REQUEST_DEADBAND', '0.02')
-)
 MAX_RATE_RAD_S  = 1.05      # demo rate_cap 0.35 * 3.0 max rate
 MAX_THRUST      = 0.90
 MIN_THRUST      = 0.05
@@ -161,36 +68,18 @@ SENSOR_FUTURE_TOLERANCE_S = 0.05
 CONTROL_MIN_DT_S = 1.0 / 500.0
 CONTROL_MAX_DT_S = 0.05
 
-# ---- VIO / PnP state estimation ----
-# The VQ2 sim sends no attitude (deprecated) and no LOCAL_POSITION_NED. The
-# StateEstimator (state_estimator.py) manufactures shared_data['attitude'] and
-# shared_data['position_ned'] from HIGHRES_IMU dead-reckoning corrected by
-# YOLO-corner PnP gate fixes (vision/yolo_pnp.py). When enabled it owns the
-# 'attitude' key and MAVLinkRX publishes the sim message as 'attitude_raw'.
+# ---- PnP + IMU state estimation ----
+# The VQ2 sim sends no attitude (deprecated) and no LOCAL_POSITION_NED.
+# ekf_estimator.py / ekf/drone_ekf.py dead-reckon HIGHRES_IMU and correct with
+# dual-gate PnP fixes (vision/dual_gate_pnp.py + vision/yolo_pnp.py),
+# publishing shared_data['position_ned'] for the planner.
 #
 # PID tuning order (matches the procedure proven on the Q2_pnp branch):
 #   1. HOVER_THRUST first — stationary hover, zero commanded velocity.
 #   2. Thrust PI (KP_THRUST_VEL / KI_THRUST_VEL) against vertical steps.
 #   3. Attitude PDs (KP_ATT / KD_ATT, KP_ROLL_ATT / KD_ROLL_ATT).
-#   4. Yaw hold last (KP_YAW_ATT) — the camera FOV is narrow, so keep
-#      YAW_RATE_MAX_DEG_S low or a fast yaw sweeps the gate out of frame.
-# Disabled by default under kalman / pose_debug (cascaded attitude+thrust).
-_NAV_MODE_DEFAULT = os.environ.get(
-    'GATE_NAVIGATION_MODE', 'kalman'
-).strip().lower()
-USE_VIO = _env_bool(
-    'USE_VIO',
-    _NAV_MODE_DEFAULT not in {'kalman', 'pose_debug'},
-)
-VIO_ANCHORS_PATH = os.environ.get('VIO_ANCHORS_PATH', 'gate_anchors.json')
-# VIO attitude/velocity older than this falls back to the AHRS / open-loop
-# thrust paths instead of trusting a stale belief.
-VIO_STATE_TIMEOUT_S = float(os.environ.get('VIO_STATE_TIMEOUT_S', '0.5'))
-# Heading-hold yaw PID (active when the planner requests ~zero yaw rate and a
-# fresh VIO yaw exists). Seeded from the flight-tested Q2_pnp KP_YAW.
-KP_YAW_ATT = float(os.environ.get('KP_YAW_ATT', '2.0'))
-KI_YAW_ATT = float(os.environ.get('KI_YAW_ATT', '0.0'))
-KD_YAW_ATT = float(os.environ.get('KD_YAW_ATT', '0.0'))
+# The camera FOV is narrow, so keep YAW_RATE_MAX_DEG_S low or a fast yaw
+# sweeps the gate out of frame.
 YAW_RATE_MAX_RAD_S = math.radians(
     float(os.environ.get('YAW_RATE_MAX_DEG_S', '70.0'))
 )
@@ -208,25 +97,7 @@ THRUST_INTEGRAL_LIMIT = float(os.environ.get('THRUST_INTEGRAL_LIMIT', '2.5'))
 VIO_THRUST_MIN = float(os.environ.get('VIO_THRUST_MIN', '0.20'))
 VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 
-# ---- Mode selection ----
-# Exactly one racing command owner is selected at process start.  ``opencv``
-# uses the Q2 rate controller below; ``existing_ai`` delegates to the unchanged
-# Dreamer deployment controller under dreamer/.
-# ``kalman`` = dual-gate PnP + EKF + cascaded PID (Q2_kalman default).
-# ``pose_debug`` = hover 2s → approach to 3 m PnP range → hold (no racing).
-# ``opencv`` = legacy IBVS state machine. ``existing_ai`` = Dreamer.
-GATE_NAVIGATION_MODE = os.environ.get(
-    'GATE_NAVIGATION_MODE', 'kalman'
-).strip().lower()
-if GATE_NAVIGATION_MODE not in {
-    'kalman', 'pose_debug', 'opencv', 'existing_ai'
-}:
-    raise ValueError(
-        'GATE_NAVIGATION_MODE must be "kalman", "pose_debug", "opencv", or '
-        f'"existing_ai", not {GATE_NAVIGATION_MODE!r}'
-    )
-
-# Dual-gate EKF path planner knobs
+# ---- Dual-gate EKF path planner knobs ----
 KALMAN_APPROACH_DISTANCE_M = float(
     os.environ.get('KALMAN_APPROACH_DISTANCE_M', '3.5')
 )
@@ -236,19 +107,15 @@ KALMAN_EXIT_DISTANCE_M = float(
 KALMAN_MAX_LEAN_DEG = float(os.environ.get('KALMAN_MAX_LEAN_DEG', '14.0'))
 # Image-IBVS yaw (norm_x). 043043 saturated from lock jumps — keep moderate.
 KALMAN_KP_YAW = float(os.environ.get('KALMAN_KP_YAW', '0.9'))
-USE_KALMAN_EKF = _env_bool('USE_KALMAN_EKF', True)
-
-DREAMER_CHECKPOINT = os.environ.get('DREAMER_CHECKPOINT', '')
-DREAMER_CONFIG     = os.environ.get('DREAMER_CONFIG') or None
-DREAMER_MAX_SECONDS = float(os.environ.get('DREAMER_MAX_SECONDS', '480'))
-
-# Development-only fallbacks (do not override GATE_NAVIGATION_MODE).
-USE_TELEOP = False
-
-# ---- Teleop ----
-TELEOP_SPEED        = 2.0   # m/s forward / strafe
-TELEOP_VSPEED       = 1.5   # m/s climb / descend
-TELEOP_YAW_RATE_DPS = 60.0  # deg/s yaw
+# Inner attitude loop actually flown on this branch: desired lean - measured
+# lean -> body rate. These live in kalman_planner.py, NOT in the KP_ATT /
+# KP_ROLL_ATT gains above (those only serve the velocity fallback path, which
+# the kalman planner never takes). Tune these with tools/tune_flight.py.
+KALMAN_KP_ATT = float(os.environ.get('KALMAN_KP_ATT', '2.2'))
+KALMAN_KD_ATT = float(os.environ.get('KALMAN_KD_ATT', '0.10'))
+KALMAN_MAX_RATE_RAD_S = float(
+    os.environ.get('KALMAN_MAX_RATE_RAD_S', '0.9')
+)
 
 # ---- Camera / geometry ----
 GATE_INNER_M    = 1.5       # gate inner side (m) for range estimation
@@ -257,7 +124,7 @@ CAMERA_CX       = 320.0
 CAMERA_CY       = 180.0
 CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward
 
-# ---- OpenCV vision runtime ----
+# ---- Vision runtime ----
 VISION_UDP_IP             = '0.0.0.0'
 VISION_UDP_PORT           = 5600
 VISION_COMMAND_TIMEOUT_S  = 1.25
@@ -275,11 +142,15 @@ CRASH_FLOOR_D_M           = float(os.environ.get('CRASH_FLOOR_D_M', '0.45'))
 CRASH_CONFIRM_S           = float(os.environ.get('CRASH_CONFIRM_S', '0.35'))
 CRASH_RESET_COOLDOWN_S    = float(os.environ.get('CRASH_RESET_COOLDOWN_S', '4.0'))
 CRASH_ENV_IMPULSE_MIN     = float(os.environ.get('CRASH_ENV_IMPULSE_MIN', '0.15'))
+# VQ2 publishes no LOCAL_POSITION_NED, so crash logic there runs on the EKF.
+# The VQ1 tuning build does publish it; set this to 0 on VQ1 to rehearse the
+# exact crash behaviour VQ2 will give you.
+CRASH_USE_SIM_ODOMETRY    = _env_bool('CRASH_USE_SIM_ODOMETRY', True)
 # Zero preserves the normal race client, which runs until Ctrl+C. A positive
 # value is useful for bounded simulator test attempts and exits through the
 # regular cleanup/disarm path.
-OPENCV_MAX_SECONDS        = float(
-    os.environ.get('OPENCV_MAX_SECONDS', '0')
+RUN_MAX_SECONDS           = float(
+    os.environ.get('RUN_MAX_SECONDS', '0')
 )
 VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
 VISION_DEBUG_INTERVAL_S   = float(

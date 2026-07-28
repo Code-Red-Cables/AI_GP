@@ -1,9 +1,5 @@
-"""Tests for the YOLO-corner PnP solver and the vision_rx pnp_fix publisher."""
+"""Tests for the YOLO-corner PnP solver (vision/yolo_pnp.py)."""
 
-import math
-import threading
-import time
-import types
 import unittest
 
 import cv2
@@ -11,7 +7,6 @@ import numpy as np
 
 import camera_model as cm
 from vision.yolo_pnp import (
-    GATE_OUTER_M,
     MIN_CORNER_SPREAD_PX,
     OBJECT_POINTS,
     solve_corners_pnp,
@@ -80,60 +75,6 @@ class SolveCornersPnPTests(unittest.TestCase):
         corners = project_gate([0.0, 0.0, 0.0], [0.0, 0.0, 6.0])
         corners[2, 0] = float('nan')
         self.assertIsNone(solve_corners_pnp(corners))
-
-
-class PnPFixPublisherTests(unittest.TestCase):
-    """Drive VisionRX._publish_pnp_fix with a faked detector/blackboard."""
-
-    @staticmethod
-    def _fake_vision_rx(keypoints):
-        from vision_rx import VisionRX
-
-        selected = types.SimpleNamespace(keypoints=keypoints)
-        detector = types.SimpleNamespace(
-            last_debug=types.SimpleNamespace(selected=selected)
-        )
-        fake = types.SimpleNamespace(
-            detector=detector,
-            data={'lock': threading.Lock()},
-        )
-        fake.publish = types.MethodType(VisionRX._publish_pnp_fix, fake)
-        return fake
-
-    @staticmethod
-    def _detection(found=True, predicted=False, confidence=0.9):
-        return types.SimpleNamespace(
-            found=found, predicted=predicted, confidence=confidence
-        )
-
-    def test_publishes_fix_for_solved_gate(self):
-        corners = project_gate([0.02, -0.10, 0.0], [0.3, -0.2, 7.0])
-        fake = self._fake_vision_rx(corners)
-        ts = time.time_ns()
-        fake.publish(self._detection(), ts)
-        fix = fake.data.get('pnp_fix')
-        self.assertIsNotNone(fix)
-        self.assertEqual(fix['ts'], ts)
-        self.assertEqual(np.asarray(fix['R_cg']).shape, (3, 3))
-        self.assertEqual(len(fix['t_cg']), 3)
-        self.assertLess(fix['reproj_err_px'], 2.0)
-        self.assertAlmostEqual(fix['range_m'], math.sqrt(49.13), delta=0.1)
-
-    def test_predicted_detection_publishes_nothing(self):
-        corners = project_gate([0.0, 0.0, 0.0], [0.0, 0.0, 7.0])
-        fake = self._fake_vision_rx(corners)
-        fake.publish(self._detection(predicted=True), time.time_ns())
-        self.assertNotIn('pnp_fix', fake.data)
-
-    def test_missing_keypoints_publish_nothing(self):
-        fake = self._fake_vision_rx(None)
-        fake.publish(self._detection(), time.time_ns())
-        self.assertNotIn('pnp_fix', fake.data)
-
-    def test_degenerate_corners_publish_nothing(self):
-        fake = self._fake_vision_rx(np.full((4, 2), 320.0))
-        fake.publish(self._detection(), time.time_ns())
-        self.assertNotIn('pnp_fix', fake.data)
 
 
 if __name__ == '__main__':

@@ -1,13 +1,13 @@
 # Comms
 pymavlink
 
-# Vision
-#cv2
+# Vision (YOLO-pose gate corners -> dual-gate PnP)
 opencv-python
 numpy
 ultralytics>=8.4.106
 
-# Debug
-matplotlib
-keyboard
+# Gate-pose training (tools/train_gate_pose.py)
+pyyaml
+
+# Tests
 pytest>=8

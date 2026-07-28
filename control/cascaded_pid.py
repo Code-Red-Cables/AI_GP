@@ -130,7 +130,7 @@ class CascadedPIDController:
             )
         )
         # Positive right error → negative roll in FRD/NED lean convention used
-        # by the Q2 rate path (OPENCV_LATERAL_LEAN_SIGN = -1).
+        # by the Q2 rate path (LATERAL_LEAN_SIGN = -1).
         des_roll = float(
             np.clip(
                 -(

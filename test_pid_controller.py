@@ -67,31 +67,6 @@ class VioControlLoopTests(unittest.TestCase):
     gain/sign regression fails here before it reaches the simulator.
     """
 
-    def test_yaw_heading_hold_converges_within_rate_cap(self):
-        import config
-
-        pid = PIDController(
-            PIDConfig(
-                kp=config.KP_YAW_ATT,
-                ki=config.KI_YAW_ATT,
-                kd=config.KD_YAW_ATT,
-                output_min=-config.YAW_RATE_MAX_RAD_S,
-                output_max=config.YAW_RATE_MAX_RAD_S,
-            )
-        )
-        target = math.radians(30.0)
-        yaw = 0.0
-        dt = 0.01
-        max_commanded = 0.0
-        # Plant: the FC tracks the commanded physical yaw rate perfectly.
-        for _ in range(300):
-            error = math.atan2(math.sin(target - yaw), math.cos(target - yaw))
-            rate = pid.update(error, dt)
-            max_commanded = max(max_commanded, abs(rate))
-            yaw += rate * dt
-        self.assertLess(abs(target - yaw), math.radians(1.0))
-        self.assertLessEqual(max_commanded, config.YAW_RATE_MAX_RAD_S + 1e-9)
-
     def test_thrust_pi_arrests_descent_and_trims_to_hover(self):
         import config
 

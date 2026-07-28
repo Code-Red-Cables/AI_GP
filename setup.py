@@ -58,36 +58,13 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         time.sleep(max(0.0, config.SIM_RESET_SETTLE_S))
     vision_rx  = VisionRX(shared_data)
 
-    # State estimation: kalman EKF (default on Q2_kalman) or legacy VIO.
-    state_estimator = None
-    if config.GATE_NAVIGATION_MODE == 'kalman' and config.USE_KALMAN_EKF:
-        from ekf_estimator import EKFEstimator
-        state_estimator = EKFEstimator.create_ekf_estimator(shared_data)
-        logger.log_event('EKF', 'dual_gate_pnp+imu')
-    elif config.USE_VIO:
-        from state_estimator import StateEstimator
-        state_estimator = StateEstimator(
-            shared_data, anchors_path=config.VIO_ANCHORS_PATH
-        )
-        logger.log_event('VIO', f'anchors={config.VIO_ANCHORS_PATH}')
+    # State estimation: dual-gate PnP fixes + IMU dead reckoning.
+    from ekf_estimator import EKFEstimator
+    state_estimator = EKFEstimator.create_ekf_estimator(shared_data)
+    logger.log_event('EKF', 'dual_gate_pnp+imu')
 
-    # Planner selection. Racing modes are exclusive; OpenCV never blends with
-    # Dreamer output. existing_ai is handled before this function in main.py.
-    if config.GATE_NAVIGATION_MODE == 'kalman':
-        from kalman_planner import KalmanDualGatePlanner
-        planner = KalmanDualGatePlanner()
-    elif config.GATE_NAVIGATION_MODE == 'pose_debug':
-        from pose_debug_planner import PoseDebugPlanner
-        planner = PoseDebugPlanner()
-    elif config.GATE_NAVIGATION_MODE == 'opencv':
-        from opencv_gate_planner import OpenCVGatePlanner
-        planner = OpenCVGatePlanner()
-    elif config.USE_TELEOP:
-        from teleop import TeleopPlanner
-        planner = TeleopPlanner(shared_data)
-    else:
-        from planner import Planner
-        planner = Planner()
+    from kalman_planner import KalmanDualGatePlanner
+    planner = KalmanDualGatePlanner()
 
     logger.log_event('PLANNER', planner.name)
     shared_data['planner'] = planner

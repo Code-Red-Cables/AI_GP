@@ -1,4 +1,4 @@
-"""Receive Q2 camera datagrams and publish tracked OpenCV navigation."""
+"""Receive Q2 camera datagrams and publish dual-gate PnP observations."""
 
 from __future__ import annotations
 
@@ -14,28 +14,17 @@ import cv2
 import numpy as np
 
 import config
-from gate_estimator import estimate_gate
 from vision.gate_detector import (
-    DetectorDebug,
-    GateDetection,
     GateVisionConfig,
     OrangeGateDetector,
     draw_detection,
 )
 from vision.gate_bearings import (
     GateBearingTable,
-    clamp_contact_vertical,
-    detection_from_observation,
-    draw_bearing_overlay,
     observe_pose_candidates,
-    post_pass_lock_allowed,
-    select_visible_next_observation,
 )
-from vision.gate_tracker import GateTracker, q2_demo_tracker_config
-from vision.navigation import GateNavigator, q2_demo_navigation_config
 from vision.dual_gate_pnp import observe_two_closest_gates
 from vision.yolo_pnp import draw_gate_frame_axes
-from vision.yolo_pnp import solve_corners_pnp
 
 
 def save_gate_capture(
@@ -241,72 +230,12 @@ def create_gate_detector():
     return detector
 
 
-def course_lookahead_horizontal(
-    primary: GateDetection,
-    debug: DetectorDebug,
-) -> float | None:
-    """Find a smaller supported gate visible beyond the active gate."""
-    if primary is None or not primary.found:
-        return None
-    height, width = debug.cleaned_mask.shape[:2]
-    if width <= 0 or height <= 0:
-        return None
-    scale = max(float(debug.scale), 1e-9)
-    primary_x = primary.center_x * scale
-    primary_y = primary.center_y * scale
-    candidates = []
-    for item in debug.candidates:
-        if (
-            not item.accepted
-            or item.confidence < 0.45
-            or item.features.get('supported_sides', 0.0) < 3.0
-        ):
-            continue
-        center_x, center_y = item.center
-        separation = np.hypot(
-            (center_x - primary_x) / width,
-            (center_y - primary_y) / height,
-        )
-        if separation < 0.12:
-            continue
-        normalized_x = (center_x - width / 2.0) / (width / 2.0)
-        normalized_y = (center_y - height / 2.0) / (height / 2.0)
-        bbox_area_ratio = (
-            item.bbox[2] * item.bbox[3] / float(width * height)
-        )
-        if (
-            bbox_area_ratio < 0.0015
-            or abs(normalized_x) > 0.85
-            or normalized_y > 0.65
-        ):
-            continue
-        candidates.append(
-            (
-                item.confidence + 0.10 * min(1.0, bbox_area_ratio / 0.02),
-                float(normalized_x),
-            )
-        )
-    return max(candidates)[1] if candidates else None
-
-
 class VisionRX:
 
     def __init__(self, data):
         self.data = data
-        # pose_debug reuses the dual-gate PnP publish / overlay path.
-        _nav = str(
-            data.get('gate_navigation_mode') or config.GATE_NAVIGATION_MODE
-        ).lower()
-        self._kalman_mode = _nav in {'kalman', 'pose_debug'}
         self.detector = create_gate_detector()
-        # Legacy IBVS path kept only for GATE_NAVIGATION_MODE=opencv.
-        self.tracker = None if self._kalman_mode else GateTracker(
-            q2_demo_tracker_config()
-        )
-        self.navigator = None if self._kalman_mode else GateNavigator(
-            q2_demo_navigation_config()
-        )
-        # Needed in kalman too for post-pass COURSE_BEARING (0725).
+        # Post-pass COURSE_BEARING for the next gate (0725).
         self.bearing_table = GateBearingTable()
         # 0 (not None): None→first-seen=1 skipped pass handling entirely
         # (072414 had GATE_PASSED but no KALMAN_PASS / COURSE_BEARING).
@@ -647,37 +576,27 @@ class VisionRX:
                 if callable(unfreeze):
                     unfreeze()
 
-            if self._kalman_mode:
-                # Dual-gate EKF path: drop sticky association so the next
-                # nearest centered gate wins (065915 chased u≈600 edge junk).
-                reset_target_lock = getattr(
-                    self.detector, 'reset_target_lock', None
-                )
-                if reset_target_lock is not None:
-                    reset_target_lock()
-                begin_next_gate = getattr(
-                    self.detector, 'begin_next_gate_acquisition', None
-                )
-                if begin_next_gate is not None:
-                    begin_next_gate(now)
-                self.data['dual_gate_pnp'] = None
-                self.data['gate_detection'] = None
-                print(
-                    f'[VISION] kalman gate pass → active={active_gate}',
-                    flush=True,
-                )
-                log_event = self.data.get('log_event')
-                if log_event:
-                    log_event('KALMAN_PASS', f'active={active_gate}')
-            else:
-                self.tracker.reset()
-                if course_bearing is not None:
-                    self.navigator.seed_next_gate_bearing(
-                        course_bearing.horizontal_normalized,
-                        course_bearing.vertical_normalized,
-                        freeze_for_slew=True,
-                    )
-                self.navigator.confirm_gate_pass(now)
+            # Dual-gate EKF path: drop sticky association so the next
+            # nearest centered gate wins (065915 chased u≈600 edge junk).
+            reset_target_lock = getattr(
+                self.detector, 'reset_target_lock', None
+            )
+            if reset_target_lock is not None:
+                reset_target_lock()
+            begin_next_gate = getattr(
+                self.detector, 'begin_next_gate_acquisition', None
+            )
+            if begin_next_gate is not None:
+                begin_next_gate(now)
+            self.data['dual_gate_pnp'] = None
+            self.data['gate_detection'] = None
+            print(
+                f'[VISION] kalman gate pass → active={active_gate}',
+                flush=True,
+            )
+            log_event = self.data.get('log_event')
+            if log_event:
+                log_event('KALMAN_PASS', f'active={active_gate}')
         elif active_gate < self._last_active_gate:
             # Race/sim reset rewound the index — allow future passes again.
             # Keep _pre_pass_contact: 0841 cleared the good h=+0.12/5.4m
@@ -779,7 +698,6 @@ class VisionRX:
         had_pair = self.bearing_table.has_contact_pair
         self.bearing_table.update(observations, now)
         contact = self.bearing_table.contact_secondary_bearing()
-        nxt = contact if contact is not None else self.bearing_table.peek_next(now)
         # Keep the best near secondary seen on approach for the pass moment
         # when the FOV is filled and the contact pair disappears (0835).
         # Clamp wide headings so a usable 3–5 m contact is never discarded.
@@ -805,17 +723,6 @@ class VisionRX:
             ):
                 self._pre_pass_contact = stored
                 self._pre_pass_contact_t = now
-        # Pre-seed from the live second-nearest gate so approach keeps contact
-        # and a late pass still has a direction (opencv navigator only).
-        if (
-            self.navigator is not None
-            and nxt is not None
-            and self.navigator._confirmed_gate_passes == 0
-        ):
-            self.navigator.seed_next_gate_bearing(
-                nxt.horizontal_normalized,
-                nxt.vertical_normalized,
-            )
         if (
             self.bearing_table.has_contact_pair
             and (
@@ -1204,52 +1111,20 @@ class VisionRX:
             'n_solved': 1 if obs.gate2 is None else 2,
         }
 
-    def _publish_pnp_fix(self, measured, timestamp_ns: int) -> None:
-        """PnP-solve the pose detector's raw corners and feed the VIO.
-
-        Reuses the keypoints the YoloPoseGateDetector already produced for
-        this frame (no second inference). Only real detections qualify —
-        tracker predictions have no fresh corners. The solve itself rejects
-        degenerate quads and planar-ambiguity flips via reprojection error.
-        """
-        if not config.USE_VIO:
-            return
-        if measured is None or not measured.found or measured.predicted:
-            return
-        debug = getattr(self.detector, 'last_debug', None)
-        selected = getattr(debug, 'selected', None)
-        keypoints = getattr(selected, 'keypoints', None)
-        if keypoints is None:
-            return
-        gate = solve_corners_pnp(keypoints, confidence=measured.confidence)
-        if gate is None:
-            return
-        fix = {
-            'ts': timestamp_ns,
-            'R_cg': gate.R_cg.tolist(),
-            't_cg': gate.t_cg.tolist(),
-            'reproj_err_px': gate.reproj_err_px,
-            'range_m': gate.range_m,
-        }
-        lock = self.data.get('lock')
-        if lock is not None:
-            with lock:
-                self.data['pnp_fix'] = fix
-        else:
-            self.data['pnp_fix'] = fix
-
     # ------------------------------------------------------------------
-    def _process_frame_kalman(
+    def process_frame(
         self,
         frame_id: int,
         img: np.ndarray,
-        sim_time_ns: int | None,
-        jpeg_bytes: bytes | None,
-        monotonic_now: float,
-        timestamp_ns: int,
-        started: float,
+        sim_time_ns: int | None = None,
+        jpeg_bytes: bytes | None = None,
     ) -> None:
-        """YOLO + dual-gate PnP only — no IBVS navigator / bearing chase."""
+        """YOLO + dual-gate PnP only — feeds the EKF, never IBVS."""
+        started = time.perf_counter()
+        monotonic_now = time.monotonic()
+        timestamp_ns = time.time_ns()
+
+        self._consume_confirmed_gate_pass(monotonic_now)
         # Keep YOLO prefer aligned with planner retargets (live_retarget).
         set_prefer = getattr(self.detector, 'set_prefer_horizontal', None)
         if callable(set_prefer):
@@ -1383,357 +1258,3 @@ class VisionRX:
                     accepted_targets,
                 )
 
-    def process_frame(
-        self,
-        frame_id: int,
-        img: np.ndarray,
-        sim_time_ns: int | None = None,
-        jpeg_bytes: bytes | None = None,
-    ):
-        started = time.perf_counter()
-        monotonic_now = time.monotonic()
-        timestamp_ns = time.time_ns()
-
-        self._consume_confirmed_gate_pass(monotonic_now)
-        if self._kalman_mode:
-            self._process_frame_kalman(
-                frame_id, img, sim_time_ns, jpeg_bytes, monotonic_now,
-                timestamp_ns, started,
-            )
-            return
-        hint = self.tracker.hint(monotonic_now)
-        measured = self.detector.detect(
-            img,
-            hint=hint,
-            timestamp=monotonic_now,
-        )
-        self._capture_gate_frame(
-            measured,
-            frame_id,
-            img,
-            jpeg_bytes,
-            monotonic_now,
-        )
-        self._publish_pnp_fix(measured, timestamp_ns)
-        self._update_bearing_table(img, monotonic_now)
-        height, width = img.shape[:2]
-        # Nearest-two policy before a pass: IBVS-approach live_primary while
-        # feeding live_secondary as contact lookahead. After a pass, prefer a
-        # live detection matching the remembered near next gate.
-        visible_next = None
-        if self.navigator._confirmed_gate_passes > 0:
-            look_h = (
-                self.navigator._post_pass_look_horizontal
-                if self.navigator._post_pass_look_horizontal is not None
-                else self.navigator._pending_next_gate_horizontal
-            )
-            # Only lock a live gate if it matches the remembered *near* next
-            # target. A far end-of-course gate through the opening is ignored.
-            visible_next = select_visible_next_observation(
-                self.bearing_table.last_observations,
-                look_horizontal=look_h,
-                expected_range_m=self.bearing_table.expected_next_range_m,
-            )
-        steer_measured = measured
-        primary = self.bearing_table.live_primary
-        if (
-            self.navigator._confirmed_gate_passes == 0
-            and primary is not None
-            and (
-                measured is None
-                or not measured.found
-                or measured.predicted
-                or (
-                    measured.distance_m is not None
-                    and math.isfinite(float(measured.distance_m))
-                    and float(measured.distance_m) > 1.35 * primary.range_m
-                )
-            )
-        ):
-            # YOLO largest-lock can stick on a farther instance; force the
-            # nearest near-course gate as the approach target.
-            steer_measured = detection_from_observation(
-                primary, width, height, monotonic_now, role='approach'
-            )
-        if visible_next is not None:
-            steer_measured = detection_from_observation(
-                visible_next, width, height, monotonic_now, role='visible_next'
-            )
-        # After a pass, never IBVS-chase a sky/far speck — that path took
-        # telem_031946 to gv=18, RECOVER, then an Environment smash. Prefer
-        # open-loop course bearing until a plausible next gate appears.
-        if (
-            self.navigator._confirmed_gate_passes > 0
-            and not post_pass_lock_allowed(
-                steer_measured,
-                expected_range_m=self.bearing_table.expected_next_range_m,
-            )
-        ):
-            steer_measured = None
-        tracked = self.tracker.update(
-            steer_measured
-            if steer_measured is not None
-            and steer_measured.found
-            and not steer_measured.predicted
-            else None,
-            timestamp=monotonic_now,
-        )
-        next_gate_horizontal = course_lookahead_horizontal(
-            measured, self.detector.last_debug
-        )
-        next_gate_vertical = None
-        contact = self.bearing_table.contact_secondary_bearing()
-        course_bearing = self.bearing_table.peek_next(monotonic_now)
-        # During the post-pass slew, do not feed live/table bearings into the
-        # navigator — that path overwrote a good +0.53 latch with -0.30.
-        if self.navigator.in_post_pass_slew(monotonic_now):
-            next_gate_horizontal = None
-            next_gate_vertical = None
-        elif (
-            self.navigator._confirmed_gate_passes == 0
-            and contact is not None
-        ):
-            # Maintain contact with the second-nearest gate while approaching
-            # the first — prefer the live secondary over stale image lookahead.
-            next_gate_horizontal = contact.horizontal_normalized
-            next_gate_vertical = clamp_contact_vertical(
-                contact.vertical_normalized
-            )
-        elif course_bearing is not None:
-            if next_gate_horizontal is None:
-                next_gate_horizontal = course_bearing.horizontal_normalized
-            next_gate_vertical = clamp_contact_vertical(
-                course_bearing.vertical_normalized
-            )
-        # Prefer post-pass visible-next, else nearest primary override, else
-        # the normal tracker output. After a pass with no safe lock, clear the
-        # target so SEARCH follows the frozen course bearing.
-        nav_target = tracked
-        if (
-            visible_next is not None
-            and steer_measured is not None
-            and steer_measured.found
-            and post_pass_lock_allowed(
-                steer_measured,
-                expected_range_m=self.bearing_table.expected_next_range_m,
-            )
-        ):
-            nav_target = steer_measured
-        elif (
-            self.navigator._confirmed_gate_passes == 0
-            and primary is not None
-            and steer_measured is not None
-            and steer_measured.found
-            and str(getattr(steer_measured, 'method', '')).startswith(
-                'approach_'
-            )
-        ):
-            nav_target = steer_measured
-        elif (
-            self.navigator._confirmed_gate_passes > 0
-            and not post_pass_lock_allowed(
-                nav_target,
-                expected_range_m=self.bearing_table.expected_next_range_m,
-            )
-        ):
-            nav_target = None
-        command = self.navigator.update(
-            nav_target,
-            monotonic_now,
-            next_gate_horizontal=next_gate_horizontal,
-            next_gate_vertical=next_gate_vertical,
-        )
-        # Once the slew window ends and we have a real lock, allow the table
-        # to rebuild the remaining course from fresh multi-gate views.
-        if (
-            self.bearing_table._frozen
-            and not self.navigator.in_post_pass_slew(monotonic_now)
-            and tracked is not None
-            and tracked.found
-            and not tracked.predicted
-            and command.state.value
-            in ('TRACK', 'ALIGN_AND_APPROACH')
-        ):
-            self.bearing_table.unfreeze()
-        if (
-            command.state.value == 'PASS_THROUGH'
-            and tracked is not None
-            and tracked.predicted
-        ):
-            # COMMIT intentionally treats a missing measured gate as a pass.
-            # Do not let that just-passed track reject the spatially separate
-            # next gate for the tracker's remaining prediction frames.
-            self.tracker.reset()
-        state = command.state.value
-        self._log_state(state)
-
-        gate_detection = None
-        if tracked is not None and tracked.found:
-            gate_detection = {
-                'center_px': tracked.center_px,
-                'corners_px': tracked.corners_px,
-                'bbox_px': tracked.bbox_px,
-                'area_px': tracked.area_px,
-                'confidence': tracked.confidence,
-                'method': tracked.method,
-                'predicted': tracked.predicted,
-                'frame_id': frame_id,
-                'ts': timestamp_ns,
-            }
-
-        attitude = self.data.get('attitude')
-        position = self.data.get('local_position_ned')
-        position_ned = None
-        if position:
-            position_ned = (
-                position.get('x', 0.0),
-                position.get('y', 0.0),
-                position.get('z', 0.0),
-            )
-        gate_estimate = estimate_gate(
-            tracked,
-            attitude=attitude,
-            position_ned=position_ned,
-            ts=timestamp_ns,
-        )
-
-        navigation = {
-            'ts': timestamp_ns,
-            'sim_time_ns': sim_time_ns,
-            'frame_id': frame_id,
-            'forward_mps': command.forward_mps,
-            'right_mps': command.right_mps,
-            'down_mps': command.down_mps,
-            'yaw_rate_rps': command.yaw_rate_rps,
-            'state': state,
-            'confidence': command.confidence,
-            'predicted': command.predicted,
-            'alignment_error': command.alignment_error,
-            'requested_forward_mps': command.requested_forward_mps,
-            'framing_limited': command.framing_limited,
-            'framing_edge': command.framing_edge,
-            # Tracker velocity is normalized image width per second. It is the
-            # observed angular motion of the target and therefore captures the
-            # combined effect of lateral velocity and yaw rate.
-            'gate_velocity_x': (
-                tracked.velocity_x if tracked is not None else None
-            ),
-            'gate_velocity_y': (
-                tracked.velocity_y if tracked is not None else None
-            ),
-            'horizontal_lead_error': (
-                tracked.normalized_x
-                + (
-                    self.navigator.config.lateral_kd
-                    / max(self.navigator.config.lateral_kp, 1e-6)
-                )
-                * tracked.velocity_x
-                if tracked is not None
-                else None
-            ),
-            'next_gate_horizontal': next_gate_horizontal,
-            'active_gate': self._last_active_gate,
-        }
-        total_ms = (time.perf_counter() - started) * 1000.0
-
-        # Each value is replaced atomically so readers never see a partial dict.
-        self.data['gate_detection'] = gate_detection
-        self.data['vision'] = gate_estimate
-        self.data['navigation'] = navigation
-        self.data['vision_timings_ms'] = {
-            **self.detector.last_debug.timings_ms,
-            'tracker': self.tracker.last_update_ms,
-            'total': total_ms,
-        }
-
-        should_save_debug = (
-            config.VISION_DEBUG
-            and time.time() - self._last_debug_t
-            >= config.VISION_DEBUG_INTERVAL_S
-        )
-        if self._display_enabled or should_save_debug:
-            annotated = img.copy()
-            if self._overlay_enabled:
-                try:
-                    annotated = draw_detection(
-                        img,
-                        tracked,
-                        debug=self.detector.last_debug,
-                        state=state,
-                        command=command,
-                        total_time_ms=total_ms,
-                        show_rejected_candidates=False,
-                        show_accepted_candidates=False,
-                        show_mask_insets=False,
-                    )
-                    draw_hybrid_overlay = getattr(
-                        self.detector, 'draw_debug_overlay', None
-                    )
-                    if draw_hybrid_overlay is not None:
-                        annotated = draw_hybrid_overlay(annotated)
-                    look_h = (
-                        self.navigator._post_pass_look_horizontal
-                        if self.navigator._post_pass_look_horizontal
-                        is not None
-                        else self.navigator._pending_next_gate_horizontal
-                    )
-                    look_v = (
-                        self.navigator._post_pass_look_vertical
-                        if self.navigator._post_pass_look_vertical
-                        is not None
-                        else self.navigator._pending_next_gate_vertical
-                    )
-                    annotated = draw_bearing_overlay(
-                        annotated,
-                        self.bearing_table,
-                        pending_horizontal=look_h,
-                        pending_vertical=look_v,
-                    )
-                    if self.navigator.in_post_pass_slew(monotonic_now):
-                        cv2.putText(
-                            annotated,
-                            'POST-PASS SLEW (turning to NEXT)',
-                            (10, annotated.shape[0] - 36),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.55,
-                            (0, 255, 255),
-                            2,
-                            cv2.LINE_AA,
-                        )
-                except Exception as exc:
-                    self._overlay_enabled = False
-                    print(
-                        '[VISION] annotation disabled; detection continues: '
-                        f'{type(exc).__name__}: {exc}',
-                        flush=True,
-                    )
-            if not self._overlay_enabled:
-                cv2.putText(
-                    annotated,
-                    'ANNOTATION DISABLED - DETECTION STILL RUNNING',
-                    (10, 24),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.48,
-                    (0, 0, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-            if self._display_enabled:
-                accepted_targets = self.build_accepted_target_frame(
-                    annotated.shape,
-                    tracked,
-                )
-                self._show_display(
-                    annotated.copy(),
-                    self.detector.last_debug.cleaned_mask,
-                    accepted_targets,
-                )
-        if should_save_debug:
-            self._last_debug_t = time.time()
-            cv2.imwrite(
-                os.path.join(
-                    config.VISION_DEBUG_DIR,
-                    f'frame_{frame_id:06d}.jpg',
-                ),
-                annotated,
-            )

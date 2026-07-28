@@ -1,11 +1,10 @@
 """Complementary-filter AHRS: fuse gyro (short-term) + accelerometer gravity (long-term)
 into a clean roll/pitch estimate that survives dynamic motion — unlike accel-only tilt,
-which is only valid near 1 g and made the naive baseline limit-cycle.
+which is only valid near 1 g.
 
-Used ONLY by the demonstration autopilot (training-time replay seeding). It is NOT part
-of the deployed DreamerV3 policy (which stays RSSM-only per the design). Yaw is integrated
-from gyro for relative heading but drifts (no magnetometer) — the autopilot steers heading
-from vision, not absolute yaw.
+Feeds the rate controller's attitude loop (controller.py). Yaw is integrated from gyro for
+relative heading but drifts (no magnetometer) — heading is steered from vision / the
+dual-gate PnP fix, not from absolute yaw.
 """
 from __future__ import annotations
 

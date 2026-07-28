@@ -1,6 +1,6 @@
 # Custom gate model weights
 
-The preferred model is the four-keypoint pose model:
+The runtime uses the four-keypoint pose model:
 
 ```text
 models/gate_pose.pt
@@ -12,11 +12,10 @@ Place the Roboflow YOLOv8 keypoint export at:
 datasets/AI_GP.v1i.yolov8/
 ```
 
-Its current four points are outer-gate corners in TL, TR, BL, BR order. The
-runtime uses the YOLO box center for steering and these points only for
-high-confidence orientation; it deliberately does not pass them to
-inner-opening PnP. Ensure `data.yaml` uses dataset-local paths and correct
-horizontal flip semantics:
+Its four points are outer-gate corners in TL, TR, BL, BR order. They feed
+`vision/yolo_pnp.py` / `vision/dual_gate_pnp.py` for the PnP range and bearing
+fixes that correct the EKF. Ensure `data.yaml` uses dataset-local paths and
+correct horizontal flip semantics:
 
 ```yaml
 train: train/images
@@ -33,47 +32,12 @@ Train locally and install `models/gate_pose.pt`:
 .\.venv\Scripts\python.exe tools\train_gate_pose.py
 ```
 
-The older bounding-box/HSV hybrid remains supported. Its weights go at:
+The model must contain a class named `gate`. Generic COCO weights are useful as
+a training starting point, but they are rejected for live inference because they
+do not define the custom racing-gate class.
 
-```text
-models/gate_detector.pt
-```
-
-The model must contain a detection class named `gate`. Generic COCO weights
-are useful as a training starting point, but they are intentionally rejected
-for live inference because they do not define the custom racing-gate class.
-
-Dataset layout:
-
-```text
-datasets/gates/
-  images/train/
-  images/val/
-  labels/train/
-  labels/val/
-```
-
-Create those empty folders with:
-
-```powershell
-.\.venv\Scripts\python.exe tools\train_gate_yolo.py --init-dataset
-```
-
-Each label is standard YOLO detection format:
-
-```text
-0 center_x center_y width height
-```
-
-Coordinates are normalized to `[0, 1]`. Label each physical gate separately,
-including gates that overlap in the same image. The repository's existing
-`frames/` images may be used as source material, but they are not currently
-labeled and cannot train YOLO by themselves.
-
-Train and install the resulting best weights:
-
-```powershell
-.\.venv\Scripts\python.exe tools\train_gate_yolo.py
-```
-
-The script copies `best.pt` to `models/gate_detector.pt`.
+`models/gate_detector.pt` (bounding-box weights) is optional: the box detector
+in `vision/yolo_gate_detector.py` is retained only as the shared box/HSV
+scaffolding used by the pose detector, and `GATE_DETECTOR_BACKEND=yolo_hybrid`
+is a fallback for detector debugging. It cannot drive the PnP path on its own
+because it produces no corners.
