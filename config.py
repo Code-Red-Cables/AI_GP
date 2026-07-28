@@ -198,7 +198,7 @@ VISION_UDP_IP             = '0.0.0.0'
 VISION_UDP_PORT           = 5600
 VISION_COMMAND_TIMEOUT_S  = 1.25
 VISION_DEBUG              = _env_bool('VISION_DEBUG', False)
-VISION_DISPLAY            = _env_bool('VISION_DISPLAY', False)
+VISION_DISPLAY            = _env_bool('VISION_DISPLAY', True)
 PERCEPTION_ONLY           = _env_bool('PERCEPTION_ONLY', False)
 RESET_SIM_ON_START        = _env_bool('RESET_SIM_ON_START', False)
 SIM_RESET_SETTLE_S        = float(
@@ -228,7 +228,7 @@ GATE_FRAME_CAPTURE_INTERVAL_S = float(
 # and finally prints an explicit warning before preserving the legacy HSV
 # detector. Explicit backends fail fast when their weights are missing.
 GATE_DETECTOR_BACKEND = os.environ.get(
-    'GATE_DETECTOR_BACKEND', 'auto'
+    'GATE_DETECTOR_BACKEND', 'yolo_pose'
 ).strip().lower()
 if GATE_DETECTOR_BACKEND not in {
     'auto', 'yolo_pose', 'yolo_hybrid', 'hsv'

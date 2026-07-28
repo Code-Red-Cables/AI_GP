@@ -66,6 +66,11 @@ def create_gate_detector():
         return model_path
 
     pose_model_path = resolved_model_path(config.YOLO_POSE_MODEL_PATH)
+    if not pose_model_path.is_file():
+        # Local training export often lives at the repo root before install.
+        alt_pose = repository_root / 'gate_yolo_pose_v1.pt'
+        if alt_pose.is_file():
+            pose_model_path = alt_pose
     box_model_path = resolved_model_path(config.YOLO_MODEL_PATH)
     use_pose = backend == 'yolo_pose' or (
         backend == 'auto' and pose_model_path.is_file()
@@ -74,7 +79,9 @@ def create_gate_detector():
         if not pose_model_path.is_file():
             raise FileNotFoundError(
                 '[VISION] custom YOLO gate pose weights are missing at '
-                f'{pose_model_path}; run tools/train_gate_pose.py'
+                f'{pose_model_path} (also tried gate_yolo_pose_v1.pt); '
+                'run tools/train_gate_pose.py or copy weights to '
+                'models/gate_pose.pt'
             )
         from vision.yolo_pose_gate_detector import (
             PoseGateConfig,
