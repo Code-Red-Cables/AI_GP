@@ -1,3 +1,5 @@
+import threading
+
 from pymavlink import mavutil
 
 import config
@@ -9,6 +11,12 @@ from vision_rx import VisionRX
 
 
 def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
+    # The VIO state estimator reads/writes the blackboard under this lock;
+    # the other components keep their existing atomic-replace access.
+    shared_data.setdefault('lock', threading.Lock())
+    # Dead-reckoning stays parked (ZUPT) until main.py arms the drone.
+    shared_data.setdefault('flight_started', False)
+
     # Logger first — all other components call shared_data['log_event']
     logger = Logger(shared_data)
     logger.log_event('BOOT', f'{server_ip}:{server_udp_port}')
@@ -29,6 +37,17 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         import time
         time.sleep(max(0.0, config.SIM_RESET_SETTLE_S))
     vision_rx  = VisionRX(shared_data)
+
+    # VIO: IMU dead-reckoning + gate-PnP corrections. Owns
+    # shared_data['attitude'] and shared_data['position_ned'] (mavlink_rx
+    # publishes the sim's ATTITUDE as 'attitude_raw' while this is enabled).
+    state_estimator = None
+    if config.USE_VIO:
+        from state_estimator import StateEstimator
+        state_estimator = StateEstimator(
+            shared_data, anchors_path=config.VIO_ANCHORS_PATH
+        )
+        logger.log_event('VIO', f'anchors={config.VIO_ANCHORS_PATH}')
 
     # Planner selection. Racing modes are exclusive; OpenCV never blends with
     # Dreamer output. existing_ai is handled before this function in main.py.
@@ -56,4 +75,5 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         'sim_conn':   sim_conn,
         'controller': controller,
         'planner':    planner,
+        'state_estimator': state_estimator,
     }

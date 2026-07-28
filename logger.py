@@ -75,7 +75,9 @@ class Logger:
         ctrl = d.get('control_output')  or {}
         gate = d.get('gate_detection')
         nav  = d.get('navigation')      or {}
-        pos  = d.get('local_position_ned') or {}
+        # VIO-owned position_ned when present; VQ1 sim odometry otherwise.
+        pos  = d.get('position_ned') or d.get('local_position_ned') or {}
+        vio  = d.get('vio_stats')        or {}
         race = d.get('race_status')     or {}
         vis  = d.get('vision')          or {}
         tel  = d.get('teleop_cmd')      or {}
@@ -168,10 +170,16 @@ class Logger:
             'gate_vel_x':      self._f(nav.get('gate_velocity_x')),
             'gate_vel_y':      self._f(nav.get('gate_velocity_y')),
             'nav_lead_x':      self._f(nav.get('horizontal_lead_error')),
-            # optional simulator telemetry and pass confirmation
+            # position/velocity belief (VIO when enabled, else sim odometry)
+            'pos_n':          self._f(pos.get('x')),
+            'pos_e':          self._f(pos.get('y')),
+            'pos_d':          self._f(pos.get('z')),
             'vel_n':          self._f(pos.get('vx')),
             'vel_e':          self._f(pos.get('vy')),
             'vel_d':          self._f(pos.get('vz')),
+            'att_source':     att.get('source', 'sim'),
+            'vio_fixes':      str(vio.get('fixes', 0)),
+            'vio_fix_rejects': str(vio.get('fixes_rejected', 0)),
             'active_gate':    race.get('active_gate', 'nan'),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),

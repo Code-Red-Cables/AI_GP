@@ -1,5 +1,7 @@
 """Receive Q2 camera datagrams and publish tracked OpenCV navigation."""
 
+from __future__ import annotations
+
 import os
 import socket
 import struct
@@ -21,6 +23,7 @@ from vision.gate_detector import (
 )
 from vision.gate_tracker import GateTracker, q2_demo_tracker_config
 from vision.navigation import GateNavigator, q2_demo_navigation_config
+from vision.yolo_pnp import solve_corners_pnp
 
 
 def save_gate_capture(
@@ -582,6 +585,41 @@ class VisionRX:
             )
 
     # ------------------------------------------------------------------
+    def _publish_pnp_fix(self, measured, timestamp_ns: int) -> None:
+        """PnP-solve the pose detector's raw corners and feed the VIO.
+
+        Reuses the keypoints the YoloPoseGateDetector already produced for
+        this frame (no second inference). Only real detections qualify —
+        tracker predictions have no fresh corners. The solve itself rejects
+        degenerate quads and planar-ambiguity flips via reprojection error.
+        """
+        if not config.USE_VIO:
+            return
+        if measured is None or not measured.found or measured.predicted:
+            return
+        debug = getattr(self.detector, 'last_debug', None)
+        selected = getattr(debug, 'selected', None)
+        keypoints = getattr(selected, 'keypoints', None)
+        if keypoints is None:
+            return
+        gate = solve_corners_pnp(keypoints, confidence=measured.confidence)
+        if gate is None:
+            return
+        fix = {
+            'ts': timestamp_ns,
+            'R_cg': gate.R_cg.tolist(),
+            't_cg': gate.t_cg.tolist(),
+            'reproj_err_px': gate.reproj_err_px,
+            'range_m': gate.range_m,
+        }
+        lock = self.data.get('lock')
+        if lock is not None:
+            with lock:
+                self.data['pnp_fix'] = fix
+        else:
+            self.data['pnp_fix'] = fix
+
+    # ------------------------------------------------------------------
     def process_frame(
         self,
         frame_id: int,
@@ -607,6 +645,7 @@ class VisionRX:
             jpeg_bytes,
             monotonic_now,
         )
+        self._publish_pnp_fix(measured, timestamp_ns)
         tracked = self.tracker.update(
             measured
             if measured.found and not measured.predicted

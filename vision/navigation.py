@@ -1293,9 +1293,9 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # top or bottom of the frame.
         vertical_control_min_area_ratio=0.0,
         # Gate-two y is not a reliable altitude cue during the initial hard
-        # right turn. The stronger-descent A/B hit the floor sooner while the
-        # gate still moved down in the image. Hold hover until yaw/lateral
-        # alignment enters this corridor, then resume vertical centering.
+        # right turn. The 21:13 A/B commanded up to 0.60 m/s descent while
+        # the gate still fell from y=131 to y=306 and struck the frame.
+        # Hold hover until yaw/lateral alignment enters this corridor.
         vertical_control_max_horizontal_error=0.35,
         search_forward_mps=0.0,
         search_close_forward_mps=0.12,
@@ -1358,13 +1358,12 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # target from the edge toward the flight corridor.
         yaw_first_lateral_full_normalized=0.35,
         yaw_first_lateral_zero_normalized=0.75,
-        # Gate two initially appears high-right.  The 08:45 trace reached
-        # 0.95 rad/s of right yaw while the horizon stayed nearly level and
-        # the gate remained at x=540-580: yaw alone rotates the camera but
-        # cannot put the airframe on the gate's flight line.  Preserve a
-        # bounded 80% lateral handoff at the edge, then ramp to full
-        # translation as the gate enters the corridor.
-        yaw_first_lateral_minimum_scale=0.80,
+        # Gate two initially appears high-right. In the 21:20 trace, the 80%
+        # edge handoff held about 4 degrees of right bank while the gate made
+        # a 1.4 s inward/outward excursion and rotated from y=136 to y=305.
+        # Retain a small flight-line handoff, then ramp to full translation
+        # only as yaw brings the opening into the capture corridor.
+        yaw_first_lateral_minimum_scale=0.20,
         # Start active braking only when measured inward image velocity
         # projects into the central corridor. Latching at the first inward
         # sample previously stopped correction near x=500, far from center.

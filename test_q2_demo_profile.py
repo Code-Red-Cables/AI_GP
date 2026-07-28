@@ -81,7 +81,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.horizontal_yaw_kd, 0.75)
         self.assertAlmostEqual(cfg.lateral_kp, 1.15)
         self.assertAlmostEqual(cfg.lateral_kd, 2.50)
-        self.assertAlmostEqual(cfg.yaw_first_lateral_minimum_scale, 0.80)
+        self.assertAlmostEqual(cfg.yaw_first_lateral_minimum_scale, 0.20)
         self.assertAlmostEqual(
             cfg.horizontal_capture_brake_lateral_gain, 1.50
         )
@@ -557,6 +557,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         command = navigator.update(high_right_edge_gate, 1.1)
 
         self.assertGreater(command.right_mps, 0.0)
+        self.assertLessEqual(command.right_mps, 0.12)
         self.assertLessEqual(
             command.right_mps,
             navigator.config.max_right_mps,

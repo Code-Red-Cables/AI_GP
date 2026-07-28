@@ -113,6 +113,21 @@ def test_generic_pose_weights_are_rejected():
         )
 
 
+def test_loaded_pose_model_is_warmed_before_detector_is_ready(monkeypatch):
+    model = _FakeModel([([], [], [])])
+    monkeypatch.setattr(
+        YoloPoseGateDetector,
+        "_load_model",
+        lambda self: model,
+    )
+
+    YoloPoseGateDetector(PoseGateConfig())
+
+    assert len(model.calls) == 1
+    assert model.calls[0]["source"].shape == (360, 640, 3)
+    assert model.calls[0]["imgsz"] == 640
+
+
 def test_pose_uses_box_center_and_keeps_outer_corners_debug_only():
     detector = YoloPoseGateDetector(
         PoseGateConfig(
@@ -588,6 +603,32 @@ def test_hsv_refined_center_is_used_only_for_small_supported_shift():
     assert result.method.startswith("yolo_pose_hsv_refined_center")
     assert result.center_x > 200.0
     assert detector.last_pose_debug.center_source == "hsv_refined_center"
+
+
+def test_missing_orientation_keeps_stable_yolo_box_center():
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    cv2.rectangle(image, (112, 65), (292, 255), (0, 105, 255), -1)
+    cv2.rectangle(image, (145, 100), (260, 220), (0, 0, 0), -1)
+    rows, points, _ = _frame()
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            require_hsv_confirmation=True,
+            hsv_center_blend=0.5,
+            hsv_center_max_shift_fraction=0.20,
+            log_interval_s=999,
+        ),
+        model=_FakeModel(
+            [(rows, points, ((0.9, 0.1, 0.9, 0.9),))]
+        ),
+    )
+
+    result = detector.detect(image, timestamp=1.0)
+
+    assert result.found
+    assert result.method == "yolo_pose_hsv_box_center_no_orientation"
+    assert result.center_px == (200.0, 160.0)
+    assert detector.last_pose_debug.center_source == "yolo_box_center"
 
 
 def test_global_hsv_fallback_is_explicit_and_lower_confidence():

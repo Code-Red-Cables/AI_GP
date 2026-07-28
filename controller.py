@@ -77,6 +77,35 @@ class Controller:
                 maximum_dt_s=config.CONTROL_MAX_DT_S,
             )
         )
+        # VIO-only loops. Heading hold engages when the planner requests ~zero
+        # yaw rate and a fresh VIO yaw exists; the thrust PI closes the
+        # vertical-velocity loop the open-loop path cannot (VQ2 has no baro).
+        self._yaw_pid = PIDController(
+            PIDConfig(
+                kp=config.KP_YAW_ATT,
+                ki=config.KI_YAW_ATT,
+                kd=config.KD_YAW_ATT,
+                output_min=-config.YAW_RATE_MAX_RAD_S,
+                output_max=config.YAW_RATE_MAX_RAD_S,
+                integral_min=-config.ATTITUDE_INTEGRAL_LIMIT,
+                integral_max=config.ATTITUDE_INTEGRAL_LIMIT,
+                minimum_dt_s=config.CONTROL_MIN_DT_S,
+                maximum_dt_s=config.CONTROL_MAX_DT_S,
+            )
+        )
+        self._thrust_pid = PIDController(
+            PIDConfig(
+                kp=config.KP_THRUST_VEL,
+                ki=config.KI_THRUST_VEL,
+                output_min=config.VIO_THRUST_MIN - config.MAX_THRUST,
+                output_max=config.VIO_THRUST_MAX,
+                integral_min=-config.THRUST_INTEGRAL_LIMIT,
+                integral_max=config.THRUST_INTEGRAL_LIMIT,
+                minimum_dt_s=config.CONTROL_MIN_DT_S,
+                maximum_dt_s=config.CONTROL_MAX_DT_S,
+            )
+        )
+        self._yaw_hold_target = None
 
     def _log_safety(self, reason):
         if reason == self._last_safety_reason:
@@ -89,7 +118,37 @@ class Controller:
     def _reset_control_state(self):
         self._pitch_pid.reset()
         self._roll_pid.reset()
+        self._yaw_pid.reset()
+        self._thrust_pid.reset()
+        self._yaw_hold_target = None
         self._last_control_at = None
+
+    def _vio_state(self):
+        """Return fresh VIO-owned (attitude, position) dicts, or Nones.
+
+        The StateEstimator stamps its blackboard entries with source='vio'.
+        A stale belief (thread died, vision starved at boot) must not be
+        trusted, so anything older than VIO_STATE_TIMEOUT_S falls back to the
+        AHRS / open-loop paths.
+        """
+        if not config.USE_VIO:
+            return None, None
+        now_ns = time.time_ns()
+
+        def fresh(entry):
+            return (
+                entry is not None
+                and entry.get('source') == 'vio'
+                and now_ns - entry.get('ts', 0)
+                < config.VIO_STATE_TIMEOUT_S * 1e9
+            )
+
+        attitude = self.data.get('attitude')
+        position = self.data.get('position_ned')
+        return (
+            attitude if fresh(attitude) else None,
+            position if fresh(position) else None,
+        )
 
     def _demo_attitude(self):
         """Update and return collect_demos.py's legal-telemetry AHRS state."""
@@ -162,6 +221,16 @@ class Controller:
         roll, pitch, rollspeed, pitchspeed, yawspeed, telemetry_ok = (
             self._demo_attitude()
         )
+        vio_att, vio_pos = self._vio_state()
+        if vio_att is not None:
+            # The VIO integrates the same raw gyro as the AHRS (identical
+            # sign conventions) but adds gravity + gate-PnP corrections, so
+            # its roll/pitch are absolute rather than drift-prone.
+            roll = float(vio_att['roll'])
+            pitch = float(vio_att['pitch'])
+            rollspeed = float(vio_att['rollspeed'])
+            pitchspeed = float(vio_att['pitchspeed'])
+            yawspeed = float(vio_att['yawspeed'])
         yaw = float(att.get('yaw', 0.0))
         if not math.isfinite(yaw):
             yaw = 0.0
@@ -228,6 +297,7 @@ class Controller:
         requested_yaw_rate = yaw_rate
         measured_yaw_rate = 0.0
         yaw_rate_feedback = 0.0
+        yaw_hold_active = False
         if planner_mode.startswith('opencv_'):
             measured_yaw_rate = (
                 yawspeed * config.OPENCV_YAW_GYRO_SIGN
@@ -236,6 +306,30 @@ class Controller:
                 abs(requested_yaw_rate)
                 <= config.OPENCV_YAW_BRAKE_REQUEST_DEADBAND
             )
+            if not braking_to_hold_heading:
+                self._yaw_hold_target = None
+            if braking_to_hold_heading and vio_att is not None:
+                # Heading hold: capture the VIO yaw at the moment the planner
+                # stops turning and actively hold it, instead of the passive
+                # brake gains (which default to zero, i.e. free drift).
+                if self._yaw_hold_target is None:
+                    self._yaw_hold_target = yaw
+                    self._yaw_pid.reset()
+                yaw_error = math.atan2(
+                    math.sin(self._yaw_hold_target - yaw),
+                    math.cos(self._yaw_hold_target - yaw),
+                )
+                physical_yaw_rate = self._yaw_pid.update(
+                    yaw_error,
+                    dt,
+                    measurement_rate=yawspeed,
+                )
+                # Positive sent yaw produces negative raw body-z gyro — the
+                # same axis flip OPENCV_YAW_GYRO_SIGN measures — so a desired
+                # physical yaw rate maps to the sent command through it too.
+                yaw_rate = physical_yaw_rate * config.OPENCV_YAW_GYRO_SIGN
+                yaw_hold_active = True
+        if planner_mode.startswith('opencv_') and not yaw_hold_active:
             feedback_kp = (
                 config.OPENCV_YAW_BRAKE_FEEDBACK_KP
                 if braking_to_hold_heading
@@ -265,24 +359,35 @@ class Controller:
                 corrected_yaw_rate = 0.0
                 yaw_rate_feedback = -requested_yaw_rate
             yaw_rate = corrected_yaw_rate * config.OPENCV_RATE_SIGN_YAW
-        else:
+        elif not planner_mode.startswith('opencv_'):
             yaw_rate = requested_yaw_rate * config.RATE_SIGN_YAW
         yaw_rate = max(
             -config.MAX_RATE_RAD_S,
             min(config.MAX_RATE_RAD_S, yaw_rate),
         )
 
-        # Thrust remains open-loop because VQ2 has no usable altitude feedback,
-        # but visual descent must not remove enough lift to drop the vehicle
-        # onto the floor. Compensate for the vertical lift lost while leaning.
+        # Thrust: with a fresh VIO velocity the vertical loop is CLOSED — the
+        # PI tracks the commanded NED down-velocity ``vd`` against the VIO's
+        # vz belief. Without VIO (or during a vision-starved dropout) thrust
+        # falls back to the open-loop lean-compensated hover baseline.
         # vd < 0 means climb → add thrust; vd > 0 means descend → reduce thrust.
-        thrust_adjustment = min(
-            config.MAX_ASCENT_THRUST_INCREASE,
-            max(
-                -config.MAX_DESCENT_THRUST_REDUCTION,
-                -vd * config.KP_THRUST,
-            ),
-        )
+        vio_vz = None
+        if vio_pos is not None:
+            candidate_vz = vio_pos.get('vz')
+            if candidate_vz is not None and math.isfinite(candidate_vz):
+                vio_vz = float(candidate_vz)
+        thrust_closed_loop = telemetry_ok and target_ok and vio_vz is not None
+        if thrust_closed_loop:
+            # Positive error = descending faster than commanded → more thrust.
+            thrust_adjustment = self._thrust_pid.update(vio_vz - vd, dt)
+        else:
+            thrust_adjustment = min(
+                config.MAX_ASCENT_THRUST_INCREASE,
+                max(
+                    -config.MAX_DESCENT_THRUST_REDUCTION,
+                    -vd * config.KP_THRUST,
+                ),
+            )
         level_thrust = config.HOVER_THRUST + thrust_adjustment
         if (
             telemetry_ok
@@ -296,7 +401,14 @@ class Controller:
             math.cos(roll) * math.cos(pitch),
         )
         thrust = level_thrust / vertical_lift_fraction
-        thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
+        if thrust_closed_loop:
+            # Closed-loop floor keeps prop wash / attitude authority while
+            # descending; the ceiling matches the flight-tested VIO limits.
+            thrust = max(
+                config.VIO_THRUST_MIN, min(config.VIO_THRUST_MAX, thrust)
+            )
+        else:
+            thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
         if not all(
             math.isfinite(value)
             for value in (roll_rate, pitch_rate, yaw_rate, thrust)
@@ -325,8 +437,14 @@ class Controller:
             'thrust_adjustment': thrust_adjustment,
             'vertical_command': vd,
             'vertical_velocity': (
-                (self.data.get('local_position_ned') or {}).get('vz')
+                vio_vz
+                if vio_vz is not None
+                else (self.data.get('local_position_ned') or {}).get('vz')
             ),
+            'vio_attitude_active': vio_att is not None,
+            'thrust_closed_loop': thrust_closed_loop,
+            'yaw_hold_active': yaw_hold_active,
+            'yaw_hold_target': self._yaw_hold_target,
             'safety_reason': self._last_safety_reason,
         }
 

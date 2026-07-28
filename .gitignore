@@ -7,6 +7,7 @@ __pycache__/
 # Virtualenv
 venv/
 .venv/
+.venv_mac/
 
 # DreamerV3 training outputs (large / regenerable)
 dreamer/artifacts/runs/

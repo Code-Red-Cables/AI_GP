@@ -56,6 +56,9 @@ def run_opencv():
     else:
         print('Arming drone...', flush=True)
         controller.arm()
+        # Release the VIO's pre-flight ZUPT: dead-reckoning may only start
+        # once the drone can actually leave its spawn point.
+        shared_data['flight_started'] = True
     print('Control loop running -- Ctrl+C to exit', flush=True)
 
     run_started_at = time.monotonic()
@@ -83,8 +86,17 @@ def run_opencv():
         if not config.PERCEPTION_ONLY:
             controller.disarm()
         logger.stop()
-        for name in ('ts_loop', 'mavlink_rx', 'vision_rx'):
-            components[name].get_thread_for_join().join(timeout=1.0)
+        for name in ('ts_loop', 'mavlink_rx', 'vision_rx', 'state_estimator'):
+            component = components.get(name)
+            if component is not None:
+                component.get_thread_for_join().join(timeout=1.0)
+        state_estimator = components.get('state_estimator')
+        if state_estimator is not None:
+            state_estimator.save_anchors()
+            print(
+                f'Gate anchors saved: {sorted(state_estimator.anchors)}',
+                flush=True,
+            )
         print('Client exited!', flush=True)
 
 

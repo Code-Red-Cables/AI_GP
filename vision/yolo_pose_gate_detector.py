@@ -558,7 +558,10 @@ class YoloPoseGateDetector:
         model: Any = None,
     ):
         self.config = config
-        self.model = model if model is not None else self._load_model()
+        model_was_injected = model is not None
+        self.model = model if model_was_injected else self._load_model()
+        if not model_was_injected:
+            self._warm_up_model()
         self.last_debug = DetectorDebug(
             raw_mask=np.zeros((1, 1), dtype=np.uint8),
             cleaned_mask=np.zeros((1, 1), dtype=np.uint8),
@@ -603,6 +606,16 @@ class YoloPoseGateDetector:
                 f"expected pose weights, but model task is {task!r}"
             )
         return model
+
+    def _warm_up_model(self) -> None:
+        """Pay the backend's first-inference cost before flight can arm."""
+        print("[VISION] warming YOLO pose inference...", flush=True)
+        detect_gate_poses(
+            np.zeros((360, 640, 3), dtype=np.uint8),
+            self.model,
+            self.config,
+        )
+        print("[VISION] YOLO pose inference ready", flush=True)
 
     def reset_target_lock(self) -> None:
         self._previous_target = None
@@ -711,6 +724,8 @@ class YoloPoseGateDetector:
         center_x, center_y = candidate.box.center
         center_source = "yolo_box_center"
         if (
+            pose_corners is not None
+            and
             self.config.require_hsv_confirmation
             and candidate.hsv_confirmed
             and candidate.hsv_refined_center is not None
@@ -768,9 +783,11 @@ class YoloPoseGateDetector:
                 if self.config.require_hsv_confirmation
                 else "yolo_pose_box_center_no_orientation"
             )
-            # The box center is the steering measurement; missing orientation
-            # keypoints must not demote an otherwise YOLO+HSV-confirmed gate
-            # below the tracker/navigation acquisition thresholds.
+            # Keep the YOLO box center when orientation is unavailable. The
+            # 21:29 Training Two trace changed from x=505 to x=553 on a
+            # no-orientation HSV center, reversing bank and losing gate two.
+            # Missing keypoints still must not demote an otherwise
+            # YOLO+HSV-confirmed gate below navigation thresholds.
             confidence = (
                 0.80 * candidate.box.confidence
                 + 0.20 * candidate.hsv_geometry_score

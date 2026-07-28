@@ -111,6 +111,46 @@ SENSOR_FUTURE_TOLERANCE_S = 0.05
 CONTROL_MIN_DT_S = 1.0 / 500.0
 CONTROL_MAX_DT_S = 0.05
 
+# ---- VIO / PnP state estimation ----
+# The VQ2 sim sends no attitude (deprecated) and no LOCAL_POSITION_NED. The
+# StateEstimator (state_estimator.py) manufactures shared_data['attitude'] and
+# shared_data['position_ned'] from HIGHRES_IMU dead-reckoning corrected by
+# YOLO-corner PnP gate fixes (vision/yolo_pnp.py). When enabled it owns the
+# 'attitude' key and MAVLinkRX publishes the sim message as 'attitude_raw'.
+#
+# PID tuning order (matches the procedure proven on the Q2_pnp branch):
+#   1. HOVER_THRUST first — stationary hover, zero commanded velocity.
+#   2. Thrust PI (KP_THRUST_VEL / KI_THRUST_VEL) against vertical steps.
+#   3. Attitude PDs (KP_ATT / KD_ATT, KP_ROLL_ATT / KD_ROLL_ATT).
+#   4. Yaw hold last (KP_YAW_ATT) — the camera FOV is narrow, so keep
+#      YAW_RATE_MAX_DEG_S low or a fast yaw sweeps the gate out of frame.
+USE_VIO = _env_bool('USE_VIO', True)
+VIO_ANCHORS_PATH = os.environ.get('VIO_ANCHORS_PATH', 'gate_anchors.json')
+# VIO attitude/velocity older than this falls back to the AHRS / open-loop
+# thrust paths instead of trusting a stale belief.
+VIO_STATE_TIMEOUT_S = float(os.environ.get('VIO_STATE_TIMEOUT_S', '0.5'))
+# Heading-hold yaw PID (active when the planner requests ~zero yaw rate and a
+# fresh VIO yaw exists). Seeded from the flight-tested Q2_pnp KP_YAW.
+KP_YAW_ATT = float(os.environ.get('KP_YAW_ATT', '2.0'))
+KI_YAW_ATT = float(os.environ.get('KI_YAW_ATT', '0.0'))
+KD_YAW_ATT = float(os.environ.get('KD_YAW_ATT', '0.0'))
+YAW_RATE_MAX_RAD_S = math.radians(
+    float(os.environ.get('YAW_RATE_MAX_DEG_S', '70.0'))
+)
+# Vertical-velocity thrust PI (closes the loop the open-loop path cannot:
+# thrust = HOVER_THRUST + PID(vd_measured - vd_target)). Gains seeded from the
+# Q2_pnp branch fit of vertical accel vs commanded thrust.
+KP_THRUST_VEL = float(os.environ.get('KP_THRUST_VEL', '0.25'))
+KI_THRUST_VEL = float(os.environ.get('KI_THRUST_VEL', '0.06'))
+# Integral state bound in (m/s)*s: contribution bound = KI_THRUST_VEL * limit
+# (2.5 * 0.06 = 0.15 thrust — enough to absorb a hover-thrust misfit without
+# letting a blind stretch wind the collective to the ceiling).
+THRUST_INTEGRAL_LIMIT = float(os.environ.get('THRUST_INTEGRAL_LIMIT', '2.5'))
+# Closed-loop thrust floor keeps prop wash / attitude authority during descent
+# (the open-loop path keeps its own MIN_THRUST).
+VIO_THRUST_MIN = float(os.environ.get('VIO_THRUST_MIN', '0.20'))
+VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
+
 # ---- Mode selection ----
 # Exactly one racing command owner is selected at process start.  ``opencv``
 # uses the Q2 rate controller below; ``existing_ai`` delegates to the unchanged

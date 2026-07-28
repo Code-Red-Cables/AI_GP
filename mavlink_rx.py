@@ -4,6 +4,8 @@ import threading
 
 from pymavlink import mavutil
 
+import config
+
 ENCAPSULATED_RACE_STATUS_MSG_ID = 1
 ENCAPSULATED_TRACK_INFO_MSG_ID  = 2
 
@@ -76,8 +78,12 @@ class MAVLinkRX:
 
     def on_attitude(self, msg):
         # NOTE: ATTITUDE is marked disabled in VQ2 spec but still arrives.
-        # This is our only yaw source (AHRS has no magnetometer in sim).
-        self.data['attitude'] = {
+        # With USE_VIO the StateEstimator owns shared_data['attitude'], so the
+        # sim message is published as 'attitude_raw' for logging/comparison
+        # only. Without VIO it remains the only yaw source (AHRS has no
+        # magnetometer in sim).
+        key = 'attitude_raw' if config.USE_VIO else 'attitude'
+        self.data[key] = {
             'roll':       msg.roll,
             'pitch':      msg.pitch,
             'yaw':        msg.yaw,
