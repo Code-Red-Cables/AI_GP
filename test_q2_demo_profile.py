@@ -46,14 +46,14 @@ class DemoNavigationProfileTests(unittest.TestCase):
         cfg = q2_demo_navigation_config()
         tracker_cfg = q2_demo_tracker_config()
         self.assertAlmostEqual(cfg.search_forward_mps, 0.0)
-        self.assertAlmostEqual(cfg.search_close_forward_mps, 0.12)
-        self.assertAlmostEqual(cfg.maximum_approach_mps, 0.42)
-        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.24)
+        self.assertAlmostEqual(cfg.search_close_forward_mps, 0.06)
+        self.assertAlmostEqual(cfg.maximum_approach_mps, 0.22)
+        self.assertAlmostEqual(cfg.vertical_setpoint_normalized, 0.0)
         self.assertAlmostEqual(
             cfg.post_pass_vertical_setpoint_normalized,
-            -0.25,
+            -0.08,
         )
-        self.assertAlmostEqual(cfg.vertical_deadband, 0.20)
+        self.assertAlmostEqual(cfg.vertical_deadband, 0.06)
         self.assertAlmostEqual(cfg.vertical_descent_deadband, 0.02)
         self.assertAlmostEqual(cfg.vertical_kp, 0.8)
         self.assertAlmostEqual(cfg.vertical_kd, 2.30)
@@ -63,11 +63,11 @@ class DemoNavigationProfileTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             cfg.severe_horizontal_forward_cap_mps,
-            0.16,
+            0.08,
         )
         self.assertAlmostEqual(
             config.MAX_DESCENT_THRUST_REDUCTION,
-            0.025,
+            0.020,
         )
         self.assertAlmostEqual(
             cfg.vertical_control_min_area_ratio,
@@ -111,25 +111,27 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertAlmostEqual(cfg.lateral_countersteer_gain, 3.00)
         self.assertAlmostEqual(cfg.countersteer_max_lateral_mps, 0.40)
         self.assertAlmostEqual(cfg.yaw_countersteer_gain, 2.25)
-        self.assertAlmostEqual(cfg.countersteer_forward_floor_mps, 0.34)
+        self.assertAlmostEqual(cfg.countersteer_forward_floor_mps, 0.18)
         self.assertAlmostEqual(cfg.command_lpf_alpha, 0.68)
         self.assertAlmostEqual(cfg.max_lateral_acceleration, 3.2)
         self.assertAlmostEqual(cfg.max_right_mps, 0.40)
-        self.assertAlmostEqual(cfg.max_up_mps, 0.35)
-        self.assertAlmostEqual(cfg.max_down_mps, 0.60)
-        self.assertAlmostEqual(cfg.recover_forward_mps, 0.28)
-        self.assertAlmostEqual(cfg.recover_close_forward_mps, 0.24)
+        self.assertAlmostEqual(cfg.max_up_mps, 0.32)
+        self.assertAlmostEqual(cfg.max_down_mps, 0.40)
+        self.assertAlmostEqual(cfg.recover_forward_mps, 0.14)
+        self.assertAlmostEqual(cfg.recover_close_forward_mps, 0.12)
         self.assertAlmostEqual(cfg.recover_lateral_mps, 0.0)
         self.assertAlmostEqual(cfg.recover_prediction_scale, 0.65)
-        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.65)
+        self.assertAlmostEqual(cfg.max_yaw_rate_rps, 0.45)
         self.assertAlmostEqual(cfg.commit_maximum_duration_s, 1.20)
         self.assertAlmostEqual(cfg.recover_local_duration_s, 0.75)
         self.assertEqual(cfg.minimum_forward_mps, 0.0)
-        self.assertEqual(cfg.close_approach_mps, 0.30)
-        self.assertEqual(cfg.minimum_approach_mps, 0.34)
-        self.assertEqual(cfg.track_forward_mps, 0.32)
-        self.assertEqual(cfg.commit_forward_mps, 0.46)
-        self.assertAlmostEqual(cfg.prepass_lookahead_weight, 0.0)
+        self.assertEqual(cfg.close_approach_mps, 0.15)
+        self.assertEqual(cfg.minimum_approach_mps, 0.18)
+        self.assertEqual(cfg.track_forward_mps, 0.16)
+        self.assertEqual(cfg.commit_forward_mps, 0.24)
+        self.assertAlmostEqual(cfg.prepass_lookahead_weight, 0.55)
+        self.assertAlmostEqual(cfg.secondary_contact_yaw_kp, 0.55)
+        self.assertAlmostEqual(cfg.next_gate_maximum_primary_horizontal, 0.90)
         self.assertEqual(cfg.path_lateral_kp, 0.0)
         self.assertEqual(cfg.path_yaw_kp, 0.0)
         self.assertGreater(
@@ -151,21 +153,22 @@ class DemoNavigationProfileTests(unittest.TestCase):
         self.assertAlmostEqual(
             tracker_cfg.trusted_minimum_seed_area_ratio, 0.0012
         )
-        self.assertEqual(config.YOLO_MIN_GATE_AREA_PX, 250.0)
-        self.assertEqual(config.GATE_MIN_CONTOUR_AREA, 30.0)
+        self.assertEqual(config.YOLO_MIN_GATE_AREA_PX, 100.0)
+        self.assertEqual(config.GATE_MIN_CONTOUR_AREA, 12.0)
         self.assertEqual(config.GATE_HSV_LOWER, (0, 75, 140))
         self.assertEqual(config.GATE_HSV_UPPER, (23, 255, 255))
         self.assertAlmostEqual(config.KP_LEAN, 0.10)
         self.assertAlmostEqual(config.OPENCV_KP_LEAN, 0.16)
-        self.assertAlmostEqual(config.MAX_ASCENT_THRUST_INCREASE, 0.010)
+        self.assertAlmostEqual(config.MAX_ASCENT_THRUST_INCREASE, 0.030)
+        self.assertAlmostEqual(config.HOVER_THRUST, 0.24)
         self.assertAlmostEqual(config.KP_ROLL_ATT, 2.6)
         self.assertAlmostEqual(config.KD_ROLL_ATT, 0.22)
         self.assertAlmostEqual(config.YOLO_CONFIDENCE_THRESHOLD, 0.45)
         self.assertEqual(config.YOLO_ACQUISITION_CONFIRMATION_FRAMES, 1)
-        self.assertAlmostEqual(config.YOLO_HSV_MIN_ORANGE_RATIO, 0.08)
-        self.assertAlmostEqual(config.YOLO_HSV_MAX_ORANGE_RATIO, 0.85)
-        self.assertAlmostEqual(config.YOLO_HSV_MIN_SIDE_DENSITY, 0.06)
-        self.assertEqual(config.YOLO_HSV_MIN_SUPPORTED_SIDES, 2)
+        self.assertFalse(config.YOLO_REQUIRE_HSV_CONFIRMATION)
+        self.assertFalse(config.GLOBAL_HSV_FALLBACK_ENABLED)
+        self.assertEqual(config.GATE_DETECTOR_BACKEND, 'yolo_pose')
+        self.assertAlmostEqual(config.YOLO_HSV_CENTER_BLEND, 0.0)
         self.assertFalse(config.RESET_SIM_ON_START)
         self.assertEqual(config.OPENCV_MAX_SECONDS, 0.0)
 
@@ -514,7 +517,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
         )
         self.assertGreater(far_speed, close_speed)
         self.assertGreater(close_speed, very_close_speed)
-        self.assertEqual(very_close_speed, 0.30)
+        self.assertEqual(very_close_speed, 0.15)
 
     def test_gate_capture_coordinates_yaw_and_bank_near_edge(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -864,7 +867,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
             forward_command.forward_mps,
             stopping_command.forward_mps,
         )
-        self.assertGreaterEqual(forward_command.forward_mps, 0.33)
+        self.assertGreaterEqual(forward_command.forward_mps, 0.17)
 
     def test_confirmed_pass_releases_old_gate_immediately(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -917,7 +920,10 @@ class DemoNavigationProfileTests(unittest.TestCase):
         command = navigator.update(None, 1.3)
 
         self.assertEqual(command.state, NavigationState.SEARCH)
-        self.assertAlmostEqual(command.yaw_rate_rps, 0.0)
+        # Multi-gate / latched next-gate bearing must rotate SEARCH toward the
+        # remembered right-hand gate. Open-loop post-pass yaw is sign-flipped
+        # on VQ2 relative to image IBVS (run 022119).
+        self.assertLess(command.yaw_rate_rps, 0.0)
 
     def test_recovery_banks_toward_last_gate_without_reversing(self):
         navigator = GateNavigator(q2_demo_navigation_config())
@@ -1155,7 +1161,7 @@ class DemoNavigationProfileTests(unittest.TestCase):
 
         self.assertEqual(command.state, NavigationState.ALIGN_AND_APPROACH)
         self.assertGreater(command.down_mps, 0.0)
-        self.assertGreater(command.forward_mps, 0.20)
+        self.assertGreater(command.forward_mps, 0.10)
         self.assertFalse(command.framing_limited)
         self.assertGreaterEqual(
             command.requested_forward_mps,

@@ -35,5 +35,9 @@ logs/*.txt
 
 # OS
 .DS_Store
+# Windows reserved device name — accidental `> nul` redirects create this file
+# and `git add` then fails with "unable to index file 'nul'".
+nul
+NUL
 
 # Kept intentionally (measured data): artifacts/probe/

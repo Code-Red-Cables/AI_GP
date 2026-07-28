@@ -64,6 +64,24 @@ class NavigationConfig:
     minimum_state_duration_s: float = 0.10
     commit_maximum_duration_s: float = 0.65
     pass_through_duration_s: float = 0.85
+    # None keeps the historical commit-forward coast through the opening.
+    pass_through_forward_mps: Optional[float] = None
+    # Body-down command while clearing a gate. Negative = climb / look up so
+    # the next elevated gate enters the camera instead of staying above the
+    # top of the frame after the forward-pitch approach.
+    pass_through_down_mps: float = 0.0
+    # Mild climb while hunting after a confirmed pass (SEARCH with no lock).
+    post_pass_search_down_mps: float = 0.0
+    # After a scored pass, ignore new detections and freeze the latched look
+    # bearing for this long so SEARCH can actually rotate onto gate N+1.
+    # Without this, a junk top-of-frame lock cancels the turn within ~0.2 s.
+    post_pass_slew_duration_s: float = 1.00
+    # Run 022119: latched next_h=+0.63 and commanded +0.55 yaw, but measured
+    # heading ran 0.06 → -1.0 (opposite). The open-loop post-pass turn must use
+    # the opposite sign from the image-IBVS yaw mapping on this VQ2 rate axis.
+    post_pass_search_yaw_gain: float = -0.90
+    post_pass_search_yaw_limit_rps: float = 0.55
+    post_pass_search_forward_mps: float = 0.20
     recover_local_duration_s: float = 1.35
 
     search_forward_mps: float = 0.04
@@ -140,6 +158,11 @@ class NavigationConfig:
     next_gate_yaw_kp: float = 0.0
     next_gate_max_right_mps: float = 0.0
     next_gate_max_yaw_rate_rps: float = 0.0
+    # When |next_gate_horizontal| exceeds this, add keep-in-view yaw even if
+    # the primary is not yet centered (maintain contact with gate two).
+    secondary_contact_edge_normalized: float = 0.55
+    secondary_contact_yaw_kp: float = 0.0
+    secondary_contact_max_yaw_rate_rps: float = 0.0
     prepass_lookahead_weight: float = 1.0
     pass_through_lookahead_delay_s: float = 0.20
     framing_soft_edge_normalized: float = 0.58
@@ -177,6 +200,11 @@ class GateNavigator:
         self._last_alignment_command = np.zeros(3, dtype=np.float64)
         self._previous_alignment_error = 1.0
         self._pending_next_gate_horizontal: Optional[float] = None
+        self._pending_next_gate_vertical: Optional[float] = None
+        # Frozen look target used only during the post-pass slew window.
+        self._post_pass_look_horizontal: Optional[float] = None
+        self._post_pass_look_vertical: Optional[float] = None
+        self._post_pass_slew_until: Optional[float] = None
         self._horizontal_capture_side = 0.0
         self._yaw_capture_side = 0.0
         self._confirmed_gate_passes = 0
@@ -248,10 +276,50 @@ class GateNavigator:
         self._last_alignment_command[:] = 0.0
         self._previous_alignment_error = 1.0
         self._pending_next_gate_horizontal = None
+        self._pending_next_gate_vertical = None
+        self._post_pass_look_horizontal = None
+        self._post_pass_look_vertical = None
+        self._post_pass_slew_until = None
         self._horizontal_capture_side = 0.0
         self._yaw_capture_side = 0.0
         self._confirmed_gate_passes = 0
         self._reset_image_pids()
+
+    def in_post_pass_slew(self, now: Optional[float] = None) -> bool:
+        if self._post_pass_slew_until is None:
+            return False
+        if now is None:
+            return True
+        return now < self._post_pass_slew_until
+
+    def seed_next_gate_bearing(
+        self,
+        horizontal_normalized: float,
+        vertical_normalized: Optional[float] = None,
+        *,
+        freeze_for_slew: bool = False,
+    ) -> None:
+        """Latch a multi-gate course bearing for post-pass SEARCH/PASS_THROUGH."""
+        # Never let a live table refresh overwrite the frozen post-pass look.
+        if self.in_post_pass_slew() and not freeze_for_slew:
+            return
+        self._pending_next_gate_horizontal = float(
+            np.clip(horizontal_normalized, -1.0, 1.0)
+        )
+        if vertical_normalized is not None:
+            # Match gate_bearings contact clamp — never seed a sky stare.
+            self._pending_next_gate_vertical = float(
+                np.clip(vertical_normalized, -0.35, 0.45)
+            )
+        if abs(self._pending_next_gate_horizontal) > 0.02:
+            self._last_direction = (
+                1.0 if self._pending_next_gate_horizontal > 0.0 else -1.0
+            )
+        if freeze_for_slew:
+            self._post_pass_look_horizontal = (
+                self._pending_next_gate_horizontal
+            )
+            self._post_pass_look_vertical = self._pending_next_gate_vertical
 
     def _transition(
         self, new_state: NavigationState, now: float, force: bool = False
@@ -306,11 +374,20 @@ class GateNavigator:
             if vertical_error > 0.0
             else cfg.vertical_deadband
         )
+        # Descent toward a low gate can wait for yaw/lateral capture. Climb is
+        # altitude safety: if the aim point is above the gate in the image we
+        # are already too low, so never suppress that correction because the
+        # target is still off to the side (gate-one telem cut climb to ~0 once
+        # |nx|>0.35 while the opening raced to the top of the frame).
+        horizontal_blocks_vertical = (
+            vertical_error > 0.0
+            and abs(detection.normalized_x)
+            > cfg.vertical_control_max_horizontal_error
+        )
         if (
             detection.opening_area_ratio
             < cfg.vertical_control_min_area_ratio
-            or abs(detection.normalized_x)
-            > cfg.vertical_control_max_horizontal_error
+            or horizontal_blocks_vertical
             or abs(vertical_error) <= vertical_deadband
         ):
             vertical = 0.0
@@ -566,6 +643,19 @@ class GateNavigator:
             if not moving_inward or command <= 0.0 or limit <= 0.0:
                 return 0.0
             return float(np.clip(command, 0.0, limit))
+        # Close to the gate, stop lofting into the top rail. telem_030352:
+        # still climbing at impact; large apparent area means commit to the
+        # current flight line and let lateral/yaw finish centering.
+        if command < 0.0 and detection.opening_area_ratio >= 0.012:
+            command *= 0.15
+        # Extreme top-of-frame chase only — do not use mild gate_vel_y cuts
+        # (those pinned us to the deck in 025904).
+        if (
+            command < 0.0
+            and detection.normalized_y <= -0.55
+            and detection.velocity_y <= -0.20
+        ):
+            return 0.0
         return command
 
     def _prediction_braking_control(
@@ -681,19 +771,52 @@ class GateNavigator:
         self._confirmed_gate_passes += 1
         self._last_seen_at = now
         self._last_alignment_command[:] = 0.0
-        self._last_command[1:] = 0.0
         self._horizontal_capture_side = 0.0
         self._yaw_capture_side = 0.0
-        if (
-            self._pending_next_gate_horizontal is not None
-            and abs(self._pending_next_gate_horizontal) > 0.02
-        ):
-            self._last_direction = (
-                1.0 if self._pending_next_gate_horizontal > 0.0 else -1.0
+        look_h = self._pending_next_gate_horizontal
+        look_v = self._pending_next_gate_vertical
+        if look_h is not None and abs(look_h) > 0.02:
+            self._last_direction = 1.0 if look_h > 0.0 else -1.0
+            self._post_pass_look_horizontal = float(look_h)
+            self._post_pass_look_vertical = (
+                None if look_v is None else float(look_v)
             )
-        # Race confirmation arrives after the physical crossing. Do not add
-        # another blind pass-through interval; stop and acquire the largest
-        # visible gate immediately.
+            self._post_pass_slew_until = (
+                now + max(0.0, self.config.post_pass_slew_duration_s)
+            )
+            # Prime the slew/LPF so the first SEARCH ticks already command a
+            # real turn instead of ramping from a hard zero for half a second.
+            self._last_command[1] = 0.0
+            self._last_command[0] = max(
+                self._last_command[0],
+                self.config.post_pass_search_forward_mps,
+            )
+            self._last_command[2] = float(
+                np.clip(
+                    (
+                        self.config.post_pass_search_down_mps
+                        if look_v is None
+                        else 0.70 * look_v
+                        + 0.30 * self.config.post_pass_search_down_mps
+                    ),
+                    -self.config.max_up_mps,
+                    self.config.max_down_mps,
+                )
+            )
+            self._last_command[3] = float(
+                np.clip(
+                    self.config.post_pass_search_yaw_gain * look_h,
+                    -self.config.post_pass_search_yaw_limit_rps,
+                    self.config.post_pass_search_yaw_limit_rps,
+                )
+            )
+        else:
+            self._post_pass_look_horizontal = None
+            self._post_pass_look_vertical = None
+            self._post_pass_slew_until = now + 0.35
+            self._last_command[1:] = 0.0
+        # Race confirmation arrives after the physical crossing. Hold SEARCH
+        # and rotate toward the frozen bearing before accepting a new lock.
         self._transition(NavigationState.SEARCH, now, force=True)
 
     def update(
@@ -702,6 +825,7 @@ class GateNavigator:
         now: float,
         path: Optional[object] = None,
         next_gate_horizontal: Optional[float] = None,
+        next_gate_vertical: Optional[float] = None,
     ) -> NavigationCommand:
         cfg = self.config
         dt = self._dt(now)
@@ -729,6 +853,19 @@ class GateNavigator:
             horizontal, vertical, alignment_error = self._errors(detection)
 
         starting_state = self.state
+        post_pass_slew = self.in_post_pass_slew(now)
+        if (
+            self._post_pass_slew_until is not None
+            and now >= self._post_pass_slew_until
+        ):
+            self._post_pass_slew_until = None
+            self._post_pass_look_horizontal = None
+            self._post_pass_look_vertical = None
+            post_pass_slew = False
+
+        # Contact with the second gate is allowed as soon as we have a bearing
+        # and a measured primary — do not wait for the primary to be huge /
+        # dead-centered or the second gate leaves the FOV first.
         lookahead_supported = bool(
             measured
             and detection is not None
@@ -738,8 +875,15 @@ class GateNavigator:
             and abs(detection.normalized_x)
             <= cfg.next_gate_maximum_primary_horizontal
         )
+        contact_supported = bool(
+            measured
+            and detection is not None
+            and next_gate_horizontal is not None
+            and not post_pass_slew
+        )
         if (
             lookahead_supported
+            and not post_pass_slew
             and starting_state
             in (
                 NavigationState.TRACK,
@@ -750,13 +894,51 @@ class GateNavigator:
             self._pending_next_gate_horizontal = float(
                 np.clip(next_gate_horizontal, -1.0, 1.0)
             )
-        elif starting_state == NavigationState.SEARCH and measured:
+            if next_gate_vertical is not None:
+                self._pending_next_gate_vertical = float(
+                    np.clip(next_gate_vertical, -1.0, 1.0)
+                )
+        elif (
+            not post_pass_slew
+            and next_gate_horizontal is not None
+            and starting_state == NavigationState.PASS_THROUGH
+        ):
+            # Only PASS_THROUGH may refresh from live lookahead. SEARCH/RECOVER
+            # after a scored pass must keep the frozen course bearing — a
+            # noisy multi-gate refresh flipped +0.53 (right) to -0.30 (left)
+            # within 0.1 s on run 021623 and cancelled the turn.
+            self._pending_next_gate_horizontal = float(
+                np.clip(next_gate_horizontal, -1.0, 1.0)
+            )
+            if next_gate_vertical is not None:
+                self._pending_next_gate_vertical = float(
+                    np.clip(next_gate_vertical, -1.0, 1.0)
+                )
+            if abs(self._pending_next_gate_horizontal) > 0.02:
+                self._last_direction = (
+                    1.0
+                    if self._pending_next_gate_horizontal > 0.0
+                    else -1.0
+                )
+        elif (
+            starting_state == NavigationState.SEARCH
+            and measured
+            and not post_pass_slew
+        ):
             # This is the newly acquired gate. Do not reuse the turn that led
             # from the previous gate unless a fresh farther gate is also seen.
             self._pending_next_gate_horizontal = None
+            self._pending_next_gate_vertical = None
 
         if self.state == NavigationState.SEARCH:
+            # If the next gate is visible, always lock it and IBVS-center it.
+            # Open-loop slew is only a fallback when nothing is in view
+            # (run 022637 ignored a real gate at v=16 and climbed blind).
             if measured:
+                if post_pass_slew:
+                    self._post_pass_slew_until = None
+                    self._post_pass_look_horizontal = None
+                    self._post_pass_look_vertical = None
                 self._transition(NavigationState.TRACK, now, force=True)
         elif self.state == NavigationState.TRACK:
             if not usable:
@@ -825,6 +1007,10 @@ class GateNavigator:
                 self._transition(NavigationState.SEARCH, now, force=True)
         elif self.state == NavigationState.RECOVER:
             if measured:
+                if post_pass_slew:
+                    self._post_pass_slew_until = None
+                    self._post_pass_look_horizontal = None
+                    self._post_pass_look_vertical = None
                 self._transition(NavigationState.TRACK, now, force=True)
             elif (
                 self._last_seen_at is None
@@ -839,11 +1025,52 @@ class GateNavigator:
 
         desired = np.zeros(4, dtype=np.float64)
         if self.state == NavigationState.SEARCH:
+            search_down = (
+                cfg.post_pass_search_down_mps
+                if self._confirmed_gate_passes > 0
+                else 0.0
+            )
+            search_yaw = cfg.search_yaw_rate_rps * self._last_direction
+            look_h = self._post_pass_look_horizontal
+            if look_h is None:
+                look_h = self._pending_next_gate_horizontal
+            look_v = self._post_pass_look_vertical
+            if look_v is None:
+                look_v = self._pending_next_gate_vertical
+            # After a scored pass, actively look toward the frozen next-gate
+            # bearing from the early multi-gate view.
+            search_forward = cfg.search_forward_mps
+            if self._confirmed_gate_passes > 0 and look_h is not None:
+                search_yaw = float(
+                    np.clip(
+                        cfg.post_pass_search_yaw_gain * look_h,
+                        -cfg.post_pass_search_yaw_limit_rps,
+                        cfg.post_pass_search_yaw_limit_rps,
+                    )
+                )
+                if look_v is not None and post_pass_slew:
+                    # Mild open-loop vertical only while blind. Live IBVS takes
+                    # over as soon as any gate is measured.
+                    search_down = float(
+                        np.clip(
+                            0.35 * look_v + 0.65 * search_down,
+                            -0.30,
+                            0.20,
+                        )
+                    )
+                if post_pass_slew:
+                    search_forward = max(
+                        search_forward, cfg.post_pass_search_forward_mps
+                    )
+                else:
+                    # Slew window over without a lock: stop the endless max-yaw
+                    # spin from run 022119 and hold heading while crawling.
+                    search_yaw = 0.0
             desired[:] = (
-                cfg.search_forward_mps,
+                search_forward,
                 0.0,
-                0.0,
-                cfg.search_yaw_rate_rps * self._last_direction,
+                search_down,
+                search_yaw,
             )
             if (
                 usable
@@ -945,7 +1172,23 @@ class GateNavigator:
                 )
                 desired[3] += 0.20 * yaw
         elif self.state == NavigationState.PASS_THROUGH:
-            desired[0] = cfg.commit_forward_mps
+            desired[0] = (
+                cfg.commit_forward_mps
+                if cfg.pass_through_forward_mps is None
+                else cfg.pass_through_forward_mps
+            )
+            # Climb / look up while clearing so the next elevated gate is not
+            # left above the camera after the nose-down approach pitch.
+            desired[2] = cfg.pass_through_down_mps
+            if self._pending_next_gate_vertical is not None:
+                desired[2] = float(
+                    np.clip(
+                        0.60 * cfg.pass_through_down_mps
+                        + 0.40 * self._pending_next_gate_vertical,
+                        -cfg.max_up_mps,
+                        cfg.max_down_mps,
+                    )
+                )
             # The final correction for the passed gate points back toward that
             # gate and may have the opposite sign from the next turn. Fly
             # straight until the frame has cleared, then translate and yaw
@@ -1045,6 +1288,34 @@ class GateNavigator:
                     cfg.next_gate_max_yaw_rate_rps,
                 )
             )
+        # Keep the second-nearest gate inside the camera even when the primary
+        # is still off-center: if CONTACT rides toward the frame edge, yaw
+        # toward it without stealing the approach from gate one.
+        if (
+            contact_supported
+            and self.state
+            in (NavigationState.TRACK, NavigationState.ALIGN_AND_APPROACH)
+            and abs(next_gate_horizontal) >= cfg.secondary_contact_edge_normalized
+            and cfg.secondary_contact_yaw_kp > 0.0
+        ):
+            edge = max(cfg.secondary_contact_edge_normalized, 1e-3)
+            urgency = float(
+                np.clip(
+                    (abs(next_gate_horizontal) - edge) / max(1.0 - edge, 1e-3),
+                    0.0,
+                    1.0,
+                )
+            )
+            contact_yaw = float(
+                np.clip(
+                    cfg.secondary_contact_yaw_kp
+                    * next_gate_horizontal
+                    * (0.35 + 0.65 * urgency),
+                    -cfg.secondary_contact_max_yaw_rate_rps,
+                    cfg.secondary_contact_max_yaw_rate_rps,
+                )
+            )
+            desired[3] += contact_yaw
 
         requested_forward_mps = float(desired[0])
         framing_limited = False
@@ -1272,18 +1543,16 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # and let race-status confirmation release the old target.
         commit_straight_through=True,
         center_deadband=0.035,
-        # Hold the opening lower in the camera (drone higher in the opening)
-        # and start correcting sooner to clear the first gate's bottom rail.
-        vertical_setpoint_normalized=2.0 * 0.62 - 1.0,
-        # The lower image target clears gate one's bottom rail. Reusing it
-        # after the confirmed pass made gate two's y≈128 acquisition command
-        # a large climb. Even an optical-center target still requested climb
-        # for the first 0.8 s and gate two then fell out of the bottom of the
-        # image before yaw capture completed. Hold subsequent gates on their
-        # natural high approach line instead; any downward drift then requests
-        # descent early, while no climb momentum is deliberately introduced.
-        post_pass_vertical_setpoint_normalized=-0.25,
-        vertical_deadband=0.20,
+        # Optical center. A +0.10 bias kept requesting climb after the
+        # altitude floor released and helped drive the top-rail hit (030352).
+        vertical_setpoint_normalized=0.0,
+        # Mild look-up after a pass. Stronger values (and COURSE v≈-0.73)
+        # lofted the camera into a top-of-frame speck chase (031946).
+        post_pass_vertical_setpoint_normalized=-0.08,
+        # Was 0.20: with setpoint +0.24 a near-centered gate (error≈-0.24)
+        # produced almost no climb. Tighten so altitude starts correcting
+        # immediately on acquisition.
+        vertical_deadband=0.06,
         # The post-pass setpoint is y≈135. Waiting for the gate to fall past
         # y≈149 before descending let vertical image speed build beyond the
         # open-loop thrust controller's stopping authority. Begin descent
@@ -1292,44 +1561,46 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # Distant gates still control altitude so they cannot drift out of the
         # top or bottom of the frame.
         vertical_control_min_area_ratio=0.0,
-        # Gate-two y is not a reliable altitude cue during the initial hard
-        # right turn. The 21:13 A/B commanded up to 0.60 m/s descent while
-        # the gate still fell from y=131 to y=306 and struck the frame.
-        # Hold hover until yaw/lateral alignment enters this corridor.
+        # Descent-only alignment gate (see GateNavigator._errors). Climb is
+        # never blocked by this threshold. Keep descent suppressed during the
+        # hard gate-two yaw capture so a low image target cannot command a
+        # dive before the flight line is established.
         vertical_control_max_horizontal_error=0.35,
         search_forward_mps=0.0,
-        search_close_forward_mps=0.12,
+        search_close_forward_mps=0.06,
         # Every Q2 gate is already visible from the preceding gate. A blind
         # yaw sweep during a detector dropout rotated the correctly aligned
         # second gate through the opposite edge and into the Station 22
         # pillar. Hold heading until a measured gate can steer deliberately.
         search_yaw_rate_rps=0.0,
-        track_forward_mps=0.32,
-        minimum_approach_mps=0.34,
-        maximum_approach_mps=0.42,
-        commit_forward_mps=0.46,
+        # DEBUG-SLOW (~0.5x racing speeds): easier to watch state / bearings.
+        # Restore ~0.32 / 0.34–0.42 / 0.46 when racing again.
+        track_forward_mps=0.16,
+        minimum_approach_mps=0.18,
+        maximum_approach_mps=0.22,
+        commit_forward_mps=0.24,
         # Preserve modest forward progress through a brief detector dropout.
         # This is below the close-approach speed and is bounded by the real
         # sighting-based recovery timeout above.
-        recover_forward_mps=0.28,
+        recover_forward_mps=0.14,
         # Training One still backed from 2.1 m to 2.3 m at the old 0.14 m/s
         # close floor. Keep nearly all normal recovery momentum; the remaining
         # 0.04 m/s reduction leaves modest collision braking while lateral
         # centering finishes.
-        recover_close_forward_mps=0.24,
+        recover_close_forward_mps=0.12,
         recover_lateral_mps=0.0,
         recover_prediction_scale=0.65,
         minimum_forward_mps=0.0,
-        maximum_forward_mps=0.65,
+        maximum_forward_mps=0.32,
         approach_slowdown_start_area_ratio=0.008,
         approach_slowdown_end_area_ratio=0.025,
-        close_approach_mps=0.30,
+        close_approach_mps=0.15,
         # When gate two is still in the outer half of the image, the previous
         # 0.30-0.33 m/s approach moved it from y=132 to the bottom in roughly
         # two seconds. Keep a positive crawl while yaw/bank align the flight
         # line, then automatically restore normal speed inside the corridor.
         severe_horizontal_error_normalized=0.50,
-        severe_horizontal_forward_cap_mps=0.16,
+        severe_horizontal_forward_cap_mps=0.08,
         # Horizontal error primarily commands bank/translation. The earlier
         # 2.4 yaw gain centered gate two by rotating the camera while the
         # vehicle remained outside its lateral flight line.
@@ -1410,7 +1681,7 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # about a second and crossed violently after the initial right turn.
         countersteer_max_lateral_mps=0.40,
         yaw_countersteer_gain=2.25,
-        countersteer_forward_floor_mps=0.34,
+        countersteer_forward_floor_mps=0.18,
         vertical_kp=0.8,
         # Gate-two logs show the image center moving upward while proportional
         # error still requested descent. Brake vertical momentum well before
@@ -1428,15 +1699,17 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # limiting. Bound normal and braking authority to about 5.5 degrees of
         # desired bank through the controller's 0.24 lean gain.
         max_right_mps=0.40,
-        max_up_mps=0.35,
-        max_down_mps=0.60,
+        # Deck clearance comes from the planner soft floor; IBVS climb stays
+        # modest so we do not re-create the 0.55 m/s top-rail loft.
+        max_up_mps=0.32,
+        max_down_mps=0.40,
         # Controlled lateral-sign A/B runs both saturated this ceiling while
         # gate two still moved outward; the correct demo sign was better but
         # could not overcome carried post-gate heading before the image edge.
         # Give acquisition more turn authority. Measured inward capture still
         # zeros the request and the IMU feedback loop brakes the actual rate.
-        max_yaw_rate_rps=0.65,
-        max_forward_acceleration=1.4,
+        max_yaw_rate_rps=0.45,
+        max_forward_acceleration=0.7,
         # Gate-two logs show the high-authority countersteer taking roughly
         # 0.7-0.8 s to reverse through the old slew limit.  Reverse promptly
         # enough to brake before the image center crosses, while retaining the
@@ -1459,17 +1732,35 @@ def q2_demo_navigation_config() -> NavigationConfig:
         # reversed outward exactly as this envelope reduced forward speed from
         # 0.33 to 0.18 m/s. Keep coordinated translation through the turn and
         # taper only in the last part of the actual camera boundary.
-        framing_soft_edge_normalized=0.84,
-        framing_hard_edge_normalized=0.99,
+        # Cut forward earlier when the opening rides the top of the frame —
+        # continuing the approach is what drove gate_v 71→5 before the fall.
+        framing_soft_edge_normalized=0.55,
+        framing_hard_edge_normalized=0.85,
         framing_retreat_mps=0.0,
-        next_gate_minimum_primary_area_ratio=0.008,
-        next_gate_maximum_primary_horizontal=0.18,
-        next_gate_lateral_kp=0.90,
-        next_gate_yaw_kp=0.25,
-        next_gate_max_right_mps=0.45,
-        next_gate_max_yaw_rate_rps=0.12,
-        # Retain the next gate's direction, but never let it pull the drone
-        # away from the center of the gate that has not yet been cleared.
-        prepass_lookahead_weight=0.0,
-        pass_through_lookahead_delay_s=0.70,
+        # Nearest-two: start contact as soon as YOLO sees a second gate; do
+        # not wait for the approach gate to fill the frame / sit dead-center.
+        next_gate_minimum_primary_area_ratio=0.0,
+        next_gate_maximum_primary_horizontal=0.90,
+        next_gate_lateral_kp=0.55,
+        next_gate_yaw_kp=0.40,
+        next_gate_max_right_mps=0.28,
+        next_gate_max_yaw_rate_rps=0.22,
+        # If CONTACT drifts past ~0.50 of the frame, yaw to keep it visible
+        # while still IBVS-centering APPROACH.
+        secondary_contact_edge_normalized=0.50,
+        secondary_contact_yaw_kp=0.55,
+        secondary_contact_max_yaw_rate_rps=0.28,
+        # Bias heading toward the second gate throughout the approach so the
+        # exit already faces it.
+        prepass_lookahead_weight=0.55,
+        pass_through_lookahead_delay_s=0.55,
+        # After gate one: crawl forward; do not keep a strong open-loop climb
+        # (that lofted us, lost the gate out the top, then dropped into ground).
+        pass_through_forward_mps=0.14,
+        pass_through_down_mps=-0.06,
+        post_pass_search_down_mps=0.0,
+        post_pass_slew_duration_s=1.20,
+        post_pass_search_yaw_gain=-0.90,
+        post_pass_search_yaw_limit_rps=0.35,
+        post_pass_search_forward_mps=0.12,
     )

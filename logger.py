@@ -32,8 +32,8 @@ class Logger:
         shared_data['log_event'] = self.log_event
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        print(f'[LOG] telem  → {self._csv_path}', flush=True)
-        print(f'[LOG] events → {self._evt_path}', flush=True)
+        print(f'[LOG] telem  -> {self._csv_path}', flush=True)
+        print(f'[LOG] events -> {self._evt_path}', flush=True)
 
     # ------------------------------------------------------------------
     def log_event(self, event: str, detail: str = '') -> None:

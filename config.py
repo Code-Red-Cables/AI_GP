@@ -21,20 +21,70 @@ def _env_int_tuple(name, default):
     return parsed
 
 # ---- Flight controller ----
-HOVER_THRUST    = 0.27      # open-loop hover baseline (no baro in VQ2)
-TAKEOFF_THRUST  = 0.27      # short launch boost before settling to hover
-TAKEOFF_DURATION_S = 1.0
+HOVER_THRUST    = float(os.environ.get('HOVER_THRUST', '0.24'))
+# Pose-debug start-pad hover — micro righting only (big gains → forward drift).
+# 141553: hover 0.26 scraped (21k collisions, thr dipped to 0.245).
+POSE_DEBUG_HOVER_THRUST = float(os.environ.get('POSE_DEBUG_HOVER_THRUST', '0.285'))
+# Clear the deck — 0.25s×0.263 never got off the floor.
+POSE_DEBUG_TAKEOFF_S = float(os.environ.get('POSE_DEBUG_TAKEOFF_S', '1.0'))
+POSE_DEBUG_TAKEOFF_THRUST = float(
+    os.environ.get('POSE_DEBUG_TAKEOFF_THRUST', '0.30')
+)
+POSE_DEBUG_THRUST_MIN = float(os.environ.get('POSE_DEBUG_THRUST_MIN', '0.270'))
+POSE_DEBUG_KP_VZ = float(os.environ.get('POSE_DEBUG_KP_VZ', '0.02'))
+POSE_DEBUG_KI_VZ = float(os.environ.get('POSE_DEBUG_KI_VZ', '0.002'))
+# RATE_SIGN leveling (required). 124812 leveled at ~0.10; 0.03 was too weak.
+POSE_DEBUG_KP_LEVEL = float(os.environ.get('POSE_DEBUG_KP_LEVEL', '3.0'))
+# Filtered range → pitch (rad/m). Blind hover uses HOVER_BIAS only.
+POSE_DEBUG_KP_RANGE = float(os.environ.get('POSE_DEBUG_KP_RANGE', '0.02'))
+POSE_DEBUG_KP_NX = float(os.environ.get('POSE_DEBUG_KP_NX', '0.06'))
+POSE_DEBUG_KP_NY = float(os.environ.get('POSE_DEBUG_KP_NY', '0.0'))
+# Continuous rate leveling (132257 proved attitude-hold is ignored).
+POSE_DEBUG_MAX_LEVEL_RATE = float(
+    os.environ.get('POSE_DEBUG_MAX_LEVEL_RATE', '0.25')
+)
+# Kill residual horizontal accel (m/s^2 → rad/s). Sign: -ax → +pitch_rate.
+POSE_DEBUG_KP_AX = float(os.environ.get('POSE_DEBUG_KP_AX', '0.08'))
+# Brake coasting: high-pass -ax → v_fwd; tip opposite (+pitch=forward).
+POSE_DEBUG_KP_VFWD = float(os.environ.get('POSE_DEBUG_KP_VFWD', '0.06'))
+POSE_DEBUG_MAX_BRAKE_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_MAX_BRAKE_DEG', '4.0'))
+)
+# Nose-back only while PnP is blind — keep tiny (0.8° crawled while scraping).
+POSE_DEBUG_HOVER_BIAS_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_HOVER_BIAS_DEG', '0.3'))
+)
+POSE_DEBUG_MAX_FWD_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_MAX_FWD_DEG', '1.2'))
+)
+POSE_DEBUG_MAX_YAW_RATE = float(
+    os.environ.get('POSE_DEBUG_MAX_YAW_RATE', '0.05')
+)
+POSE_DEBUG_MAX_LEAN_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_MAX_LEAN_DEG', '1.5'))
+)
+# 130438: freeze at |pitch|<=1.5° left ~1° lean → slow forward. Tighter exit
+# + wider re-entry (hysteresis) so we don't chatter or cruise on a tip.
+POSE_DEBUG_LEVEL_DONE_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_LEVEL_DONE_DEG', '0.4'))
+)
+POSE_DEBUG_LEVEL_START_RAD = math.radians(
+    float(os.environ.get('POSE_DEBUG_LEVEL_START_DEG', '1.2'))
+)
+POSE_DEBUG_AX_DONE = float(os.environ.get('POSE_DEBUG_AX_DONE', '0.12'))
+POSE_DEBUG_AX_START = float(os.environ.get('POSE_DEBUG_AX_START', '0.40'))
+POSE_DEBUG_RANGE_BRAKE_M = float(os.environ.get('POSE_DEBUG_RANGE_BRAKE_M', '0.8'))
+TAKEOFF_THRUST  = 0.30      # boost until ~0.55 m AGL (see controller)
+TAKEOFF_DURATION_S = 2.5
 KP_THRUST       = 0.25      # vd cmd (m/s) → thrust delta
 # Gate-two telemetry saturated the optical descent command for 1.6 seconds at
 # ~0.263 tilt-compensated thrust while its image speed still accelerated to
-# 0.476 normalized/s toward the bottom edge. Permit a 0.256-ish tilted level
-# only while vision explicitly requests descent; hover/takeoff remain 0.27.
-# Gate-two telemetry held the previous 0.014 reduction continuously while the
-# target still fell from y=152 to y=209 in 0.9 s. Preserve the calibrated
-# 0.27 hover/takeoff baseline, but give a confirmed low gate enough downward
-# authority to arrest that climb.
-MAX_DESCENT_THRUST_REDUCTION = 0.025
-MAX_ASCENT_THRUST_INCREASE = 0.010
+# 0.476 normalized/s toward the bottom edge. Permit a modest tilted descent
+# only while vision explicitly requests descent; hover/takeoff stay at 0.28.
+MAX_DESCENT_THRUST_REDUCTION = 0.020
+# Open-loop climb headroom was only +0.01 and could not hold altitude under
+# forward lean when VIO thrust PI was not yet tracking a climb command.
+MAX_ASCENT_THRUST_INCREASE = 0.030
 MIN_TILT_COMPENSATION_COSINE = 0.70
 KP_LEAN         = 0.10      # demonstrated forward command → pitch mapping
 OPENCV_KP_LEAN  = 0.16      # stronger gate-racing forward pitch mapping
@@ -124,7 +174,14 @@ CONTROL_MAX_DT_S = 0.05
 #   3. Attitude PDs (KP_ATT / KD_ATT, KP_ROLL_ATT / KD_ROLL_ATT).
 #   4. Yaw hold last (KP_YAW_ATT) — the camera FOV is narrow, so keep
 #      YAW_RATE_MAX_DEG_S low or a fast yaw sweeps the gate out of frame.
-USE_VIO = _env_bool('USE_VIO', True)
+# Disabled by default under kalman / pose_debug (cascaded attitude+thrust).
+_NAV_MODE_DEFAULT = os.environ.get(
+    'GATE_NAVIGATION_MODE', 'kalman'
+).strip().lower()
+USE_VIO = _env_bool(
+    'USE_VIO',
+    _NAV_MODE_DEFAULT not in {'kalman', 'pose_debug'},
+)
 VIO_ANCHORS_PATH = os.environ.get('VIO_ANCHORS_PATH', 'gate_anchors.json')
 # VIO attitude/velocity older than this falls back to the AHRS / open-loop
 # thrust paths instead of trusting a stale belief.
@@ -155,36 +212,43 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # Exactly one racing command owner is selected at process start.  ``opencv``
 # uses the Q2 rate controller below; ``existing_ai`` delegates to the unchanged
 # Dreamer deployment controller under dreamer/.
+# ``kalman`` = dual-gate PnP + EKF + cascaded PID (Q2_kalman default).
+# ``pose_debug`` = hover 2s → approach to 3 m PnP range → hold (no racing).
+# ``opencv`` = legacy IBVS state machine. ``existing_ai`` = Dreamer.
 GATE_NAVIGATION_MODE = os.environ.get(
-    'GATE_NAVIGATION_MODE', 'opencv'
+    'GATE_NAVIGATION_MODE', 'kalman'
 ).strip().lower()
-if GATE_NAVIGATION_MODE not in {'opencv', 'existing_ai'}:
+if GATE_NAVIGATION_MODE not in {
+    'kalman', 'pose_debug', 'opencv', 'existing_ai'
+}:
     raise ValueError(
-        'GATE_NAVIGATION_MODE must be "opencv" or "existing_ai", '
-        f'not {GATE_NAVIGATION_MODE!r}'
+        'GATE_NAVIGATION_MODE must be "kalman", "pose_debug", "opencv", or '
+        f'"existing_ai", not {GATE_NAVIGATION_MODE!r}'
     )
+
+# Dual-gate EKF path planner knobs
+KALMAN_APPROACH_DISTANCE_M = float(
+    os.environ.get('KALMAN_APPROACH_DISTANCE_M', '3.5')
+)
+KALMAN_EXIT_DISTANCE_M = float(
+    os.environ.get('KALMAN_EXIT_DISTANCE_M', '1.5')
+)
+KALMAN_MAX_LEAN_DEG = float(os.environ.get('KALMAN_MAX_LEAN_DEG', '14.0'))
+# Image-IBVS yaw (norm_x). 043043 saturated from lock jumps — keep moderate.
+KALMAN_KP_YAW = float(os.environ.get('KALMAN_KP_YAW', '0.9'))
+USE_KALMAN_EKF = _env_bool('USE_KALMAN_EKF', True)
 
 DREAMER_CHECKPOINT = os.environ.get('DREAMER_CHECKPOINT', '')
 DREAMER_CONFIG     = os.environ.get('DREAMER_CONFIG') or None
 DREAMER_MAX_SECONDS = float(os.environ.get('DREAMER_MAX_SECONDS', '480'))
 
-# Development-only fallbacks used when setup_components() is called with a
-# non-racing mode.  They do not override GATE_NAVIGATION_MODE.
-USE_TELEOP      = False
-USE_GATE_CHASER = False
+# Development-only fallbacks (do not override GATE_NAVIGATION_MODE).
+USE_TELEOP = False
 
 # ---- Teleop ----
 TELEOP_SPEED        = 2.0   # m/s forward / strafe
 TELEOP_VSPEED       = 1.5   # m/s climb / descend
 TELEOP_YAW_RATE_DPS = 60.0  # deg/s yaw
-
-# ---- Gate chaser ----
-GATE_KP_LAT       = 0.40
-GATE_MAX_STRAFE   = 0.65    # m/s clamp
-GATE_KP_VERT      = 0.60
-GATE_MAX_VERT     = 0.65    # m/s clamp
-GATE_APPROACH_SPD = 1.2     # m/s constant forward approach
-GATE_CLOSE_RANGE  = 5.0     # m — switch to commit (blast through) mode
 
 # ---- Camera / geometry ----
 GATE_INNER_M    = 1.5       # gate inner side (m) for range estimation
@@ -204,6 +268,13 @@ RESET_SIM_ON_START        = _env_bool('RESET_SIM_ON_START', False)
 SIM_RESET_SETTLE_S        = float(
     os.environ.get('SIM_RESET_SETTLE_S', '1.5')
 )
+# After a floor crash (pos_d below spawn / Environment slam), send cmd 31000
+# and re-arm so the client can keep practicing without a manual restart.
+AUTO_RESET_ON_CRASH       = _env_bool('AUTO_RESET_ON_CRASH', True)
+CRASH_FLOOR_D_M           = float(os.environ.get('CRASH_FLOOR_D_M', '0.45'))
+CRASH_CONFIRM_S           = float(os.environ.get('CRASH_CONFIRM_S', '0.35'))
+CRASH_RESET_COOLDOWN_S    = float(os.environ.get('CRASH_RESET_COOLDOWN_S', '4.0'))
+CRASH_ENV_IMPULSE_MIN     = float(os.environ.get('CRASH_ENV_IMPULSE_MIN', '0.15'))
 # Zero preserves the normal race client, which runs until Ctrl+C. A positive
 # value is useful for bounded simulator test attempts and exits through the
 # regular cleanup/disarm path.
@@ -270,27 +341,31 @@ YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO = float(
     os.environ.get('YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO', '2.20')
 )
 YOLO_ACQUISITION_CONFIRMATION_FRAMES = int(
-    # YOLO pose detections are already required to have orange HSV support.
-    # At the model's ~5 Hz inference rate, a second acquisition frame leaves
-    # roughly 0.2-0.4 s of uncontrolled motion after a gate pass.  Accept the
-    # first jointly confirmed instance so an edge gate can be captured before
-    # it exits the camera.
+    # YOLO-only mode accepts the first pose instance above the confidence
+    # threshold. At ~5 Hz inference, a second confirmation frame leaves
+    # roughly 0.2-0.4 s of uncontrolled motion after a gate pass.
     os.environ.get('YOLO_ACQUISITION_CONFIRMATION_FRAMES', '1')
 )
 # Immediately after a confirmed pass the gate behind the drone can remain as a
 # very large partial YOLO box for a few frames.  It must not win the normal
 # "largest visible gate" acquisition policy over the smaller next gate.
 YOLO_POST_PASS_REJECTION_SECONDS = float(
-    os.environ.get('YOLO_POST_PASS_REJECTION_SECONDS', '0.80')
+    # 0826: 1.6 s let the passed-gate remnant (area~110k) win right after
+    # the window closed. Keep rejecting oversized boxes longer.
+    os.environ.get('YOLO_POST_PASS_REJECTION_SECONDS', '6.00')
 )
 YOLO_POST_PASS_MAX_AREA_RATIO = float(
-    os.environ.get('YOLO_POST_PASS_MAX_AREA_RATIO', '0.18')
+    os.environ.get('YOLO_POST_PASS_MAX_AREA_RATIO', '0.12')
 )
+# Vision steering uses the YOLO pose model only — no HSV gate filter / fallback.
 YOLO_REQUIRE_HSV_CONFIRMATION = _env_bool(
-    'YOLO_REQUIRE_HSV_CONFIRMATION', True
+    'YOLO_REQUIRE_HSV_CONFIRMATION', False
 )
+# Gate-two/distant YOLO boxes often fill only a few percent orange after the
+# opening is large in-frame. 0.08 rejected real detections (overlay showed the
+# YOLO box while steering published NO GATE). Keep a small floor against sky.
 YOLO_HSV_MIN_ORANGE_RATIO = float(
-    os.environ.get('YOLO_HSV_MIN_ORANGE_RATIO', '0.08')
+    os.environ.get('YOLO_HSV_MIN_ORANGE_RATIO', '0.03')
 )
 YOLO_HSV_MAX_ORANGE_RATIO = float(
     os.environ.get('YOLO_HSV_MAX_ORANGE_RATIO', '0.85')
@@ -299,20 +374,20 @@ YOLO_HSV_SIDE_BAND_FRACTION = float(
     os.environ.get('YOLO_HSV_SIDE_BAND_FRACTION', '0.28')
 )
 YOLO_HSV_MIN_SIDE_DENSITY = float(
-    os.environ.get('YOLO_HSV_MIN_SIDE_DENSITY', '0.06')
+    os.environ.get('YOLO_HSV_MIN_SIDE_DENSITY', '0.03')
 )
 YOLO_HSV_MIN_SUPPORTED_SIDES = int(
-    os.environ.get('YOLO_HSV_MIN_SUPPORTED_SIDES', '2')
+    os.environ.get('YOLO_HSV_MIN_SUPPORTED_SIDES', '1')
 )
 YOLO_CROP_PADDING_PX = int(os.environ.get('YOLO_CROP_PADDING_PX', '14'))
 YOLO_MIN_GATE_AREA_PX = float(
-    os.environ.get('YOLO_MIN_GATE_AREA_PX', '250')
+    os.environ.get('YOLO_MIN_GATE_AREA_PX', '100')
 )
 YOLO_MAX_OUTSIDE_FRACTION = float(
     os.environ.get('YOLO_MAX_OUTSIDE_FRACTION', '0.35')
 )
 YOLO_PREVIOUS_CENTER_FRAMES = int(
-    os.environ.get('YOLO_PREVIOUS_CENTER_FRAMES', '5')
+    os.environ.get('YOLO_PREVIOUS_CENTER_FRAMES', '2')
 )
 YOLO_ESTIMATED_OPENING_SCALE = float(
     os.environ.get('YOLO_ESTIMATED_OPENING_SCALE', '0.72')
@@ -324,7 +399,7 @@ YOLO_SCORE_CONFIDENCE_WEIGHT = float(
     os.environ.get('YOLO_SCORE_CONFIDENCE_WEIGHT', '0.40')
 )
 YOLO_SCORE_CENTER_WEIGHT = float(
-    os.environ.get('YOLO_SCORE_CENTER_WEIGHT', '0.30')
+    os.environ.get('YOLO_SCORE_CENTER_WEIGHT', '0.55')
 )
 YOLO_SCORE_AREA_WEIGHT = float(
     os.environ.get('YOLO_SCORE_AREA_WEIGHT', '0.30')
@@ -340,14 +415,13 @@ YOLO_HSV_CLOSING_KERNEL = int(
     os.environ.get('YOLO_HSV_CLOSING_KERNEL', '5')
 )
 YOLO_HSV_CENTER_BLEND = float(
-    os.environ.get('YOLO_HSV_CENTER_BLEND', '0.25')
+    os.environ.get('YOLO_HSV_CENTER_BLEND', '0.0')
 )
 YOLO_HSV_CENTER_MAX_SHIFT_FRACTION = float(
     os.environ.get('YOLO_HSV_CENTER_MAX_SHIFT_FRACTION', '0.12')
 )
-# Strict YOLO+HSV is the safe default used for racing. This optional, lower
-# confidence fallback exists for offline evaluation or a deliberately enabled
-# recovery experiment.
+# Kept off: racing uses YOLO pose only. Enable only for offline HSV recovery
+# experiments.
 GLOBAL_HSV_FALLBACK_ENABLED = _env_bool(
     'GLOBAL_HSV_FALLBACK_ENABLED', False
 )
@@ -360,5 +434,5 @@ GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE = float(
 GATE_HSV_LOWER = _env_int_tuple('GATE_HSV_LOWER', (0, 75, 140))
 GATE_HSV_UPPER = _env_int_tuple('GATE_HSV_UPPER', (23, 255, 255))
 GATE_MIN_CONTOUR_AREA = float(
-    os.environ.get('GATE_MIN_CONTOUR_AREA', '30')
+    os.environ.get('GATE_MIN_CONTOUR_AREA', '12')
 )

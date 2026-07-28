@@ -78,11 +78,16 @@ class MAVLinkRX:
 
     def on_attitude(self, msg):
         # NOTE: ATTITUDE is marked disabled in VQ2 spec but still arrives.
-        # With USE_VIO the StateEstimator owns shared_data['attitude'], so the
-        # sim message is published as 'attitude_raw' for logging/comparison
-        # only. Without VIO it remains the only yaw source (AHRS has no
-        # magnetometer in sim).
-        key = 'attitude_raw' if config.USE_VIO else 'attitude'
+        # When VIO or the dual-gate EKF owns shared_data['attitude'], the sim
+        # message is published as 'attitude_raw' for logging/comparison only.
+        estimator_owns_attitude = (
+            config.USE_VIO
+            or (
+                config.GATE_NAVIGATION_MODE == 'kalman'
+                and config.USE_KALMAN_EKF
+            )
+        )
+        key = 'attitude_raw' if estimator_owns_attitude else 'attitude'
         self.data[key] = {
             'roll':       msg.roll,
             'pitch':      msg.pitch,

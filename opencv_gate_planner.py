@@ -5,6 +5,16 @@ import time
 
 import config
 
+# Soft altitude floor (NED down: more negative = higher).
+# telem_025904: no floor → stuck at pos_d≈-0.15 into the ground.
+# telem_030352: hard floor at -0.85 kept tgt_vd=-0.38 the whole approach and
+# we hit the top rail at pos_d≈-0.76 before the floor ever released. Blend
+# climb out near the deck, then hand vertical back to IBVS by cruise height.
+_DECK_ALTITUDE_NED_M = -0.12
+_CRUISE_ALTITUDE_NED_M = -0.48
+_LOW_ALT_CLIMB_MPS = 0.30
+_LOW_ALT_FORWARD_CAP_MPS = 0.10
+
 
 class OpenCVGatePlanner:
     """Publish Q2 NED velocity and yaw-rate targets from the vision navigator."""
@@ -18,6 +28,16 @@ class OpenCVGatePlanner:
     @staticmethod
     def _hover():
         return {'vn': 0.0, 've': 0.0, 'vd': 0.0, 'yaw_rate': 0.0}
+
+    @staticmethod
+    def _ned_down(shared_data):
+        for key in ('position_ned', 'local_position_ned'):
+            pos = shared_data.get(key) or {}
+            for axis in ('z', 'd', 'down'):
+                value = pos.get(axis)
+                if value is not None and math.isfinite(float(value)):
+                    return float(value)
+        return None
 
     def _safety_hover(self, shared_data, reason):
         shared_data['planner_mode'] = 'opencv_stale'
@@ -59,6 +79,32 @@ class OpenCVGatePlanner:
         # Body (+forward, +right) -> world NED (+north, +east).
         vn = forward * math.cos(yaw) - right * math.sin(yaw)
         ve = forward * math.sin(yaw) + right * math.cos(yaw)
+
+        # Soft altitude floor: full climb near the deck, fade to zero by cruise
+        # height so IBVS can level/descend into the opening (030352).
+        altitude_d = self._ned_down(shared_data)
+        if (
+            altitude_d is not None
+            and altitude_d > _CRUISE_ALTITUDE_NED_M
+        ):
+            span = _CRUISE_ALTITUDE_NED_M - _DECK_ALTITUDE_NED_M
+            if abs(span) < 1e-6:
+                progress = 1.0
+            else:
+                progress = (altitude_d - _DECK_ALTITUDE_NED_M) / span
+            progress = max(0.0, min(1.0, progress))
+            floor_climb = -_LOW_ALT_CLIMB_MPS * (1.0 - progress)
+            # Never override an IBVS descent once we have left the deck —
+            # that override is exactly what drove the top-rail impact.
+            if down < 0.0 or altitude_d > _DECK_ALTITUDE_NED_M:
+                down = min(down, floor_climb)
+            speed = math.hypot(vn, ve)
+            forward_cap = _LOW_ALT_FORWARD_CAP_MPS * (0.35 + 0.65 * progress)
+            if speed > forward_cap > 0.0:
+                scale = forward_cap / speed
+                vn *= scale
+                ve *= scale
+
         target = {
             'vn': vn,
             've': ve,

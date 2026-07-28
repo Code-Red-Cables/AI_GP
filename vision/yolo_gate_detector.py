@@ -295,17 +295,16 @@ def select_target_gate(
     if not valid:
         return None
     if previous_target is None or not lock_active:
-        # A newly acquired target must be the largest visible gate.  Center
-        # proximity is not a safe primary signal after a pass: a tiny,
-        # high-confidence distant gate near image center can otherwise beat
-        # the substantially larger next gate at the edge of the frame.
-        # Detector confidence and the composite score remain tie-breakers.
+        # 0833: largest-area acquisition after a pass locked u≈579 edge
+        # junk while a better next gate sat near center. Prefer the
+        # composite center/area/confidence score; min-area filters already
+        # drop tiny speck gates.
         return max(
             valid,
             key=lambda item: (
+                score_gate_candidate(item, frame_shape, config),
                 item.area,
                 item.confidence,
-                score_gate_candidate(item, frame_shape, config),
             ),
         )
 

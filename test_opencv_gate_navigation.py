@@ -886,6 +886,25 @@ class NavigationTests(unittest.TestCase):
         command = advance_to_align(navigator, body_forward_centered)
         self.assertAlmostEqual(command.down_mps, 0.0, delta=1e-8)
 
+    def test_30c_climb_not_blocked_by_horizontal_error(self):
+        """Gate-one crash: climb was zeroed once |nx| exceeded the descent gate."""
+        navigator = navigator_for_tests(
+            vertical_setpoint_normalized=0.24,
+            vertical_deadband=0.06,
+            vertical_control_max_horizontal_error=0.35,
+            commit_opening_area_ratio=0.5,
+        )
+        # High in frame (too low) and still off to the side — must climb.
+        _, climb_error, _ = navigator._errors(
+            detection_at(nx=0.45, ny=-0.70, opening_width=70)
+        )
+        self.assertLess(climb_error, 0.0)
+        # Low in frame with the same lateral error — descent may wait.
+        _, descent_error, _ = navigator._errors(
+            detection_at(nx=0.45, ny=0.55, opening_width=70)
+        )
+        self.assertEqual(descent_error, 0.0)
+
 
 class ModeTests(unittest.TestCase):
     def test_31_opencv_and_existing_ai_are_exclusive(self):

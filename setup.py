@@ -22,8 +22,28 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     logger.log_event('BOOT', f'{server_ip}:{server_udp_port}')
 
     sim_conn = mavutil.mavlink_connection(f'udpin:{server_ip}:{server_udp_port}')
-    print('Waiting for heartbeat...', flush=True)
-    sim_conn.wait_heartbeat()
+    print(
+        f'Waiting for heartbeat on udpin:{server_ip}:{server_udp_port} ...',
+        flush=True,
+    )
+    print(
+        '(Sim must be logged in AND a race started — menu alone sends nothing.)',
+        flush=True,
+    )
+    # Progress every 2s so a slow sim doesn't look frozen (062920 waited ~56s).
+    waited = 0.0
+    while True:
+        hb = sim_conn.wait_heartbeat(blocking=True, timeout=2)
+        if hb is not None and getattr(sim_conn, 'target_system', 0):
+            break
+        waited += 2.0
+        print(f'  still waiting... {waited:.0f}s', flush=True)
+        if waited >= 120.0:
+            raise TimeoutError(
+                f'No MAVLink heartbeat on {server_ip}:{server_udp_port} '
+                f'after {waited:.0f}s. Start FlightSim, log in, and enter a race. '
+                f'Also ensure no other main.py is already bound to that port.'
+            )
     print(f'Connected to system {sim_conn.target_system}', flush=True)
     logger.log_event('HEARTBEAT', f'system={sim_conn.target_system}')
 
@@ -38,11 +58,13 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
         time.sleep(max(0.0, config.SIM_RESET_SETTLE_S))
     vision_rx  = VisionRX(shared_data)
 
-    # VIO: IMU dead-reckoning + gate-PnP corrections. Owns
-    # shared_data['attitude'] and shared_data['position_ned'] (mavlink_rx
-    # publishes the sim's ATTITUDE as 'attitude_raw' while this is enabled).
+    # State estimation: kalman EKF (default on Q2_kalman) or legacy VIO.
     state_estimator = None
-    if config.USE_VIO:
+    if config.GATE_NAVIGATION_MODE == 'kalman' and config.USE_KALMAN_EKF:
+        from ekf_estimator import EKFEstimator
+        state_estimator = EKFEstimator.create_ekf_estimator(shared_data)
+        logger.log_event('EKF', 'dual_gate_pnp+imu')
+    elif config.USE_VIO:
         from state_estimator import StateEstimator
         state_estimator = StateEstimator(
             shared_data, anchors_path=config.VIO_ANCHORS_PATH
@@ -51,12 +73,15 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
 
     # Planner selection. Racing modes are exclusive; OpenCV never blends with
     # Dreamer output. existing_ai is handled before this function in main.py.
-    if config.GATE_NAVIGATION_MODE == 'opencv':
+    if config.GATE_NAVIGATION_MODE == 'kalman':
+        from kalman_planner import KalmanDualGatePlanner
+        planner = KalmanDualGatePlanner()
+    elif config.GATE_NAVIGATION_MODE == 'pose_debug':
+        from pose_debug_planner import PoseDebugPlanner
+        planner = PoseDebugPlanner()
+    elif config.GATE_NAVIGATION_MODE == 'opencv':
         from opencv_gate_planner import OpenCVGatePlanner
         planner = OpenCVGatePlanner()
-    elif config.USE_GATE_CHASER:
-        from gate_chaser import GateChaserPlanner
-        planner = GateChaserPlanner()
     elif config.USE_TELEOP:
         from teleop import TeleopPlanner
         planner = TeleopPlanner(shared_data)

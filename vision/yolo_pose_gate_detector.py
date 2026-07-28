@@ -30,6 +30,7 @@ from .gate_detector import (
 from .yolo_gate_detector import (
     InnerGateCorners,
     YoloGateBox,
+    score_gate_candidate,
     select_target_gate,
 )
 
@@ -576,6 +577,8 @@ class YoloPoseGateDetector:
         self._last_log_at = -math.inf
         self._last_association_target: Optional[YoloGateBox] = None
         self._post_pass_rejection_until = -math.inf
+        self._skip_confirm_until = -math.inf
+        self._prefer_nx: Optional[float] = None
         self._global_hsv_detector = OrangeGateDetector(
             GateVisionConfig(
                 hsv_ranges=config.hsv_ranges,
@@ -626,6 +629,26 @@ class YoloPoseGateDetector:
         self._pending_target_frames = 0
         self._last_association_target = None
 
+    def reset_episode(self) -> None:
+        """Clear lock + post-pass filter after a sim/crash reset.
+
+        0855: post_pass_rejection_until survived floor resets, so max_area
+        kept wiping the restart first-gate (~80–180 px) and association stuck
+        on a stale edge remnant → selected_conf=none for whole attempts.
+        """
+        self.reset_target_lock()
+        self._post_pass_rejection_until = -math.inf
+        self._prefer_nx = None
+        self._skip_confirm_until = time.monotonic() + 3.0
+        print('[VISION] YOLO episode reset (post-pass/lock cleared)', flush=True)
+
+    def set_prefer_horizontal(self, nx: Optional[float]) -> None:
+        """Bias post-pass acquisition toward a latched course bearing."""
+        if nx is None or not math.isfinite(float(nx)):
+            self._prefer_nx = None
+            return
+        self._prefer_nx = float(np.clip(nx, -1.0, 1.0))
+
     def begin_next_gate_acquisition(self, timestamp: float) -> None:
         """Reset identity and briefly reject the just-passed gate remnant."""
         self.reset_target_lock()
@@ -633,6 +656,7 @@ class YoloPoseGateDetector:
             float(timestamp)
             + max(0.0, self.config.post_pass_rejection_seconds)
         )
+        self._skip_confirm_until = float(timestamp) + 2.0
 
     def _target_from_hint(
         self,
@@ -1013,17 +1037,23 @@ class YoloPoseGateDetector:
         inference_started = time.perf_counter()
         candidates = detect_gate_poses(frame, self.model, self.config)
         inference_done = time.perf_counter()
-        orange_mask = build_pose_orange_mask(frame, self.config)
-        candidates = confirm_pose_candidates_with_hsv(
-            candidates, orange_mask, self.config
-        )
+        orange_mask = None
+        if self.config.require_hsv_confirmation:
+            orange_mask = build_pose_orange_mask(frame, self.config)
+            candidates = confirm_pose_candidates_with_hsv(
+                candidates, orange_mask, self.config
+            )
+            eligible_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.hsv_confirmed
+            ]
+        else:
+            # YOLO-only: trust pose instances; skip HSV mask entirely.
+            eligible_candidates = list(candidates)
         hsv_done = time.perf_counter()
-        eligible_candidates = [
-            candidate
-            for candidate in candidates
-            if candidate.hsv_confirmed
-        ]
-        if now <= self._post_pass_rejection_until:
+        post_pass = now <= self._post_pass_rejection_until
+        if post_pass:
             frame_area = max(float(frame.shape[0] * frame.shape[1]), 1.0)
             maximum_area = (
                 float(
@@ -1035,32 +1065,192 @@ class YoloPoseGateDetector:
                 )
                 * frame_area
             )
+            # 0902: next gate often ~650–2200 px right after punch; 700 still
+            # dropped the bearing-side box so only right remnants remained.
+            minimum_area = max(500.0, 0.002 * frame_area)
             eligible_candidates = [
                 candidate
                 for candidate in eligible_candidates
-                if candidate.box.area <= maximum_area
+                if minimum_area <= candidate.box.area <= maximum_area
             ]
+            # 0750: reject flat bottom-bar instances that steal lock at v≈330.
+        frame_h = float(frame.shape[0])
+        filtered = []
+        for candidate in eligible_candidates:
+            box = candidate.box
+            x1, y1, x2, y2 = box.bbox
+            bw = max(1.0, float(x2 - x1))
+            bh = max(1.0, float(y2 - y1))
+            cy = 0.5 * (float(y1) + float(y2))
+            if bw / bh > 2.8 and cy > 0.70 * frame_h:
+                continue
+            if cy > 0.88 * frame_h and box.area < 0.45 * frame_h * float(
+                frame.shape[1]
+            ):
+                continue
+            # 0908: post-pass chase of v≈297–315 floor junk → dive.
+            # 0928: 0.72*H (=259) wiped real next-gate locks at cy≈258–280
+            # right after prefer correctly picked u≈378 — only edge remnants
+            # remained. Keep mid-low; reject true floor band only.
+            # 0930: right next-gate at cy≈310–321 (H=360) was wiped by 0.84
+            # → body_seek into the wall. Allow slightly lower when hunting right.
+            bot_frac = (
+                0.94
+                if (
+                    post_pass
+                    and self._prefer_nx is not None
+                    and float(self._prefer_nx) >= 0.18
+                )
+                else 0.84
+            )
+            if post_pass and cy > bot_frac * frame_h:
+                continue
+            filtered.append(candidate)
+        if filtered:
+            eligible_candidates = filtered
         persistent_lock = bool(
             self.config.persistent_target_lock
             and self._previous_target is not None
+            and not post_pass
         )
-        association_target = self._previous_target
+        association_target = None if post_pass else self._previous_target
+        # 0928: sticky near-course lock after pass so we don't drop 378→599
+        # when the box drifts a few pixels lower.
+        if (
+            post_pass
+            and self._previous_target is not None
+            and self._prefer_nx is not None
+        ):
+            prev_nx = (
+                float(self._previous_target.center[0]) - 0.5 * float(frame.shape[1])
+            ) / (0.5 * float(frame.shape[1]))
+            if (
+                abs(prev_nx - float(self._prefer_nx)) <= 0.45
+                and abs(prev_nx) <= 0.55
+            ):
+                association_target = self._previous_target
         if persistent_lock:
             predicted_target = self._target_from_hint(hint)
             if predicted_target is not None:
                 association_target = predicted_target
         self._last_association_target = association_target
-        selected = select_pose_target(
-            eligible_candidates,
-            association_target,
-            frame.shape,
-            self.config,
-            lock_active=persistent_lock or now <= self._lock_until,
-        )
+        # Acquisition uses max(area) which after a pass locks onto the largest
+        # side remnant (u≈600). During post-pass, pick by center-weighted score
+        # and heavily down-weight FOV-edge remnants (0855: locked u≈623).
+        if post_pass and eligible_candidates:
+            frame_w = float(frame.shape[1])
+            prefer = self._prefer_nx
+
+            def _cand_nx(candidate: PoseGateCandidate) -> float:
+                return (float(candidate.box.center[0]) - 0.5 * frame_w) / (
+                    0.5 * frame_w
+                )
+
+            def _post_pass_score(candidate: PoseGateCandidate) -> float:
+                score = score_gate_candidate(
+                    candidate.box, frame.shape, self.config
+                )
+                nx = _cand_nx(candidate)
+                if abs(nx) > 0.85:
+                    score *= 0.08
+                elif abs(nx) > 0.70:
+                    score *= 0.35
+                elif abs(nx) > 0.55:
+                    score *= 0.70
+                # 0912: prefer_nx over-weighted a small bearing-side speck
+                # over a larger near-center next gate (~6k). Same-side + area.
+                # 0928: edge remnant 562 (~6.8k) beat next gate 388 (~0.7k)
+                # despite prefer=+0.22 — angular match must dominate size.
+                if prefer is not None:
+                    # When hunting right, do not treat near-center-left as
+                    # "same" (0929: u≈301 beat u≈518 with abs(nx)<0.12).
+                    if float(prefer) >= 0.18:
+                        same = float(nx) >= -0.05
+                    else:
+                        same = (
+                            abs(float(nx)) < 0.20
+                            or float(nx) * float(prefer) >= 0.0
+                        )
+                    if not same:
+                        score *= 0.08
+                    else:
+                        score *= float(
+                            np.exp(-3.0 * abs(float(nx) - float(prefer)))
+                        )
+                        score *= 0.55 + 0.45 * min(
+                            float(candidate.box.area) / 6000.0, 1.0
+                        )
+                # Prefer sticky association when still near-course — but do
+                # not let a drifted center lock beat a larger right grower
+                # (0930: u≈324 stole over u≈526 while prefer=+0.28).
+                if association_target is not None:
+                    try:
+                        dx = float(candidate.box.center[0]) - float(
+                            association_target.center[0]
+                        )
+                        dy = float(candidate.box.center[1]) - float(
+                            association_target.center[1]
+                        )
+                        dist = math.hypot(dx, dy)
+                        if dist < 80.0:
+                            if (
+                                prefer is not None
+                                and float(prefer) >= 0.18
+                                and float(nx) < 0.10
+                            ):
+                                score *= 0.85
+                            else:
+                                score *= 1.8
+                    except (TypeError, ValueError, AttributeError):
+                        pass
+                return score
+
+            pool = list(eligible_candidates)
+            if prefer is not None:
+                # 0929: next gate at u≈504 (nx≈+0.58) with prefer=+0.32 was
+                # excluded by abs(nx)<=0.55 — only edge junk remained.
+                nx_lim = 0.75 if abs(float(prefer)) >= 0.18 else 0.55
+                near = [
+                    c
+                    for c in eligible_candidates
+                    if abs(_cand_nx(c) - float(prefer)) <= 0.45
+                    and abs(_cand_nx(c)) <= nx_lim
+                    and float(c.box.area) >= 400.0
+                    # Prefer side: drop opposite / near-left when hunting right.
+                    and (
+                        (
+                            float(prefer) >= 0.18
+                            and _cand_nx(c) >= -0.05
+                        )
+                        or (
+                            float(prefer) < 0.18
+                            and (
+                                float(prefer) * _cand_nx(c) >= 0.0
+                                or abs(_cand_nx(c)) < 0.12
+                            )
+                        )
+                    )
+                ]
+                if near:
+                    pool = near
+            selected = max(pool, key=_post_pass_score)
+        else:
+            selected = select_pose_target(
+                eligible_candidates,
+                association_target,
+                frame.shape,
+                self.config,
+                lock_active=persistent_lock or now <= self._lock_until,
+            )
         acquiring = self._previous_target is None or (
             not persistent_lock and now > self._lock_until
         )
-        if acquiring:
+        # 0850/0859: skip confirm during post-pass and right after episode
+        # reset so restart first-gate / next-gate locks aren't delayed.
+        skip_confirm = bool(
+            post_pass or now <= self._skip_confirm_until
+        )
+        if acquiring and not skip_confirm:
             selected = self._confirm_acquisition(selected)
             if selected is None:
                 # An expired target must not remain a green steering target
@@ -1102,10 +1292,12 @@ class YoloPoseGateDetector:
         else:
             self._missing_frames += 1
             if (
-                self._previous_valid_detection is not None
+                now > self._post_pass_rejection_until
+                and self._previous_valid_detection is not None
                 and self._missing_frames
                 <= self.config.previous_center_frames
             ):
+                # 0719: post-pass previous_frame_fallback stuck at u≈75/600.
                 result = replace(
                     self._previous_valid_detection,
                     predicted=True,
