@@ -55,6 +55,47 @@ comes first — nothing downstream can compensate for it.
 Both arming modes disarm in a `finally`, abort at 3 m altitude deviation or 35°
 lean, and force `AUTO_RESET_ON_CRASH=0` so a run cannot be yanked mid-measurement.
 
+## How many runs to expect
+
+Budget **20–30 invocations, one to two hours** including sim restarts. Most
+runs are 12–15 s of flight; the wall-clock cost is the sim reset and the YOLO
+model load, not the measurement.
+
+| Phase | Runs | Each | Stop when |
+|---|---|---|---|
+| 1 localize | 1, +1 per sign fix | 45 s | solve rate >50%, attitude err small, both gyro axes `same sign` |
+| 2 hover | 4–6 | 12 s | report says `holds altitude` |
+| 3 step (truth) | 6–9 | 14 s | rise <0.6 s **and** overshoot <25% |
+| 4 step (ekf) | 2–4 | 14 s | pitch and roll both pass, gap to Phase 3 understood |
+| 5 full run | 1–3 | 90 s | gates are passed repeatably |
+| 6 confirm | 2–3 | 45 s + race | NEW sim solve rate still >50% |
+
+Separate **search runs** from **confirmation runs**. Searching is cheap and
+coarse: change one number, run once, read the verdict, move on. But a single
+12 s hover has little statistical power, so once you accept a configuration,
+**re-run it 2–3 times unchanged** and check the verdict is stable. If the same
+gains give different answers run to run, you are reading noise and the extra
+search runs were wasted.
+
+That repeatability check matters beyond tuning. If the accepted configuration
+is not reproducible across identical runs, no waypoint-capture-and-replay
+scheme will be either.
+
+Two ways to waste an afternoon:
+
+- **Over-iterating.** The thresholds below are engineering defaults, not
+  airframe measurements. Chasing overshoot from 26% to 24% is noise-fitting.
+  Take the first configuration that clears both criteria.
+- **Re-running earlier phases.** Phases 1–4 do not need repeating once clean.
+  The gains are recorded in every CSV row in `logs/tuning/`, so read them back
+  rather than re-measuring.
+
+Phase 3 is the only genuine search, because it is two-dimensional. Do it
+coarsely: hold `--kd-att` at 0.10 and try `--kp-att` at 2.2 / 2.6 / 3.0 to find
+the fastest rise without runaway overshoot, then hold that `kp` and try
+`--kd-att` at 0.10 / 0.14 / 0.18 to pull the overshoot down. Six runs, no grid
+search.
+
 ---
 
 ## Phase 1 — Validate the estimator · OLD sim
@@ -97,8 +138,9 @@ below — jump straight to the prior rather than crawling upward:
 python tools/tune_flight.py hover --hover-thrust 0.28 --seconds 12
 ```
 
-Follow the suggested 0.005 steps until it reports `holds altitude`. Record the
-winner as `HT`.
+Follow the suggested 0.005 steps until it reports `holds altitude` — expect
+4–6 runs total. Then re-run the winner twice unchanged to confirm the verdict
+is stable, and record it as `HT`.
 
 If `HT` lands near 0.28, also widen the planner's clamp in `kalman_planner.py`:
 
@@ -116,7 +158,9 @@ python tools/tune_flight.py step --axis pitch --amplitude-deg 8 \
     --feedback truth --hover-thrust HT
 ```
 
-Iterate until rise is under ~0.6 s with under ~25% overshoot:
+Iterate until rise is under ~0.6 s with under ~25% overshoot. Expect 6–9 runs;
+search `kp` first at fixed `kd`, then `kd`, as described in
+[How many runs to expect](#how-many-runs-to-expect):
 
 ```bash
 python tools/tune_flight.py step --axis pitch --amplitude-deg 8 \
@@ -145,7 +189,8 @@ python tools/tune_flight.py step --axis roll --amplitude-deg 8 \
 ```
 
 Run roll separately — the two axes have never behaved symmetrically in this
-sim, which is why `config.py` carries a distinct `KP_ROLL_ATT` history.
+sim, which is why `config.py` carries a distinct `KP_ROLL_ATT` history. Two
+runs if both axes pass first time, four if roll needs its own gains.
 
 Compare against Phase 3:
 
