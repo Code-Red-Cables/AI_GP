@@ -40,7 +40,8 @@ $env:EKF_USE_PNP="0"
 
 Keys are the usual hold-to-fly set — `W/S` pitch, `A/D` roll, `Q/E` yaw,
 `R/F` climb/sink (a rate command, so release brakes to zero), `Space` level,
-`M` mark a waypoint, `Esc`/`X` quit. Waypoints are written on exit to
+`M` mark a waypoint, `Esc`/`X` quit. Full reference in
+[`MANUAL_INSTRUCTIONS.md`](MANUAL_INSTRUCTIONS.md). Waypoints are written on exit to
 `SPLINE_CAPTURE_PATH` (default `captured_waypoints.json`).
 
 Mark generously through corners — the spline is centripetal Catmull-Rom
