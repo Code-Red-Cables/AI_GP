@@ -113,6 +113,30 @@ class TargetSelectionTests(unittest.TestCase):
 
         self.assertEqual(selected.bbox, detections[1].bbox)
 
+    def test_lock_rejects_much_smaller_far_gate(self):
+        """Scale gate always applies while locked (assist range-flip fix)."""
+        previous = YoloGateBox((200, 120, 360, 280), 0.90)  # area ~25k
+        detections = [
+            # Far/small gate near image center — must not steal identity.
+            YoloGateBox((280, 150, 340, 210), 0.99),  # area ~3.6k, ratio~0.14
+            YoloGateBox((205, 125, 365, 285), 0.80),  # continuation
+        ]
+        config = HybridGateConfig(
+            minimum_gate_area_px=100.0,
+            target_association_min_area_ratio=0.45,
+            target_association_max_area_ratio=4.0,
+            target_association_center_span=1.85,
+        )
+        selected = select_target_gate(
+            detections,
+            previous,
+            (360, 640, 3),
+            config,
+            lock_active=True,
+        )
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.bbox, detections[1].bbox)
+
     def test_scoring_can_prefer_centered_confident_gate_over_larger_edge_box(self):
         detections = [
             YoloGateBox((0, 5, 360, 355), 0.42),

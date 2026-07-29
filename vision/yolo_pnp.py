@@ -139,18 +139,24 @@ def draw_gate_frame_axes(
     image: np.ndarray,
     gate: GatePnP,
     *,
-    axis_length_m: float = 0.7,
+    axis_length_m: float = 1.35,
     thickness: int = 2,
     label: Optional[str] = None,
 ) -> None:
-    """Project gate XYZ onto the image (X right, Y down, Z through)."""
+    """Project gate XYZ onto the image (X right, Y down, Z through).
+
+    Length is in gate-plane metres. Grow with range so a pad view (~20 m)
+    still shows a readable triad (old 1.2 m cap was ~20 px at that distance).
+    Cap at the outer half-diagonal so axes stay inside the gate square.
+    """
     pose = gate.rvec_tvec()
     if pose is None:
         return
     rvec, tvec = pose
-    # Scale axes a bit with range so far gates stay readable.
+    # ~half outer side by default; stretch toward full outer at long range.
+    range_scale = float(np.clip(gate.range_m / 8.0, 1.0, 2.2))
     length = float(
-        np.clip(axis_length_m * min(1.4, max(0.55, gate.range_m / 6.0)), 0.35, 1.2)
+        np.clip(axis_length_m * range_scale, 0.8, GATE_OUTER_M)
     )
     cv2.drawFrameAxes(image, cm.K, None, rvec, tvec, length, thickness)
     if label:

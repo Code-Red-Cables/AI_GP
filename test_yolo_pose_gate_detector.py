@@ -209,7 +209,9 @@ def test_largest_pose_instance_is_acquired_without_merging():
     assert selected.keypoints[0].tolist() == [200, 70]
 
 
-def test_acquisition_prefers_large_edge_gate_over_tiny_center_gate():
+def test_acquisition_prefers_confident_center_gate_over_weak_edge():
+    # 0833 acquisition uses composite center/area/confidence score — not
+    # pure max-area (edge junk used to win after a pass).
     candidates = [
         _candidate(
             (500, 100, 580, 171),
@@ -218,10 +220,10 @@ def test_acquisition_prefers_large_edge_gate_over_tiny_center_gate():
             ((505, 105), (575, 105), (505, 166), (575, 166)),
         ),
         _candidate(
-            (344, 177, 362, 208),
+            (280, 140, 400, 260),
             0.99,
             1,
-            ((346, 179), (360, 179), (346, 206), (360, 206)),
+            ((290, 150), (390, 150), (290, 250), (390, 250)),
         ),
     ]
 
@@ -234,7 +236,7 @@ def test_acquisition_prefers_large_edge_gate_over_tiny_center_gate():
     )
 
     assert selected is not None
-    assert selected.box.source_index == 0
+    assert selected.box.source_index == 1
 
 
 def test_lock_keeps_the_same_physical_pose_instance():
@@ -325,6 +327,80 @@ def test_lock_does_not_reacquire_distant_different_scale_gate():
     )
 
     assert selected is None
+
+
+def test_lock_keeps_growing_close_gate_and_rejects_far_sibling():
+    """Closing approach: area can grow >2x; far pad sibling must not win."""
+    previous = YoloGateBox((250, 100, 390, 240), 0.88)  # ~19.6k
+    candidates = [
+        _candidate(
+            (220, 40, 420, 280),  # grown ~2.4x, shifted up (close approach)
+            0.92,
+            0,
+            ((230, 50), (410, 50), (230, 270), (410, 270)),
+        ),
+        _candidate(
+            (300, 200, 340, 240),  # tiny far sibling
+            0.95,
+            1,
+            ((305, 205), (335, 205), (305, 235), (335, 235)),
+        ),
+    ]
+    selected = select_pose_target(
+        candidates,
+        previous,
+        (360, 640, 3),
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            target_association_center_span=1.85,
+            target_association_min_area_ratio=0.45,
+            target_association_max_area_ratio=4.0,
+        ),
+        lock_active=True,
+    )
+    assert selected is not None
+    assert selected.box.source_index == 0
+
+
+def test_large_top_of_frame_lock_not_wiped_as_fov_junk():
+    """Approaching gate at top of FOV must keep persistent identity."""
+    top_close = _frame(
+        rows=((200, 5, 440, 200, 0.90, 0),),
+        points=(
+            ((210, 15), (430, 15), (210, 190), (430, 190)),
+        ),
+    )
+    far_sibling = _frame(
+        rows=(
+            (200, 5, 440, 200, 0.88, 0),
+            (300, 220, 360, 280, 0.99, 0),
+        ),
+        points=(
+            ((210, 15), (430, 15), (210, 190), (430, 190)),
+            ((305, 225), (355, 225), (305, 275), (355, 275)),
+        ),
+    )
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            persistent_target_lock=True,
+            target_lock_seconds=2.0,
+            previous_center_frames=8,
+            target_association_min_area_ratio=0.45,
+            target_association_max_area_ratio=4.0,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([top_close, far_sibling]),
+    )
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    first = detector.detect(image, timestamp=1.0)
+    assert first.found
+    assert first.center_px[1] < 0.30 * 360
+    second = detector.detect(image, hint=first, timestamp=1.2)
+    assert second.found
+    # Still the large top gate, not the tiny far sibling.
+    assert second.center_px[1] < 120.0
+    assert second.area_px > 10000.0
 
 
 def test_persistent_lock_survives_timeout_and_requires_explicit_reset():

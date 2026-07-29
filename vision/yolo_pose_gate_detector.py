@@ -42,8 +42,8 @@ class PoseGateConfig:
     confidence_threshold: float = 0.25
     keypoint_confidence_threshold: float = 0.25
     nms_iou_threshold: float = 0.70
-    target_lock_seconds: float = 0.75
-    persistent_target_lock: bool = False
+    target_lock_seconds: float = 2.0
+    persistent_target_lock: bool = True
     acquisition_confirmation_frames: int = 1
     require_hsv_confirmation: bool = False
     hsv_ranges: tuple[
@@ -67,9 +67,9 @@ class PoseGateConfig:
     score_center_weight: float = 0.30
     score_area_weight: float = 0.30
     score_reference_area_ratio: float = 0.08
-    target_association_center_span: float = 0.75
-    target_association_min_area_ratio: float = 0.0
-    target_association_max_area_ratio: float = math.inf
+    target_association_center_span: float = 1.85
+    target_association_min_area_ratio: float = 0.45
+    target_association_max_area_ratio: float = 4.0
     post_pass_rejection_seconds: float = 0.0
     post_pass_max_area_ratio: float = 1.0
     hsv_blur_kernel: int = 5
@@ -1108,12 +1108,35 @@ class YoloPoseGateDetector:
             filtered.append(candidate)
         if filtered:
             eligible_candidates = filtered
+        association_target = None if post_pass else self._previous_target
+        # Drop FOV-edge sticky locks so a centered gate can reacquire
+        # (phase5 174620: lock stuck at y≈5 after climb-out).
+        # Do NOT wipe a large approaching gate at the top of frame — that
+        # cleared persistent lock mid-approach and reacquired a far gate.
+        if association_target is not None and not post_pass:
+            try:
+                ay = float(association_target.center[1])
+                ah = float(frame.shape[0])
+                aw = float(frame.shape[1])
+                area = float(association_target.area)
+                frame_area = max(ah * aw, 1.0)
+                large_close = area >= 0.012 * frame_area  # ~2.7k @ 640x360
+                top_junk = ay < 0.10 * ah and not large_close
+                bot_junk = ay > 0.92 * ah
+                if top_junk or bot_junk:
+                    association_target = None
+                    self._previous_target = None
+                    self._previous_valid_detection = None
+                    self._lock_until = 0.0
+            except (TypeError, ValueError, AttributeError, IndexError):
+                pass
+        # Recompute after FOV wipe so we do not acquire freely with a
+        # stale lock_active=True and previous=None.
         persistent_lock = bool(
             self.config.persistent_target_lock
             and self._previous_target is not None
             and not post_pass
         )
-        association_target = None if post_pass else self._previous_target
         # 0928: sticky near-course lock after pass so we don't drop 378→599
         # when the box drifts a few pixels lower.
         if (

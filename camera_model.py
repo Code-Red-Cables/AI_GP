@@ -13,6 +13,8 @@ The camera optical axis is body-forward pitched UP by ``CAMERA_TILT_UP_DEG``
 (rotation about the body-y / right axis).
 """
 
+import math
+
 import numpy as np
 
 # --------------------------------------------------------------------------------------
@@ -101,3 +103,35 @@ def body_to_ned(p, roll, pitch, yaw):
 def ned_to_body(p, roll, pitch, yaw):
     """Transform a world (NED) vector/point into the body frame."""
     return rot_world_body(roll, pitch, yaw).T @ np.asarray(p, float)
+
+
+def attitude_compensated_gate_norm(nx, ny, roll_rad, pitch_rad,
+                                   cam_tilt_up_rad=0.0):
+    """Gate image offset with body lean removed (through-aim variable).
+
+    Target for flying through the hole is the camera boresight: raw
+    ``(nx, ny) ≈ (0, 0)``. Nose-up body pitch slides the gate down the
+    frame (+ny) even when you are still on that line — undo **body**
+    pitch/roll so the returned values stay on the through-aim while leaned.
+
+    Do **not** fold in ``CAMERA_TILT_UP_DEG`` by default: from the pad the
+    gate is already near image centre with the tilted cam, so subtracting
+    the full 20° makes ``ny_level`` largely negative and the craft climbs
+    over the gate (drive_y). Pass a nonzero ``cam_tilt_up_rad`` only if
+    you explicitly want horizon-level aiming.
+
+    Returns
+    -------
+    (nx_level, ny_level) : float
+        Same units as the inputs (normalized image, +x right, +y down).
+        ``ny_level ≈ 0`` ⇒ on the through-aim (hold height, go forward).
+        ``ny_level > 0`` ⇒ gate below aim (descend a little).
+        ``nx_level > 0`` ⇒ gate right of aim.
+    """
+    nx = float(nx)
+    ny = float(ny)
+    cam_pitch = float(pitch_rad) + float(cam_tilt_up_rad or 0.0)
+    # Δn ≈ (f / half_frame) * tan(camera_pitch).
+    ny_level = ny - math.tan(cam_pitch) * (FY / (HEIGHT * 0.5))
+    nx_level = nx + math.tan(float(roll_rad)) * (FX / (WIDTH * 0.5))
+    return float(nx_level), float(ny_level)

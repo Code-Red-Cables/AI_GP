@@ -32,8 +32,11 @@ The gains you would reach for by name in `config.py` are not the ones that fly:
 |---|---|
 | `HOVER_THRUST` | **Live.** Trim value, not a loop. Tune first. |
 | `KALMAN_KP_ATT`, `KALMAN_KD_ATT` | **Live.** Inner attitude loop in `kalman_planner.py`. |
-| `KALMAN_KP_YAW` | **Live.** Image-space yaw. Needs real gates. |
-| `KALMAN_MAX_LEAN_DEG`, `KALMAN_MAX_RATE_RAD_S` | **Live.** Authority limits. |
+| `KALMAN_KP_YAW` | **Live.** Image-space yaw. Tune in Phase 4.7. |
+| `RATE_SIGN_YAW` | **Live.** Yaw command polarity. Wrong sign drives the gate off-frame — Phase 4.7 catches it. |
+| `LEAN_THRUST_BOOST` | **Live.** Extra collective while leaned (`kalman_planner` + crawl). Tune in Phase 4.6. |
+| `TAKEOFF_THRUST` | **Live.** Pad climb pulse. Tune in Phase 2.5. |
+| `KALMAN_MAX_LEAN_DEG`, `KALMAN_MAX_RATE_RAD_S` | **Live.** Authority limits. Tune in Phase 4.8. |
 | `KP_ATT`, `KD_ATT`, `KP_ROLL_ATT`, `KP_THRUST_VEL` | **Dead.** Only feed the controller's velocity-fallback branch, which the kalman planner never takes. |
 
 There is **no altitude PID**. The vertical channel is open loop:
@@ -55,59 +58,51 @@ comes first — nothing downstream can compensate for it.
 Both arming modes disarm in a `finally`, abort at 3 m altitude deviation or 35°
 lean, and force `AUTO_RESET_ON_CRASH=0` so a run cannot be yanked mid-measurement.
 
-## How many runs to expect
+---
 
-Budget **20–30 invocations, one to two hours** including sim restarts. Most
-runs are 12–15 s of flight; the wall-clock cost is the sim reset and the YOLO
-model load, not the measurement.
+## Default race client — image assist (`main.py`)
 
-| Phase | Runs | Each | Stop when |
-|---|---|---|---|
-| 1 localize | 1, +1 per sign fix | 45 s | solve rate >50%, attitude err small, both gyro axes `same sign` |
-| 2 hover | 4–6 | 12 s | report says `holds altitude` |
-| 3 step (truth) | 6–9 | 14 s | rise <0.6 s **and** overshoot <25% |
-| 4 step (ekf) | 2–4 | 14 s | pitch and roll both pass, gap to Phase 3 understood |
-| 5 full run | 1–3 | 90 s | gates are passed repeatably |
-| 6 confirm | 2–3 | 45 s + race | NEW sim solve rate still >50% |
+`FLIGHT_MODE=assist` (default) flies the **image-chase** planner: YOLO/`nx`/`ny`
+→ yaw + forward lean + hover thrust on the same attitude plant as `manual`.
+It does **not** steer on EKF position.
 
-Separate **search runs** from **confirmation runs**. Searching is cheap and
-coarse: change one number, run once, read the verdict, move on. But a single
-12 s hover has little statistical power, so once you accept a configuration,
-**re-run it 2–3 times unchanged** and check the verdict is stable. If the same
-gains give different answers run to run, you are reading noise and the extra
-search runs were wasted.
+```powershell
+# Full run (logs → logs/telem_*.csv + logs/events_*.txt)
+.\winvenv\Scripts\python.exe main.py
 
-That repeatability check matters beyond tuning. If the accepted configuration
-is not reproducible across identical runs, no waypoint-capture-and-replay
-scheme will be either.
+# Short tune harness
+.\winvenv\Scripts\python.exe tools\tune_flight.py assist --seconds 30
 
-Two ways to waste an afternoon:
+# Offline
+.\winvenv\Scripts\python.exe test_assist_planner.py
 
-- **Over-iterating.** The thresholds below are engineering defaults, not
-  airframe measurements. Chasing overshoot from 26% to 24% is noise-fitting.
-  Take the first configuration that clears both criteria.
-- **Re-running earlier phases.** Phases 1–4 do not need repeating once clean.
-  The gains are recorded in every CSV row in `logs/tuning/`, so read them back
-  rather than re-measuring.
+# Old dual-gate body-path planner
+$env:FLIGHT_MODE="kalman"; .\winvenv\Scripts\python.exe main.py
+```
 
-Phase 3 is the only genuine search, because it is two-dimensional. Do it
-coarsely: hold `--kd-att` at 0.10 and try `--kp-att` at 2.2 / 2.6 / 3.0 to find
-the fastest rise without runaway overshoot, then hold that `kp` and try
-`--kd-att` at 0.10 / 0.14 / 0.18 to pull the overshoot down. Six runs, no grid
-search.
+Tune: `ASSIST_LEAN_DEG`, `ASSIST_FWD_FRAC`, `ASSIST_NY_AIM`,
+`ASSIST_NY_THRUST_GAIN`, plus existing `HOVER_THRUST` / `KALMAN_KP_ATT` /
+`KALMAN_KP_YAW` / `LEAN_THRUST_BOOST`. Watch `[ASSIST]` lines and CSV columns
+`path_phase`, `path_nx`, `path_ny`, `path_thrust`.
 
 ---
 
 ## Phase 1 — Validate the estimator · OLD sim
 
-Read-only: never arms, never sends a flight command.
+Default is read-only (never arms). For the gyro sign check you need roll/pitch
+motion — use built-in keyboard teleop (arms after the usual 3.5 s early-start
+hold):
 
 ```bash
-python tools/tune_flight.py localize --seconds 45
+# Focus the console after arm — same hold-to-fly keys as `manual`:
+python tools/tune_flight.py localize --teleop --seconds 60
+
+# Keys: W/S pitch, A/D roll, Q/E yaw, R/F climb/sink (hold-to-fly),
+# Space = level, Esc/X = quit. Release = hover.
 ```
 
-**Rotate the drone through roll and pitch while it runs.** Motion is required
-or the gyro check reports "not enough motion to judge".
+Without `--teleop` the run stays grounded and the gyro check will say
+"not enough motion to judge" unless you tip the craft some other way.
 
 Gate on all three:
 
@@ -138,9 +133,8 @@ below — jump straight to the prior rather than crawling upward:
 python tools/tune_flight.py hover --hover-thrust 0.28 --seconds 12
 ```
 
-Follow the suggested 0.005 steps until it reports `holds altitude` — expect
-4–6 runs total. Then re-run the winner twice unchanged to confirm the verdict
-is stable, and record it as `HT`.
+Follow the suggested 0.005 steps until it reports `holds altitude`. Record the
+winner as `HT`.
 
 If `HT` lands near 0.28, also widen the planner's clamp in `kalman_planner.py`:
 
@@ -151,6 +145,19 @@ thrust = float(np.clip(thrust, hover - 0.035, hover + 0.015))
 `+0.015` of climb authority against `-0.035` of descent is biased toward
 sinking. Raise the upper bound and re-run this phase to confirm.
 
+## Phase 2.5 — Takeoff thrust pulse · OLD sim
+
+Level craft, pulse `TAKEOFF_THRUST` for a few seconds, then return to `HT`.
+Confirms the climb out of the pad is neither a float nor a rocket:
+
+```bash
+python tools/tune_flight.py climb --seconds 8 --pulse-s 2.5 \
+    --takeoff-thrust 0.30 --hover-thrust HT
+```
+
+Pass = climb rate roughly **0.2–1.8 m/s** during the pulse. Bake the winner
+as `TAKEOFF_THRUST`.
+
 ## Phase 3 — Controller ceiling with perfect sensing · OLD sim only
 
 ```bash
@@ -158,9 +165,7 @@ python tools/tune_flight.py step --axis pitch --amplitude-deg 8 \
     --feedback truth --hover-thrust HT
 ```
 
-Iterate until rise is under ~0.6 s with under ~25% overshoot. Expect 6–9 runs;
-search `kp` first at fixed `kd`, then `kd`, as described in
-[How many runs to expect](#how-many-runs-to-expect):
+Iterate until rise is under ~0.6 s with under ~25% overshoot:
 
 ```bash
 python tools/tune_flight.py step --axis pitch --amplitude-deg 8 \
@@ -189,8 +194,7 @@ python tools/tune_flight.py step --axis roll --amplitude-deg 8 \
 ```
 
 Run roll separately — the two axes have never behaved symmetrically in this
-sim, which is why `config.py` carries a distinct `KP_ROLL_ATT` history. Two
-runs if both axes pass first time, four if roll needs its own gains.
+sim, which is why `config.py` carries a distinct `KP_ROLL_ATT` history.
 
 Compare against Phase 3:
 
@@ -199,6 +203,122 @@ Compare against Phase 3:
   remaining error is observer work, not gain work. The report says which. Do
   not try to tune your way out of it: if the estimate is biased, the loop holds
   the *estimate* at the setpoint while the airframe leans by the bias.
+
+## Phase 4.5 — Lean-hover (tilt-compensated thrust) · OLD sim
+
+Phase 2 only proved level hover. Flight needs the same altitude hold while
+tilted. Default is an **8° roll** lean (not forward pitch): pitching off the
+pad on the OLD sim triggers an early-start DQ, which resets/teleports the
+craft and looks like an altitude crash even though the loop was fine.
+
+```bash
+# Uses the already-running sim (default). Pass -Restart only for a fresh
+# FlightSim + race-start window during YOLO pre-warm.
+powershell -File tools/_run_tune.ps1 -ArgsLine "lean-hover --amplitude-deg 8 --seconds 14 --hover-thrust HT --kp-att 2.2 --kd-att 0.10" -OutName phase45.txt
+
+# or direct (sim already in a race):
+python tools/tune_flight.py lean-hover --amplitude-deg 8 --seconds 14 \
+    --hover-thrust HT --kp-att X --kd-att Y
+# optional: --axis pitch  (only after a clean race start; DQ-prone)
+# lean-hover defaults --lean-boost 0 so HT/cos(tilt) is not masked by the
+# flight LEAN_THRUST_BOOST=0.008 (that made HT=0.255 still send ~0.2655).
+```
+
+Have an active race running (menu alone publishes nothing). Each armed tune
+sends sim reset (31000) to the pad before arming unless `--no-sim-reset`.
+You still start the race in the FlightSim UI — the client cannot.
+
+Pass if post-settle altitude rate stays within ~±0.05 m/s (truth preferred)
+and `race_finish_ns` stays 0. Climb → reduce HT / tilt boost. Sink → raise HT
+or check CSV `thrust` (> HT while leaned). If the log shows
+`early-start DQ`, ignore the altitude verdict and re-run with `--axis roll`.
+
+## Phase 4.6 — Image crawl · OLD sim
+
+Steer gently on YOLO / dual-gate image centre (`nx`, `ny`) with a small fixed
+forward lean — no punch, no takeoff boost. Confirms vision→lean wiring before
+the full planner:
+
+```bash
+python tools/tune_flight.py crawl --seconds 12 --lean-deg 4 \
+    --hover-thrust HT --kp-att X --kd-att Y
+```
+
+Pass if a gate is visible for most of the run, commanded pitch is nonzero
+whenever a detection exists, and **altitude rate stays within ±0.05 m/s**
+(truth preferred; ±0.08 is the hard fail band). Bracket `--lean-boost`
+(exports `LEAN_THRUST_BOOST` into the live planner too):
+
+```bash
+# prior: 0.000 sank ~0.4 m/s, 0.005 climbed ~0.4 → start near 0.002
+python tools/tune_flight.py crawl --seconds 12 --lean-deg 4 \
+    --hover-thrust HT --lean-boost 0.002 --kp-att X --kd-att Y
+```
+
+Failures with no gate / no pitch are perception; altitude fails are boost trim.
+
+## Phase 4.9 — Drive toward gate · OLD sim
+
+The full planner can sit in `hover` / `missing_gate1_pnp` and look like
+**nothing is happening**. This phase bypasses the planner and proves the
+airframe can close on a visible gate: hard forward lean + yaw-on-`nx` whenever
+YOLO/PnP has a centre.
+
+```bash
+python tools/tune_flight.py drive --seconds 16 --lean-deg 10 \
+    --hover-thrust HT --kp-att X --kd-att Y
+```
+
+Pass if gate range closes ≥1.5 m or bbox area grows ≥400 px. **Ignore
+local-N**. If the craft **backs up**, flip `FORWARD_PITCH_SIGN` in
+`config.py` (`+1` = positive `des_pitch` is forward; drive_e needed `+1`
+after negative pitch tracked but moved away from the gate). Do **not**
+start Phase 5 until this passes.
+
+## Phase 4.7 — Yaw align · OLD sim
+
+Hold level and close **only** image `nx` with the same yaw PID the planner
+uses (`KALMAN_KP_YAW`). Needs the gate off-centre at arm:
+
+```bash
+python tools/tune_flight.py yaw-align --seconds 12 \
+    --hover-thrust HT --kp-yaw 0.9
+```
+
+The harness yaws open-loop briefly to create an offset, then closes the loop.
+Pass if `|nx|` halves within ~4 s or finishes below ~0.15. If nx grows after
+close, **flip `RATE_SIGN_YAW`** (Phase 4.7 found `+1.0` recentres; `-1.0`
+drove the gate off-frame). Raise `kp-yaw` if recovery is slow; lower it if
+yaw oscillates. Phase 5 still re-checks under forward lean.
+
+## Phase 4.8 — Max-lean authority · OLD sim
+
+Step to `KALMAN_MAX_LEAN_DEG` (default 14°) and confirm the rate ceiling can
+actually get there:
+
+```bash
+python tools/tune_flight.py authority --axis roll --seconds 14 \
+    --hover-thrust HT --kp-att X --kd-att Y
+```
+
+Pass if steady lean ≥70% of the command and 10–90% rise ≤1.2 s. Fail → raise
+`KALMAN_MAX_RATE_RAD_S` (or `KALMAN_KP_ATT`). A high saturation fraction with
+a clean rise is fine — it means the rate limit is doing its job.
+
+## Phase 5.0 — Gate acquire · OLD sim
+
+Short armed run of the **real** planner. Within ~2 s of arm the craft must
+publish `DUAL_PNP` or planner `source=yolo_fallback` **and** a nonzero
+`desired_pitch`. This catches the “stuck in hover with `desired_pitch=0`”
+failure before a full lap:
+
+```bash
+python tools/tune_flight.py acquire --seconds 8 \
+    --hover-thrust HT --kp-att X --kd-att Y
+```
+
+Pass = acquire deadline met. Fail = fix vision / planner gate selection first;
+do not start Phase 5.
 
 ## Phase 5 — Full-run rehearsal · OLD sim
 

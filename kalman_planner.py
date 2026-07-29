@@ -1,10 +1,8 @@
-"""Dual-gate PnP + image IBVS hybrid (Q2_kalman).
+"""Dual-gate PnP geometric path planner + image fallback.
 
-Agent run 043043: forward lean was nearly zero while yaw slammed ±0.78 as
-YOLO/PnP jumped between gates (gu 320→597). Now:
-- EMA-smooth image errors
-- stronger forward lean when framed
-- reject huge yaw steps from lock jumps
+Primary: body-frame waypoints from gate PnP
+  approach → through → exit along gate1_through_body.
+Fallback: image IBVS when PnP drops (YOLO box / lost lock).
 """
 
 from __future__ import annotations
@@ -14,6 +12,7 @@ import time
 
 import numpy as np
 
+import camera_model as cm
 import config
 from control.pid import PIDConfig, PIDController
 
@@ -26,6 +25,10 @@ class KalmanDualGatePlanner:
         max_rate = config.KALMAN_MAX_RATE_RAD_S
         self._max_lean = math.radians(
             getattr(config, 'KALMAN_MAX_LEAN_DEG', 12.0)
+        )
+        # +1 → positive des_pitch = forward (drive_e proved -des_pitch backs up).
+        self._fwd_pitch_sign = float(
+            getattr(config, 'FORWARD_PITCH_SIGN', 1.0)
         )
         # kd=0: run 044123 saturated yaw at nx≈0.06 via D-term spikes.
         self._yaw_pid = PIDController(
@@ -61,16 +64,55 @@ class KalmanDualGatePlanner:
         self._arm_z = None
         self._nx_f = 0.0
         self._ny_f = 0.0
+        self._aim_f = None
         self._have_filt = False
         self._coast_until = 0.0
         self._seek_until = 0.0
         self._last_area_px = 0.0
+        self._peak_area_px = 0.0
         self._active_gate = None
         self._course_nx = None
         self._course_ny = None
         self._course_range = None
         self._course_latched = False
         self._pass_t = None
+        self._peak_climbed = 0.0
+
+    def _forward_pitch(self, frac: float) -> float:
+        """Desired pitch for forward lean fraction in [0, 1]."""
+        frac = float(np.clip(frac, 0.0, 1.0))
+        return self._fwd_pitch_sign * self._max_lean * frac
+
+    def _cap_forward(self, des_pitch: float, max_frac: float) -> float:
+        """Limit |forward| lean to max_frac * max_lean (keep sign)."""
+        lim = abs(self._max_lean * float(max_frac))
+        if self._fwd_pitch_sign >= 0.0:
+            return float(min(des_pitch, lim))
+        return float(max(des_pitch, -lim))
+
+    def _climb_m(self, shared_data, z_hint=None) -> float:
+        """Metres above arm — max across Z sources (loft-safe)."""
+        if self._arm_z is None:
+            return 0.0
+        climbs = []
+        for key in ('local_position_ned', 'position_ned'):
+            z = (shared_data.get(key) or {}).get('z')
+            if z is None:
+                continue
+            try:
+                c = float(self._arm_z) - float(z)
+            except (TypeError, ValueError):
+                continue
+            if -1.0 <= c <= 15.0:
+                climbs.append(c)
+        if z_hint is not None:
+            try:
+                c = float(self._arm_z) - float(z_hint)
+                if -1.0 <= c <= 15.0:
+                    climbs.append(c)
+            except (TypeError, ValueError):
+                pass
+        return max(climbs) if climbs else 0.0
 
     def reset_episode(self):
         """Clear episode state after a sim reset / floor crash."""
@@ -83,12 +125,15 @@ class KalmanDualGatePlanner:
         self._last_g2 = None
         self._last_safety = None
         self._arm_z = None
+        self._peak_climbed = 0.0
         self._nx_f = 0.0
         self._ny_f = 0.0
+        self._aim_f = None
         self._have_filt = False
         self._coast_until = 0.0
         self._seek_until = 0.0
         self._last_area_px = 0.0
+        self._peak_area_px = 0.0
         self._active_gate = None
         self._course_nx = None
         self._course_ny = None
@@ -122,6 +167,22 @@ class KalmanDualGatePlanner:
                     self._pass_t = now
                     self._have_filt = False
                     self._last_area_px = 0.0
+                    self._peak_area_px = 0.0
+                    # phase5_q: scraped gate1 near the pad then peak_climbed
+                    # still ~2.3 m → seek thrust capped → plunged (pos_d→+7).
+                    # Re-base altitude memory on the post-pass height.
+                    self._peak_climbed = 0.0
+                    if self._arm_z is not None:
+                        z_now = None
+                        for key in ('local_position_ned', 'position_ned'):
+                            z = (shared_data.get(key) or {}).get('z')
+                            if z is not None and math.isfinite(float(z)):
+                                z_now = float(z)
+                                break
+                        if z_now is not None:
+                            self._peak_climbed = max(
+                                0.0, float(self._arm_z) - z_now
+                            )
                     self._yaw_pid.reset()
                     self._last_yaw_cmd = 0.0
                     # Wait for vision course_bearing (may arrive one tick
@@ -252,13 +313,21 @@ class KalmanDualGatePlanner:
         if not math.isfinite(yaw):
             yaw = 0.0
 
-        z_ned = position.get('z')
-        if z_ned is not None and math.isfinite(float(z_ned)):
-            z_ned = float(z_ned)
-            if self._arm_z is None:
-                self._arm_z = z_ned
-        else:
-            z_ned = None
+        # Climb from every Z source; take the max sane value so a low EKF
+        # reading cannot re-arm full punch while local is already at −5 m
+        # (phase5_k: des_pitch=0.199 / thrust≈0.289 while pos_d≈−5…−10).
+        local = shared_data.get('local_position_ned') or {}
+        z_local = local.get('z')
+        z_ekf = position.get('z')
+        z_ned = None
+        for cand in (z_local, z_ekf):
+            if cand is not None and math.isfinite(float(cand)):
+                z_ned = float(cand)
+                break
+        if z_ned is not None and self._arm_z is None:
+            self._arm_z = float(z_ned)
+        climbed_now = self._climb_m(shared_data, z_ned)
+        self._peak_climbed = max(float(self._peak_climbed), float(climbed_now))
 
         # YOLO bbox fallback when PnP drops near the gate (044425: lost
         # DUAL_PNP at ~20k px while the detector still had the target).
@@ -267,11 +336,15 @@ class KalmanDualGatePlanner:
         area_px = float(det.get('area_px') or 0.0)
         # 0812: dual-only lock at ~19 m with no YOLO dived into the floor.
         # Far PnP without an image lock is not trustworthy enough to chase.
+        # 2026-07-28: pad start is ~20 m with a real ~40×40 YOLO box
+        # (~1600 px). The old area_px<2500 wipe forced hover at arm
+        # (Phase 5.0 acquire) even though vision was locked — only reject
+        # far PnP when there is no image centre at all.
         if (
             fresh
             and self._last_g1 is not None
-            and area_px < 2500.0
             and float(np.linalg.norm(self._last_g1)) > 12.0
+            and det.get('center_px') is None
         ):
             fresh = False
         # 064800: coast rejected tiny specks but then last_area fell to ~5k
@@ -303,10 +376,17 @@ class KalmanDualGatePlanner:
                 # 0930: post-pass right gate grew at cy≈312–339 and was wiped
                 # by 0.82*H (=295) before ny_lim — LEARN stayed body_seek
                 # with area~1–2k while YOLO still had u≈501–556.
+                # Phase5 gate1 B: after takeoff the pad gate sat at cy≈330
+                # (ny≈0.85). Approach bot_cut=0.82 wiped YOLO → on every
+                # PnP flicker we hovered (missing_gate1_pnp) and underflew.
+                # Keep a high cut on approach too; only reject true edge junk.
+                # phase5_rehearsal_a: approach cut at 0.94*H (=338) wiped a
+                # real ~2k pad-gate lock at cy≈340 while we were lofted —
+                # missing_gate1_pnp → hover dump. Only reject true edge junk.
                 bot_cut = (
-                    0.94 * HEIGHT
+                    0.96 * HEIGHT
                     if (coasting or seeking)
-                    else 0.82 * HEIGHT
+                    else 0.97 * HEIGHT
                 )
                 bottom = bool(cy > bot_cut)
                 if (bottom and area_px < 90000.0) or (
@@ -342,11 +422,11 @@ class KalmanDualGatePlanner:
                 and abs(float(det_nx) - prefer_nx) <= 0.50
             )
             if near_pref and prefer_nx >= 0.18:
-                ny_lim = 0.75
+                ny_lim = 0.95  # phase5_q: gate2 at cy≈338 (ny≈0.88)
             elif near_pref:
-                ny_lim = 0.60
+                ny_lim = 0.80
             else:
-                ny_lim = 0.35
+                ny_lim = 0.70
             if float(det_ny) > ny_lim:
                 det_nx = det_ny = None
                 area_px = 0.0
@@ -397,6 +477,11 @@ class KalmanDualGatePlanner:
             fresh = False
         if area_px >= max(8000.0, 0.5 * self._last_area_px):
             self._last_area_px = area_px
+        # phase5_l: areas stayed 1–2k until the gate exited the top of frame,
+        # so the 8k latch never armed and lost-lock always hovered. Track a
+        # softer peak for approach coast / top-exit recovery.
+        if area_px >= max(1200.0, 0.85 * float(getattr(self, '_peak_area_px', 0.0))):
+            self._peak_area_px = float(area_px)
         if coasting and speck:
             fresh = False
             det_nx = det_ny = None
@@ -455,10 +540,17 @@ class KalmanDualGatePlanner:
                     near_course
                     or same_side
                     or (
+                        # Phase5: pad/long-range gate is ~40×40 (~1600 px).
+                        # Old 3000 cut forced hover on every PnP flicker
+                        # (missing_gate1_pnp) while YOLO still had the gate.
+                        # phase5_l: cy≈40 → ny≈−0.78 was rejected by −0.55,
+                        # then hover dumped into the floor under the gate.
                         not coasting
                         and not seeking
-                        and area_px >= 3000.0
+                        and area_px >= 700.0
                         and abs(float(det_nx)) <= 0.55
+                        and float(det_ny or 0.0) <= 0.95
+                        and float(det_ny or 0.0) >= -0.95
                     )
                     or (
                         (coasting or seeking)
@@ -466,6 +558,19 @@ class KalmanDualGatePlanner:
                         and area_px >= 800.0
                         and abs(float(det_nx)) <= 0.55
                         and float(det_ny or 0.0) <= 0.40
+                        and float(det_ny or 0.0) >= -0.55
+                    )
+                    or (
+                        # phase5_c: default_right latch ignored real gate-2
+                        # boxes that weren't within 0.55 of h=+0.28 → body_seek
+                        # floor. Accept any chaseable right/center lock.
+                        # phase5_q: gate2 sat at cy≈338 (ny≈0.88) and was
+                        # wiped by 0.75 → body_seek into the floor.
+                        (coasting or seeking)
+                        and area_px >= 700.0
+                        and float(det_nx) >= -0.15
+                        and float(det_nx) <= 0.85
+                        and float(det_ny or 0.0) <= 0.95
                         and float(det_ny or 0.0) >= -0.55
                     )
                 )
@@ -509,9 +614,20 @@ class KalmanDualGatePlanner:
             # 080022: lost YOLO right after a large framed sighting — do not
             # hover or trust stale PnP; commit the hole for a short coast.
             # Latch once: re-extending every frame made coast immortal (0813).
-            if self._last_area_px >= 40000.0 and not coasting:
-                self._coast_until = now + 2.6
+            # phase5_k/l: lost lock near the hole → hover → floor.
+            # phase5_m: coast from peak≥1500 fired on pad (~1.6k) and lofted
+            # to ~15 m. Only coast after a real approach grow (≥4.5k), or
+            # after a close last_area latch (≥10k).
+            peak_area = max(
+                float(self._last_area_px),
+                float(getattr(self, '_peak_area_px', 0.0)),
+            )
+            if peak_area >= 4500.0 and not coasting:
+                # phase5_o: 2.4s coast expired mid-punch → hover sink at
+                # pos_d→0 while still closing. Hold longer after a grower.
+                self._coast_until = now + (3.6 if peak_area >= 8000.0 else 2.8)
                 self._last_area_px = 0.0
+                self._peak_area_px = 0.0
                 self._latch_course_bearing(shared_data)
                 return self._coast_through(
                     shared_data, dt, roll, pitch, yaw, z_ned
@@ -540,8 +656,29 @@ class KalmanDualGatePlanner:
         self._last_safety = None
         g1 = self._last_g1
         range_m = float(np.linalg.norm(g1)) if g1 is not None else 8.0
-        # YOLO box centre owns yaw/alt — PnP corner means spiked yaw at
-        # gu≈320 in 064131 (req=-0.13 while the box was centred).
+        use_body = bool(getattr(config, 'KALMAN_USE_BODY_PATH', True))
+        through = dual.get('gate1_through_body')
+        # Pad start is ~18–27 m; bodypath_a: range=26.1 skipped body path.
+        if (
+            use_body
+            and g1 is not None
+            and range_m < 30.0
+        ):
+            return self._track_body_path(
+                shared_data,
+                dt,
+                g1,
+                through,
+                roll,
+                pitch,
+                yaw,
+                z_ned,
+                ekf,
+                area_px=area_px,
+                det_nx=det_nx,
+                det_ny=det_ny,
+            )
+        # Image fallback when body path disabled / no geometry.
         if det_nx is not None:
             nx_raw = float(np.clip(det_nx, -1.2, 1.2))
             ny_raw = float(np.clip(det_ny or 0.0, -1.2, 1.2))
@@ -550,7 +687,6 @@ class KalmanDualGatePlanner:
             ny_raw = float(
                 np.clip(float(dual.get('gate1_norm_y') or 0.0), -1.2, 1.2)
             )
-
         return self._track_image(
             shared_data,
             dt,
@@ -565,6 +701,221 @@ class KalmanDualGatePlanner:
             source='dual_pnp',
             area_px=area_px,
         )
+
+    def _through_unit(self, g1: np.ndarray, through) -> np.ndarray:
+        """Unit through-gate axis in body (x fwd, y right, z down)."""
+        t = None
+        if through is not None:
+            try:
+                t = np.asarray(through, dtype=np.float64).reshape(3)
+            except (TypeError, ValueError):
+                t = None
+        if t is None or float(np.linalg.norm(t)) < 1e-6:
+            # Fallback: horizontal bearing to the gate centre.
+            t = np.array([float(g1[0]), float(g1[1]), 0.0], dtype=np.float64)
+        if float(t[0]) < 0.0:
+            t = -t
+        t[2] = 0.0
+        n = float(np.linalg.norm(t))
+        if n < 1e-6:
+            return np.array([1.0, 0.0, 0.0], dtype=np.float64)
+        return t / n
+
+    def _track_body_path(
+        self,
+        shared_data,
+        dt,
+        g1: np.ndarray,
+        through,
+        roll: float,
+        pitch: float,
+        yaw: float,
+        z_ned,
+        ekf,
+        *,
+        area_px: float = 0.0,
+        det_nx=None,
+        det_ny=None,
+    ):
+        """Fly approach → through → exit using PnP body geometry."""
+        self._last_safety = None
+        g = np.asarray(g1, dtype=np.float64).reshape(3)
+        t = self._through_unit(g, through)
+        d_app = float(getattr(config, 'KALMAN_APPROACH_DISTANCE_M', 3.5))
+        d_exit = float(getattr(config, 'KALMAN_EXIT_DISTANCE_M', 1.5))
+        # Signed distance from drone to gate plane along through (>0 = ahead).
+        along = float(np.dot(g, t))
+        range_m = float(np.linalg.norm(g))
+
+        if along > d_app + 0.4:
+            phase = 'approach'
+            aim = g - d_app * t
+        elif along > 0.6:
+            phase = 'commit'
+            # Aim slightly past the centre so we don't park on the rim.
+            aim = g + 0.4 * t
+        elif along > -0.8:
+            phase = 'through'
+            aim = g + max(0.8, 0.5 * d_exit) * t
+            self._coast_until = max(self._coast_until, time.monotonic() + 2.4)
+        else:
+            phase = 'exit'
+            aim = g + d_exit * t
+
+        # EMA on aim to kill one-frame PnP jumps.
+        if not self._have_filt:
+            self._aim_f = aim.copy()
+            self._have_filt = True
+        else:
+            prev = getattr(self, '_aim_f', None)
+            if prev is None or float(np.linalg.norm(aim - prev)) > 6.0:
+                self._aim_f = 0.55 * (prev if prev is not None else aim) + 0.45 * aim
+            else:
+                self._aim_f = 0.65 * prev + 0.35 * aim
+        aim = self._aim_f
+        ex, ey, ez_body = float(aim[0]), float(aim[1]), float(aim[2])
+        # Altitude MUST use camera-optical vertical, not raw body-z.
+        # Camera is pitched +20°: a gate on the optical axis at 20 m is
+        # body_z ≈ -6.8 m. Using that as height error commanded a hard climb
+        # (pad loft → pitch up → gate leaves the bottom of the frame).
+        aim_cam = cm.body_to_cam(aim)
+        ez = float(aim_cam[1])  # +down in camera; 0 = on boresight
+
+        # Bearing errors (unitless) for yaw / roll — geometric, not image.
+        fwd_den = max(1.0, abs(ex))
+        nx = float(np.clip(ey / fwd_den, -1.2, 1.2))
+        # Optical-down of aim (same units as ez) for logging / image assist.
+        ny = float(np.clip(ez / fwd_den, -1.2, 1.2))
+
+        climbed = self._climb_m(shared_data, z_ned)
+        self._peak_climbed = max(float(self._peak_climbed), float(climbed))
+        alt = max(float(climbed), float(self._peak_climbed))
+
+        yaw_rate = float(self._yaw_pid.update(nx, dt))
+        if phase in ('through', 'exit') and abs(nx) < 0.20:
+            yaw_rate *= 0.35
+        max_step = self._yaw_slew * dt
+        yaw_rate = float(
+            np.clip(
+                yaw_rate,
+                self._last_yaw_cmd - max_step,
+                self._last_yaw_cmd + max_step,
+            )
+        )
+        self._last_yaw_cmd = yaw_rate
+
+        # Forward lean from along-track progress + lateral alignment.
+        align = float(np.clip(1.0 - abs(nx) / 0.50, 0.25, 1.0))
+        if phase == 'approach':
+            # Close the standoff: more lean when still far from the aim point.
+            aim_range = float(np.linalg.norm(aim))
+            fwd = float(np.clip(0.35 + 0.55 * (aim_range / 12.0), 0.40, 0.95))
+            fwd *= align
+            # Soft pad start — don't slam full lean at arm.
+            if alt < 0.35 and range_m > 10.0:
+                fwd = min(fwd, 0.55)
+        elif phase == 'commit':
+            fwd = 0.90 * align
+        elif phase == 'through':
+            fwd = 0.95
+        else:
+            fwd = 0.70
+        des_pitch = self._forward_pitch(fwd)
+        if phase == 'approach' and range_m > 8.0:
+            frac = float(getattr(config, 'KALMAN_FAR_PITCH_FRAC', 0.42))
+            ramp = float(np.clip(alt / 0.55, 0.20, 1.0))
+            min_p = self._forward_pitch(frac * ramp)
+            if self._fwd_pitch_sign >= 0.0:
+                des_pitch = max(des_pitch, min_p)
+            else:
+                des_pitch = min(des_pitch, min_p)
+
+        lean_scale = float(getattr(config, 'KALMAN_BODY_Y_LEAN_SCALE', 0.55))
+        des_roll = float(
+            np.clip(
+                -lean_scale * nx * self._max_lean,
+                -self._max_lean,
+                self._max_lean,
+            )
+        )
+        if phase in ('through', 'exit') and abs(nx) < 0.18:
+            des_roll *= 0.25
+
+        roll_rate = float(self._roll_pid.update(des_roll - roll, dt))
+        pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
+
+        # Geometric altitude: camera-optical Y of aim (down +ve, tilt-free).
+        hover = float(config.HOVER_THRUST)
+        z_gain = float(getattr(config, 'KALMAN_BODY_Z_THRUST_GAIN', 0.028))
+        # Deadzone ±0.25 m around boresight height.
+        ez_cmd = 0.0 if abs(ez) < 0.25 else ez
+        thrust = hover - z_gain * ez_cmd
+        vert_src = 'cam_y'
+        # Loft ceiling from climbed (still needed — PnP z can be noisy).
+        if alt > 2.6:
+            thrust = min(thrust, hover - 0.010)
+            vert_src += '+alt_soft'
+        if alt > 3.2:
+            thrust = min(thrust, hover - 0.022)
+            des_pitch = self._cap_forward(des_pitch, 0.45)
+            pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
+            vert_src += '+alt_hard'
+        if alt > 3.8:
+            thrust = min(thrust, hover - 0.035)
+            des_pitch = self._cap_forward(des_pitch, 0.25)
+            pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
+            vert_src += '+alt_emerg'
+        # Hold altitude through the hole — don't dig.
+        if phase in ('commit', 'through', 'exit'):
+            thrust = max(thrust, hover - 0.008)
+        tilt = max(
+            0.88,
+            math.cos(abs(float(des_pitch))) * math.cos(abs(float(des_roll))),
+        )
+        delta = float(thrust) - hover
+        thrust = (hover / tilt) + delta
+        boost = float(getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0)
+        if boost > 0.0 and abs(des_pitch) > math.radians(0.5) and alt < 2.2:
+            thrust += boost
+        thrust = float(np.clip(thrust, 0.210, 0.30))
+
+        # Optional image assist for yaw only if body lateral disagrees hard
+        # with a clear YOLO centre (keeps identity when PnP flips).
+        if det_nx is not None and abs(float(det_nx) - nx) > 0.55 and area_px >= 1500:
+            yaw_rate = 0.5 * yaw_rate + 0.5 * float(
+                self._yaw_pid.update(float(det_nx), dt)
+            )
+
+        shared_data['kalman_path'] = {
+            'phase': phase,
+            'range_m': range_m,
+            'along_m': along,
+            'aim_body': [ex, ey, ez_body],
+            'aim_cam_y': ez,
+            'norm_x': nx,
+            'norm_y': ny,
+            'align': align,
+            'climbed': climbed,
+            'thrust': thrust,
+            'des_pitch': des_pitch,
+            'vert_src': vert_src,
+            'source': 'body_path',
+            'gate2_fresh': bool(ekf.get('gate2_fresh', False)),
+        }
+        shared_data['planner_target'] = {
+            'vn': 0.0,
+            've': 0.0,
+            'vd': 0.0,
+            'yaw_rate': yaw_rate,
+            'kalman': True,
+            'roll_rate': roll_rate,
+            'pitch_rate': pitch_rate,
+            'thrust': thrust,
+            'desired_roll': des_roll,
+            'desired_pitch': des_pitch,
+            'desired_yaw': yaw + nx * 0.5,
+        }
+        return shared_data['planner_target']
 
     def _track_image(
         self,
@@ -633,9 +984,11 @@ class KalmanDualGatePlanner:
         align = float(np.clip(1.0 - abs(nx) / 0.45, 0.0, 1.0))
         vert_align = float(np.clip(1.0 - abs(ny) / 0.65, 0.0, 1.0))
 
-        climbed = 0.0
-        if z_ned is not None and self._arm_z is not None:
-            climbed = self._arm_z - z_ned
+        climbed = self._climb_m(shared_data, z_ned)
+        self._peak_climbed = max(float(self._peak_climbed), float(climbed))
+        # Instantaneous climbed flickers to ~0 on Z glitches and re-arms full
+        # punch lean (phase5_h/k: des_pitch=0.199 while pos_d=-4…−10 m).
+        alt = max(float(climbed), float(self._peak_climbed))
 
         # 064453: at the hole climbed fell below 0.3 m → fwd=0 while the
         # gate filled the frame → sank into thousands of Gate collisions.
@@ -650,21 +1003,78 @@ class KalmanDualGatePlanner:
         # → fwd=0 while locked on u≈385 — never closed the 3.1 m gap.
         # Only exempt post-pass yolo_fallback; first-gate yolo_fallback with
         # fwd always on scraped the rim (0 GATE_PASSED this run).
+        # phase5 v6: blocking ALL forward until climbed>=0.30 made takeoff a
+        # pure vertical hover — gate slid off the top, never pitched forward.
+        # If a gate is already framed, fly toward it while climbing.
+        gate_framed = bool(
+            area_px >= 800.0
+            and abs(float(nx)) < 0.45
+            and abs(float(ny)) < 0.55
+        )
+        # Phase5 gate1: waiting for climbed>=0.30 with fwd=0 parked the
+        # craft climbing until the gate sat at cy≈330. Allow forward as
+        # soon as YOLO has a centred-ish far lock, even pre-climb.
+        pad_lock = bool(
+            area_px >= 700.0
+            and abs(float(nx)) < 0.45
+            and float(ny) < 0.95
+            and range_m > 8.0
+        )
         if (
-            climbed < 0.30
+            alt < 0.30
             and not close
             and not commit
+            and not gate_framed
+            and not pad_lock
             and not (post_pass_hunt and source == 'yolo_fallback')
         ):
             fwd = 0.0
-        elif climbed > 2.0 and not close and not post_pass_hunt:
-            fwd *= 0.40
+        elif alt > 3.5 and not close and not post_pass_hunt:
+            # Was 2.0→×0.40: over-climb at 22 m killed forward lean so the
+            # craft hovered/climbed until the gate left the FOV (phase5 lap).
+            fwd *= 0.55
+        # Far first-gate: keep closing even if ny is a bit high from climb.
+        # phase5_d: forcing 0.70×max_lean (~10°) at arm jittered the pad and
+        # lofted; use a mild floor (~6°) and ramp with align, not a hard step.
+        far_gate = bool(
+            range_m > 8.0
+            and area_px >= 600.0
+            and abs(float(nx)) < 0.40
+            and float(ny) < 0.95
+            # phase5_o: far min-pitch while ny≪0 flew under the hole
+            # (gate exited at v≈61 with only ~1.3 m climb).
+            and float(ny) > -0.20
+        )
+        if far_gate:
+            fwd = max(fwd, 0.80)
+            align = max(align, 0.60)
+        # Climb into a high-in-frame gate instead of punching under it.
+        # phase5_p: aggressive ×0.30 at any range lofted to 6 m with no
+        # close. Only ease forward once the box is already growing.
+        if area_px >= 3000.0 and float(ny) < -0.35:
+            fwd *= 0.45
+        elif area_px >= 3000.0 and float(ny) < -0.18:
+            fwd *= 0.70
         # Keep forward lean; only aim pitch at the gate once close (0748: early
         # ny-bias at v≈304 commanded max dive and missed the gate).
         if commit or close or (post_pass_hunt and source == 'yolo_fallback'):
             fwd = max(fwd, 0.90 if abs(nx) < 0.35 else 0.75)
             align = max(align, 0.70)
-        des_pitch = -self._max_lean * fwd * max(align, 0.40) * max(vert_align, 0.50)
+        # Soften vert_align floor at long range so a low-in-frame gate after
+        # takeoff still gets forward pitch (was *0.50 → near-zero des_pitch).
+        vert_floor = 0.40 if range_m > 8.0 else 0.50
+        des_pitch = self._forward_pitch(
+            fwd * max(align, 0.40) * max(vert_align, vert_floor)
+        )
+        if far_gate:
+            # Soft-start: ramp min pitch with climb so arm is not a step.
+            frac = float(getattr(config, 'KALMAN_FAR_PITCH_FRAC', 0.42))
+            ramp = float(np.clip(alt / 0.55, 0.20, 1.0))
+            min_p = self._forward_pitch(frac * ramp)
+            if self._fwd_pitch_sign >= 0.0:
+                des_pitch = max(des_pitch, min_p)
+            else:
+                des_pitch = min(des_pitch, min_p)
         # Only punch when the hole is roughly framed. ny>0.25 ⇒ still too high
         # on the top bar (0752 scrapes).
         framed = bool(abs(nx) < 0.28 and abs(ny) < 0.28)
@@ -699,15 +1109,29 @@ class KalmanDualGatePlanner:
             or (yolo_alive and (commit or close) and framed)
         )
         if punch_ready:
-            des_pitch = -self._max_lean * max(fwd, 0.95)
-            des_pitch = float(np.clip(des_pitch, -self._max_lean, -0.05))
+            # Cap punch by peak altitude — phase5_h still hit 0.199 lean @ 4 m
+            # when instantaneous climbed flickered low.
+            punch_frac = 0.95
+            if alt > 1.6:
+                punch_frac = 0.75
+            if alt > 2.1:
+                punch_frac = 0.55
+            if alt > 2.6:
+                punch_frac = 0.40
+            if alt > 3.2:
+                punch_frac = 0.25
+            des_pitch = self._forward_pitch(max(fwd, punch_frac))
+            if self._fwd_pitch_sign >= 0.0:
+                des_pitch = max(des_pitch, 0.05)
+            else:
+                des_pitch = min(des_pitch, -0.05)
             if low_fill:
                 # Hold altitude; box center is on the bottom bar, hole is above.
                 ny = 0.0
         elif (commit or close) and ny > 0.25 and not filling:
             # Drop into the opening before committing speed.
             fwd = min(fwd, 0.65)
-            des_pitch = -self._max_lean * fwd * max(align, 0.40)
+            des_pitch = self._forward_pitch(fwd * max(align, 0.40))
         # Roll toward image error (same sign convention as yaw).
         des_roll = float(
             np.clip(-0.50 * nx * self._max_lean, -self._max_lean, self._max_lean)
@@ -734,7 +1158,7 @@ class KalmanDualGatePlanner:
         if gate_contact:
             punch_ready = True
             punch = True
-            des_pitch = -self._max_lean
+            des_pitch = self._forward_pitch(0.55 if alt > 2.0 else 0.85)
             des_roll = 0.0
             yaw_rate = 0.0
             ny = 0.0
@@ -742,30 +1166,67 @@ class KalmanDualGatePlanner:
 
         roll_rate = float(self._roll_pid.update(des_roll - roll, dt))
         pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
-        thrust, z_err, vert_src = self._thrust_for_gate(ny, climbed)
+        thrust, z_err, vert_src = self._thrust_for_gate(ny, alt)
+        # Tilt-compensate the HOVER baseline, then re-apply image/alt delta.
+        # max(thrust, HOVER/tilt) defeated descent (phase5_rehearsal_a: parked
+        # at −2.7 m with ny→0.85, alt brakes never cut collective).
+        tilt = max(
+            0.88,
+            math.cos(abs(float(des_pitch))) * math.cos(abs(float(des_roll))),
+        )
+        hover = float(config.HOVER_THRUST)
+        delta = float(thrust) - hover
+        thrust = (hover / tilt) + delta
+        lean_cmd = max(abs(float(des_pitch)), abs(float(des_roll)))
+        boost = float(getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0)
+        if boost > 0.0 and lean_cmd > math.radians(0.5) and alt < 2.0:
+            thrust = float(thrust) + boost
+            vert_src += '+lean_boost'
+        thrust = float(np.clip(thrust, 0.210, 0.30))
         if punch_ready:
-            tilt = max(0.88, math.cos(abs(des_pitch)))
-            thrust = max(thrust, config.HOVER_THRUST / tilt)
-            if climbed < 0.50:
-                thrust = max(thrust, config.HOVER_THRUST + 0.02)
-            # 0829: filling punch climbed 0.3→1.9 m and cleared the top bar
-            # without a score. Hold altitude once the hole fills the FOV.
-            if (filling_level or low_fill or gate_contact) and climbed > 0.90:
+            if alt < 0.50:
+                thrust = max(thrust, config.HOVER_THRUST + 0.015)
+            # Match raised ALT_* ladder (dualgate_t dumped mid-punch @1.5).
+            if alt > 2.0:
+                thrust = min(thrust, config.HOVER_THRUST - 0.006)
+            if alt > 2.6:
+                thrust = min(thrust, config.HOVER_THRUST - 0.014)
+            if alt > 3.2:
+                thrust = min(thrust, config.HOVER_THRUST - 0.024)
+            if alt > 3.8:
+                thrust = min(thrust, config.HOVER_THRUST - 0.034)
+            if (filling_level or low_fill or gate_contact) and alt > 0.90:
                 thrust = min(thrust, config.HOVER_THRUST - 0.010)
-            if (filling_level or low_fill or gate_contact) and climbed > 1.40:
-                thrust = min(thrust, config.HOVER_THRUST - 0.025)
-            if low_fill or gate_contact:
-                # Don't dump thrust into the bottom bar.
-                thrust = max(thrust, config.HOVER_THRUST)
-            thrust = float(np.clip(thrust, 0.210, 0.31))
+            if (filling_level or low_fill or gate_contact) and alt > 1.40:
+                thrust = min(thrust, config.HOVER_THRUST - 0.022)
+            if (low_fill or gate_contact) and alt < 1.8:
+                thrust = max(thrust, config.HOVER_THRUST - 0.005)
+            thrust = float(np.clip(thrust, 0.210, 0.280))
             vert_src += '+punch_hold'
-        elif (commit or close) and ny > 0.25 and not filling:
-            thrust = min(thrust, config.HOVER_THRUST - 0.015 - 0.02 * ny)
-            thrust = float(np.clip(thrust, 0.210, config.HOVER_THRUST))
-            vert_src += '+drop_to_hole'
-        elif commit and climbed >= 1.8 and ny > 0.05:
-            thrust = min(thrust, config.HOVER_THRUST - 0.015)
+        elif (commit or close) and ny > 0.55 and not filling and alt > 1.8:
+            # Only tip down when clearly lofted above a low-in-frame hole.
+            # phase5_n: ny>0.25 alone dug under a 27k commit (cam tilt).
+            thrust = min(thrust, config.HOVER_THRUST - 0.006 - 0.008 * (ny - 0.55))
+            thrust = float(np.clip(
+                thrust, config.HOVER_THRUST - 0.018, config.HOVER_THRUST + 0.005,
+            ))
+            vert_src += '+commit_high_desc'
+        elif commit and alt >= 2.4 and ny > 0.35:
+            thrust = min(thrust, config.HOVER_THRUST - 0.010)
+            thrust = max(thrust, config.HOVER_THRUST - 0.020)
             vert_src += '+commit_descend'
+        elif close or commit:
+            # Hold altitude through the hole — don't sink on cam-tilt ny.
+            thrust = max(thrust, config.HOVER_THRUST - 0.006)
+        # Absolute loft ceiling — never trust a single bad alt sample.
+        if alt > 2.8:
+            thrust = min(float(thrust), hover - 0.022)
+            des_pitch = self._cap_forward(des_pitch, 0.40)
+            pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
+        if alt > 3.5:
+            thrust = min(float(thrust), hover - 0.035)
+            des_pitch = self._cap_forward(des_pitch, 0.25)
+            pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
 
         phase = 'approach'
         if commit:
@@ -1004,7 +1465,7 @@ class KalmanDualGatePlanner:
         ):
             # Default hunt: bias right for typical gate-2 offset.
             nx, ny = 0.28, -0.06
-        des_pitch = -self._max_lean * fwd_frac
+        des_pitch = self._forward_pitch(fwd_frac)
         des_roll = float(
             np.clip(-0.55 * nx * self._max_lean, -self._max_lean, self._max_lean)
         )
@@ -1044,46 +1505,88 @@ class KalmanDualGatePlanner:
         roll_rate = float(self._roll_pid.update(des_roll - roll, dt))
         pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
         tilt = max(0.88, math.cos(abs(des_pitch)))
+        # Re-read Z here — after GATE_PASSED local/EKF can briefly drop and
+        # climbed→0 falsely armed the pad-clear boost (phase5_g: 5.5 m loft
+        # in ~3 s of body_seek).
+        if z_ned is None or not math.isfinite(float(z_ned)):
+            local = shared_data.get('local_position_ned') or {}
+            pos = shared_data.get('position_ned') or {}
+            for src in (local.get('z'), pos.get('z')):
+                if src is not None and math.isfinite(float(src)):
+                    z_ned = float(src)
+                    break
+        if z_ned is not None and self._arm_z is None and math.isfinite(float(z_ned)):
+            self._arm_z = float(z_ned)
         climbed = (
-            (self._arm_z - z_ned)
+            (self._arm_z - float(z_ned))
             if z_ned is not None and self._arm_z is not None
             else 0.0
         )
+        self._peak_climbed = max(float(self._peak_climbed), float(climbed))
+        alt = max(float(climbed), float(self._peak_climbed))
         thrust = float(
             np.clip(
                 (config.HOVER_THRUST + 0.01 - 0.012 * ny) / tilt,
                 config.HOVER_THRUST - 0.01,
-                0.31,
+                0.30,
             )
         )
+        post_pass = bool(shared_data.get('post_pass_hunt'))
+        # Live height for floors; peak only for loft ceilings (dualgate_t:
+        # peak after scrape-pass capped thrust while pos_d was already +ve).
+        live = float(climbed)
         if phase in ('seek', 'coast'):
-            # Prefer altitude hold over speed while hunting the next gate.
             thrust = max(thrust, config.HOVER_THRUST / max(tilt, 0.90))
-            # 0906: seek deaths at peak_climb≈1.0 — hold harder while low.
-            if climbed < 0.80:
-                thrust = max(thrust, config.HOVER_THRUST + 0.025)
-            if climbed < 0.40:
-                thrust = max(thrust, config.HOVER_THRUST + 0.035)
-        # 0812/0859: hard thrust dumps after climb→2 m caused freefall. Soft
-        # brake only; keep a little forward lean so we don't hover-stall.
-        if climbed > 1.1:
+            if post_pass:
+                # Hold / climb to gate-2 height until YOLO re-locks. Soften
+                # forward lean while low so we don't dive into the floor.
+                thrust = max(thrust, config.HOVER_THRUST + 0.008)
+                if live < 1.6:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.012)
+                if live < 1.0:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.018)
+                    des_pitch = self._cap_forward(des_pitch, 0.45)
+                    pitch_rate = float(
+                        self._pitch_pid.update(des_pitch - pitch, dt)
+                    )
+                if live < 0.5:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.022)
+                    des_pitch = self._cap_forward(des_pitch, 0.25)
+                    pitch_rate = float(
+                        self._pitch_pid.update(des_pitch - pitch, dt)
+                    )
+            else:
+                # Approach coast after top-exit — hold altitude, don't sink
+                # into the pad (phase5_o: thr 0.224 after coast → floor).
+                if live < 1.6:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.008)
+                if live < 0.40:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.012)
+                if live < 0.20:
+                    thrust = max(thrust, config.HOVER_THRUST + 0.018)
+        # Loft ceiling — peak alt so a Z glitch cannot re-arm full punch.
+        loft = float(alt) if not post_pass else max(live, 0.0)
+        if loft > 2.6:
             thrust = min(thrust, config.HOVER_THRUST)
-            des_pitch = max(des_pitch, -self._max_lean * 0.70)
-        if climbed > 1.6:
-            thrust = min(thrust, config.HOVER_THRUST - 0.010)
-            des_pitch = max(des_pitch, -self._max_lean * 0.55)
-        if climbed > 2.2:
-            thrust = min(thrust, config.HOVER_THRUST - 0.020)
-            des_pitch = max(des_pitch, -self._max_lean * 0.40)
-        # 0928: seek runaway to peak_climb=4–15 m after losing the next gate.
-        if phase in ('seek', 'coast') and climbed > 2.5:
-            thrust = min(thrust, config.HOVER_THRUST - 0.035)
-            des_pitch = max(des_pitch, -self._max_lean * 0.25)
+            des_pitch = self._cap_forward(des_pitch, 0.65)
+        if loft > 3.0:
+            thrust = min(thrust, config.HOVER_THRUST - 0.012)
+            des_pitch = self._cap_forward(des_pitch, 0.50)
+        if phase in ('seek', 'coast') and loft > 3.4:
+            thrust = min(thrust, config.HOVER_THRUST - 0.025)
+            des_pitch = self._cap_forward(des_pitch, 0.30)
             yaw_rate *= 0.3
-        if phase in ('seek', 'coast') and climbed > 3.2:
-            thrust = min(thrust, config.HOVER_THRUST - 0.050)
-            des_pitch = -0.02
+        if phase in ('seek', 'coast') and loft > 4.0:
+            thrust = min(thrust, config.HOVER_THRUST - 0.040)
+            des_pitch = 0.02 * self._fwd_pitch_sign
             yaw_rate = 0.0
+        boost = float(getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0)
+        if (
+            boost > 0.0
+            and abs(float(des_pitch)) > math.radians(0.5)
+            and alt < 2.2
+        ):
+            thrust = float(thrust) + boost
         shared_data['kalman_path'] = {
             'phase': phase,
             'range_m': (
@@ -1113,25 +1616,48 @@ class KalmanDualGatePlanner:
 
     def _thrust_for_gate(self, ny: float, climbed: float):
         hover = config.HOVER_THRUST
-        z_err = ny
-        # Image: ny>0 means gate below centre → descend a touch; ny<0 climb.
-        # 065915 approached with v≈240–260 (gate low in frame) — bias a bit
-        # stronger so we punch the hole, not the top bar.
-        thrust = hover - 0.030 * ny
-        thrust = float(np.clip(thrust, hover - 0.035, hover + 0.015))
-        vert_src = 'image_ny'
-        # Hold a low cruise altitude; don't dump thrust to freefall (063921).
-        if climbed > 0.8:
-            thrust = min(thrust, hover - 0.010)
+        # 20° cam tilt puts a co-height gate low in-frame (ny≈+0.3–0.6).
+        # phase5_n attempt3: raw ny>0.12 → thrust 0.235 under a 27k commit
+        # box and dug into the floor. Aim below image centre (crawl uses +0.08).
+        aim = float(getattr(config, 'KALMAN_NY_AIM', 0.18))
+        e_y = float(ny) - aim
+        z_err = e_y
+        ny_gain = float(getattr(config, 'KALMAN_NY_DESC_GAIN', 0.035))
+        # Deadzone must cover aim itself — aim=0.28 + dz=0.12 climbed on a
+        # centred gate (phase5_r lofted to the 15 m clip).
+        if abs(e_y) < 0.16:
+            thrust = hover
+            vert_src = 'image_ny_hold'
+        elif e_y > 0.0:
+            # Gate lower than aim. Soft descend near pad; only dig when lofted.
+            gain = ny_gain * (0.35 if climbed < 1.6 else 1.0)
+            thrust = hover - gain * e_y
+            vert_src = 'image_ny_desc'
+        else:
+            # Gate higher than aim → climb. Cap loft chase (phase5_f cy→38).
+            climb_gain = 0.018 if climbed > 1.8 else 0.032
+            thrust = hover - climb_gain * e_y
+            vert_src = 'image_ny_climb'
+        thrust = float(np.clip(thrust, hover - 0.030, hover + 0.016))
+        climbed_eff = float(np.clip(climbed, -1.0, 6.0))
+        b0 = float(getattr(config, 'KALMAN_ALT_BRAKE_M', 1.6))
+        b1 = float(getattr(config, 'KALMAN_ALT_HARD_M', 2.4))
+        b2 = float(getattr(config, 'KALMAN_ALT_MAX_M', 3.0))
+        b3 = float(getattr(config, 'KALMAN_ALT_EMERGENCY_M', 3.8))
+        # Soften image-descend while still below hole height so a low-in-
+        # frame gate after takeoff does not dig (dualgate_t thr≈0.253).
+        gate_high = bool(ny < -0.15 and climbed_eff < 2.2)
+        if climbed_eff > b0 and not gate_high:
+            thrust = min(thrust, hover - 0.004)
             vert_src += '+alt_brake'
-        if climbed > 1.5:
-            thrust = min(thrust, hover - 0.025)
+        if climbed_eff > b1 and not gate_high:
+            thrust = min(thrust, hover - 0.010)
             vert_src += '+alt_hard'
-        if climbed > 2.5:
-            thrust = min(thrust, hover - 0.045)
+        if climbed_eff > b2:
+            thrust = min(thrust, hover - 0.020)
             vert_src += '+alt_max'
-        if climbed > 4.0:
-            thrust = min(thrust, hover - 0.070)
+        if climbed_eff > b3:
+            thrust = min(thrust, hover - 0.032)
             vert_src += '+alt_emergency'
         return thrust, z_err, vert_src
 
@@ -1152,13 +1678,15 @@ class KalmanDualGatePlanner:
         pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
         hover = config.HOVER_THRUST
         thrust = hover
-        climbed = 0.0
-        if z_ned is not None and self._arm_z is not None:
-            climbed = self._arm_z - z_ned
-            if climbed > 0.6:
-                thrust = hover - 0.015
-            if climbed > 1.5:
-                thrust = hover - 0.028
+        climbed = self._climb_m(shared_data, z_ned)
+        self._peak_climbed = max(float(self._peak_climbed), float(climbed))
+        alt = max(float(climbed), float(self._peak_climbed))
+        if alt > 0.6:
+            thrust = hover - 0.015
+        if alt > 1.5:
+            thrust = hover - 0.028
+        if alt > 2.5:
+            thrust = hover - 0.040
         # 0825: stale phase=coast after hover suppressed crash resets forever.
         shared_data['kalman_path'] = {
             'phase': 'hover',

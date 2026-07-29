@@ -128,6 +128,32 @@ def quat_to_rpy(q: np.ndarray) -> tuple[float, float, float]:
     return roll, pitch, yaw
 
 
+def quat_from_rpy(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    cr, sr = math.cos(roll * 0.5), math.sin(roll * 0.5)
+    cp, sp = math.cos(pitch * 0.5), math.sin(pitch * 0.5)
+    cy, sy = math.cos(yaw * 0.5), math.sin(yaw * 0.5)
+    return quat_normalize(
+        np.array(
+            [
+                cr * cp * cy + sr * sp * sy,
+                sr * cp * cy - cr * sp * sy,
+                cr * sp * cy + sr * cp * sy,
+                cr * cp * sy - sr * sp * cy,
+            ],
+            dtype=np.float64,
+        )
+    )
+
+
+def accel_to_roll_pitch(accel_m_s2: np.ndarray) -> tuple[float, float]:
+    """Tilt from specific force. Resting zacc ≈ -g (same as ahrs.py)."""
+    ax, ay, az = (float(v) for v in np.asarray(accel_m_s2).reshape(3))
+    g_up = -az
+    roll = math.atan2(ay, g_up)
+    pitch = math.atan2(-ax, math.sqrt(ay * ay + az * az) + 1e-6)
+    return roll, pitch
+
+
 @dataclass
 class EKFState:
     position_ned: np.ndarray
@@ -176,6 +202,7 @@ class DroneEKF:
         self.bias_noise = bias_noise
         self.pnp_pos_noise = pnp_pos_noise
         self._last_t: Optional[float] = None
+        self._gravity_aligned: bool = False
         self._gate1_ned: Optional[np.ndarray] = None
         self._gate2_ned: Optional[np.ndarray] = None
         self._gate2_fresh = False
@@ -229,6 +256,25 @@ class DroneEKF:
         bg = self.x[self.IDX_BG : self.IDX_BG + 3]
         omega = gyro - bg
         acc_body = accel - ba
+
+        # Gravity tilt before using R for position (else parked tip reads as
+        # identity and NED accel is wrong — localize 171202).
+        amag = float(np.linalg.norm(accel))
+        near_1g = abs(amag - G) <= 0.35 * G
+        if near_1g:
+            roll_a, pitch_a = accel_to_roll_pitch(accel)
+            roll, pitch, yaw = quat_to_rpy(
+                self.x[self.IDX_Q : self.IDX_Q + 4]
+            )
+            if not self._gravity_aligned:
+                self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(
+                    roll_a, pitch_a, yaw
+                )
+                self._gravity_aligned = True
+            # No continuous accel blend: when omega≈0 under a held lean the
+            # soft pull fought gyro and dragged the estimate toward level
+            # while truth held the step (step_pitch_20260728_174353).
+
         q = quat_normalize(self.x[self.IDX_Q : self.IDX_Q + 4])
         R = quat_to_rot(q)
         acc_ned = R @ acc_body + G_NED

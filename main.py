@@ -206,6 +206,64 @@ def _log_attempt(shared_data, monitor: CrashMonitor, logger) -> None:
         logger.log_event('ATTEMPT_END', msg)
 
 
+def _early_start_hold() -> None:
+    """Wait before arm so the OLD sim does not early-start DQ."""
+    hold_s = max(0.0, float(config.EARLY_START_HOLD_S))
+    if hold_s <= 0.0:
+        return
+    print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
+    time.sleep(hold_s)
+
+
+def _wait_pad_vision(shared_data, timeout_s: float = 45.0) -> bool:
+    """Block until vision sees gate 1 (pad facing the course).
+
+    Assist mode accepts a YOLO box; kalman mode wants dual-gate PnP.
+    """
+    want_pnp = config.FLIGHT_MODE != 'assist'
+    deadline = time.monotonic() + max(1.0, float(timeout_s))
+    need = 'DUAL_PNP (gate1_body)' if want_pnp else 'YOLO gate or DUAL_PNP'
+    print(
+        f'[PAD] waiting for {need} before arm — '
+        'start the race on the pad facing gate 1 if this hangs...',
+        flush=True,
+    )
+    while time.monotonic() < deadline:
+        with shared_data['lock']:
+            dual = shared_data.get('dual_gate_pnp') or {}
+            det = shared_data.get('gate_detection') or {}
+            vstate = str(shared_data.get('vision_state') or '')
+        n_solved = int(dual.get('n_solved') or 0)
+        has_body = dual.get('gate1_body') is not None
+        area = det.get('area_px') if isinstance(det, dict) else None
+        try:
+            area_ok = area is not None and float(area) >= 800.0
+        except (TypeError, ValueError):
+            area_ok = False
+        if has_body and (n_solved >= 1 or vstate == 'DUAL_PNP'):
+            rng = dual.get('gate1_range_m')
+            print(
+                f'[PAD] ready vision_state={vstate or "DUAL_PNP"} '
+                f'n_solved={n_solved} range={rng}',
+                flush=True,
+            )
+            return True
+        if not want_pnp and area_ok:
+            print(
+                f'[PAD] ready YOLO area={float(area):.0f} '
+                f'vision_state={vstate or "?"}',
+                flush=True,
+            )
+            return True
+        time.sleep(0.2)
+    print(
+        f'[PAD] FAIL — no gate after {timeout_s:.0f}s '
+        '(not on pad / race not started)',
+        flush=True,
+    )
+    return False
+
+
 def _reset_after_crash(
     controller, planner, shared_data, logger, state_estimator, monitor
 ) -> None:
@@ -243,6 +301,8 @@ def _reset_after_crash(
     # poisoned the next attempt. Clear until mavlink/EKF republish.
     shared_data['local_position_ned'] = None
     if not config.PERCEPTION_ONLY:
+        _wait_pad_vision(shared_data)
+        _early_start_hold()
         controller.arm()
         shared_data['flight_started'] = True
     monitor.last_reset_at = time.monotonic()
@@ -268,13 +328,24 @@ def run_racing():
     state_estimator = components.get('state_estimator')
     monitor = CrashMonitor()
 
-    print(f'[MODE] dual_gate_pnp+ekf (planner={planner.name})', flush=True)
+    print(
+        f'[MODE] flight={config.FLIGHT_MODE} planner={planner.name}',
+        flush=True,
+    )
+    if config.FLIGHT_MODE == 'assist':
+        print(
+            '[MODE] assist = image nx/ny chase on manual attitude+hover '
+            '(no EKF position steering)',
+            flush=True,
+        )
     if config.PERCEPTION_ONLY:
         print(
             '[SAFE] perception-only: not arming and not sending flight commands',
             flush=True,
         )
     else:
+        _wait_pad_vision(shared_data)
+        _early_start_hold()
         print('Arming drone...', flush=True)
         controller.arm()
         # Release the VIO's pre-flight ZUPT: dead-reckoning may only start

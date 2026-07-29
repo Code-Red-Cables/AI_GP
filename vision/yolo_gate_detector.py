@@ -313,6 +313,13 @@ def select_target_gate(
         previous_target.bbox[3] - previous_target.bbox[1],
         1.0,
     )
+    prev_area = max(previous_target.area, 1.0)
+    min_area_ratio = float(
+        getattr(config, 'target_association_min_area_ratio', 0.45)
+    )
+    max_area_ratio = float(
+        getattr(config, 'target_association_max_area_ratio', 2.20)
+    )
     matches = []
     for detection in valid:
         overlap = _bbox_iou(detection, previous_target)
@@ -321,22 +328,25 @@ def select_target_gate(
             detection.center[1] - previous_target.center[1],
         )
         center_similarity = math.exp(-center_distance / previous_span)
-        size_similarity = math.exp(
-            -abs(math.log(max(detection.area, 1.0) / max(previous_target.area, 1.0)))
-        )
+        area_ratio = detection.area / prev_area
+        size_similarity = math.exp(-abs(math.log(max(area_ratio, 1e-6))))
+        # Always enforce scale continuity while locked — a far/small gate
+        # must not steal identity even if it briefly overlaps the old box
+        # (assist range flips 18→34 m).
+        if area_ratio < min_area_ratio or area_ratio > max_area_ratio:
+            continue
         # A locked gate can move by more than one old box width between slow
         # pose inferences when a yaw correction pulls it in from the frame
-        # edge. Permit that motion only when its scale remains consistent;
-        # this retains the physical-instance lock without accepting a larger
-        # unrelated gate elsewhere in the scene.
+        # edge. Permit that motion only when its scale remains consistent.
         if overlap < 0.02:
-            area_ratio = detection.area / max(previous_target.area, 1.0)
             if (
                 center_distance
                 > config.target_association_center_span * previous_span
-                or area_ratio < config.target_association_min_area_ratio
-                or area_ratio > config.target_association_max_area_ratio
             ):
+                continue
+            # Non-overlapping reassociation: keep scale near the lock so a
+            # much larger/smaller sibling cannot steal (persistent_lock test).
+            if area_ratio < 0.70 or area_ratio > 1.80:
                 continue
         association = (
             0.65 * overlap

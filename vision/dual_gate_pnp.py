@@ -17,9 +17,11 @@ import numpy as np
 from vision.yolo_pnp import GatePnP, solve_corners_pnp
 
 # Reject detections that are too small in the image or absurdly close/far.
-MIN_BBOX_AREA_PX = 900.0       # ~30x30 — junk at 5x6 px was winning "nearest"
-MIN_CONFIDENCE = 0.45
-MAX_RANGE_M = 28.0
+# Pad gate-2 is ~22x20 px (≈440 area) and PnP range ~38–40 m — old
+# area=900 / max_range=28 left only G1 solved (n_solved=1, no G2 axes).
+MIN_BBOX_AREA_PX = 250.0       # ~16x16; still rejects 5x6 junk
+MIN_CONFIDENCE = 0.40
+MAX_RANGE_M = 45.0             # match vision.yolo_pnp.MAX_RANGE_M
 MIN_RANGE_M = 0.8
 
 
@@ -115,6 +117,12 @@ def observe_two_closest_gates(
         g1 = preferred_gate
         # Second = nearest other gate.
         g2 = solved[0] if solved else None
+    elif preferred is not None:
+        # YOLO still owns an identity but this frame's PnP failed (tiny
+        # bbox, bad corners, etc.). Do NOT fall through to nearest-solved —
+        # that promoted gate-2 (~27 m) over a lost ~8 m gate-1 lock in
+        # drive_m and steered past the first gate.
+        return None
     else:
         if not solved:
             return None
@@ -128,4 +136,19 @@ def observe_two_closest_gates(
         gate2_body=None if g2 is None else g2.center_body(),
         gate1_through_body=_through_body(g1),
         timestamp=timestamp,
+    )
+
+
+def observe_nearest_two_by_range(
+    candidates: Sequence[object],
+    *,
+    timestamp: float,
+    min_confidence: float = MIN_CONFIDENCE,
+) -> Optional[DualGateObservation]:
+    """Strict nearest-two by PnP range (ignore YOLO preferred identity)."""
+    return observe_two_closest_gates(
+        candidates,
+        timestamp=timestamp,
+        min_confidence=min_confidence,
+        preferred=None,
     )

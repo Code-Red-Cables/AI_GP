@@ -78,6 +78,22 @@ class TestDroneEKF(unittest.TestCase):
         self.assertLess(abs(st.velocity_ned[2]), 0.5)
         self.assertLess(abs(st.position_ned[2]), 0.5)
 
+    def test_gravity_aligns_parked_pitch(self):
+        ekf = DroneEKF()
+        t = 0.0
+        # ~18° nose-up tip at rest (matches OLD-sim pad reading).
+        pitch = math.radians(18.0)
+        accel = np.array(
+            [-9.80665 * math.sin(pitch), 0.0, -9.80665 * math.cos(pitch)]
+        )
+        gyro = np.zeros(3)
+        for _ in range(20):
+            t += 0.002
+            ekf.predict(gyro, accel, t)
+        roll, ekf_pitch, _yaw = ekf.state().roll_pitch_yaw
+        self.assertAlmostEqual(roll, 0.0, delta=math.radians(2.0))
+        self.assertAlmostEqual(ekf_pitch, pitch, delta=math.radians(2.0))
+
     def test_gate2_survives_fov_dropout(self):
         ekf = DroneEKF()
         t = 0.0

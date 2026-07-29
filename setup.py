@@ -63,10 +63,14 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     state_estimator = EKFEstimator.create_ekf_estimator(shared_data)
     logger.log_event('EKF', 'dual_gate_pnp+imu')
 
-    from kalman_planner import KalmanDualGatePlanner
-    planner = KalmanDualGatePlanner()
+    if config.FLIGHT_MODE == 'assist':
+        from assist_planner import AssistImagePlanner
+        planner = AssistImagePlanner()
+    else:
+        from kalman_planner import KalmanDualGatePlanner
+        planner = KalmanDualGatePlanner()
 
-    logger.log_event('PLANNER', planner.name)
+    logger.log_event('PLANNER', f'{planner.name} mode={config.FLIGHT_MODE}')
     shared_data['planner'] = planner
 
     return {

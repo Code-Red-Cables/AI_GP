@@ -16,6 +16,7 @@ from typing import Optional
 
 import numpy as np
 
+import config
 from ekf.drone_ekf import DroneEKF
 
 
@@ -27,6 +28,13 @@ class EKFEstimator:
         self._thread: Optional[threading.Thread] = None
         self._last_imu_ts = None
         self._last_pnp_ts = None
+        self._use_pnp = bool(getattr(config, 'EKF_USE_PNP', True))
+        if not self._use_pnp:
+            print(
+                '[EKF] PnP corrections OFF — IMU dead reckoning only '
+                '(EKF_USE_PNP=0)',
+                flush=True,
+            )
 
     @classmethod
     def create_ekf_estimator(cls, data: dict) -> 'EKFEstimator':
@@ -91,9 +99,13 @@ class EKFEstimator:
             # Still process PnP if newer.
             pass
         else:
+            # Negate xgyro: raw IMU roll-rate is opposite truth ATTITUDE
+            # (step_pitch_20260728_174223: truth roll +0.40 while EKF went
+            # -0.38). RATE_SIGN_ROLL was -1 to compensate the inverted EKF;
+            # with the EKF matching truth, RATE_SIGN_ROLL is +1.
             gyro = np.array(
                 [
-                    float(imu.get('xgyro', 0.0)),
+                    -float(imu.get('xgyro', 0.0)),
                     float(imu.get('ygyro', 0.0)),
                     float(imu.get('zgyro', 0.0)),
                 ],
@@ -113,19 +125,20 @@ class EKFEstimator:
                 self.ekf._last_t = t_s
             self._last_imu_ts = t_s
 
-        dual = self.data.get('dual_gate_pnp')
-        if dual and dual.get('ts') != self._last_pnp_ts:
-            self._last_pnp_ts = dual.get('ts')
-            g1 = dual.get('gate1_body')
-            g2 = dual.get('gate2_body')
-            if g1 is not None and self.data.get('flight_started'):
-                self.ekf.correct_dual_gate_body(
-                    np.asarray(g1, dtype=np.float64),
-                    None
-                    if g2 is None
-                    else np.asarray(g2, dtype=np.float64),
-                    t_s,
-                )
+        if self._use_pnp:
+            dual = self.data.get('dual_gate_pnp')
+            if dual and dual.get('ts') != self._last_pnp_ts:
+                self._last_pnp_ts = dual.get('ts')
+                g1 = dual.get('gate1_body')
+                g2 = dual.get('gate2_body')
+                if g1 is not None and self.data.get('flight_started'):
+                    self.ekf.correct_dual_gate_body(
+                        np.asarray(g1, dtype=np.float64),
+                        None
+                        if g2 is None
+                        else np.asarray(g2, dtype=np.float64),
+                        t_s,
+                    )
 
         st = self.ekf.state()
         roll, pitch, yaw = st.roll_pitch_yaw

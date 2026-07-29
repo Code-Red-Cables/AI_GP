@@ -23,7 +23,10 @@ from vision.gate_bearings import (
     GateBearingTable,
     observe_pose_candidates,
 )
-from vision.dual_gate_pnp import observe_two_closest_gates
+from vision.dual_gate_pnp import (
+    observe_nearest_two_by_range,
+    observe_two_closest_gates,
+)
 from vision.yolo_pnp import draw_gate_frame_axes
 
 
@@ -308,6 +311,20 @@ class VisionRX:
                 clear = getattr(self.bearing_table, 'clear', None)
                 if callable(clear):
                     clear()
+        # Assist visual-commit / planner punch-through: drop sticky identity
+        # so the next gate can be acquired (same path as race active_gate++).
+        if self.data.pop('vision_begin_next_gate', None):
+            begin_next_gate = getattr(
+                self.detector, 'begin_next_gate_acquisition', None
+            )
+            if begin_next_gate is not None:
+                begin_next_gate(now)
+            else:
+                reset_target_lock = getattr(
+                    self.detector, 'reset_target_lock', None
+                )
+                if callable(reset_target_lock):
+                    reset_target_lock()
         race_status = self.data.get('race_status') or {}
         active_gate = race_status.get('active_gate')
         if active_gate is None:
@@ -606,6 +623,16 @@ class VisionRX:
             set_prefer = getattr(self.detector, 'set_prefer_horizontal', None)
             if callable(set_prefer):
                 set_prefer(None)
+            # phase5 174620: after TRACK_DATA rewind, association stayed stuck
+            # at y≈5 while a fresh pad gate sat at y≈177 — clear the lock.
+            reset_target_lock = getattr(
+                self.detector, 'reset_target_lock', None
+            )
+            if callable(reset_target_lock):
+                reset_target_lock()
+            reset_episode = getattr(self.detector, 'reset_episode', None)
+            if callable(reset_episode):
+                reset_episode()
         self._last_active_gate = active_gate
 
     def _publish_secondary_pose_bearing(self, now: float) -> bool:
@@ -996,25 +1023,24 @@ class VisionRX:
     def _draw_dual_gate_overlay(
         self, annotated: np.ndarray, dual: dict
     ) -> None:
-        """Label nearest PnP gates and project axes on the active guidance gate."""
+        """Draw RGB pose axes on the two nearest solved gates (by range)."""
         del dual  # ranges already drawn in the status line
         pose_debug = getattr(self.detector, 'last_pose_debug', None)
         candidates = list(getattr(pose_debug, 'candidates', None) or ())
         if not candidates:
             return
-        preferred = getattr(pose_debug, 'selected', None)
-        obs = observe_two_closest_gates(
+        # Overlay = strict nearest-two by PnP range (not YOLO preferred),
+        # so both pad gates get axes even when YOLO identity picks only one.
+        obs = observe_nearest_two_by_range(
             candidates,
             timestamp=0.0,
             min_confidence=0.45,
-            preferred=preferred,
         )
         if obs is None:
             return
-        # G1 is the gate we steer on (YOLO preferred / nearest solved).
-        for label, gate, color, active in (
-            ('G1', obs.gate1, (0, 255, 255), True),
-            ('G2', obs.gate2, (255, 180, 0), False),
+        for label, gate, color in (
+            ('G1', obs.gate1, (0, 255, 255)),
+            ('G2', obs.gate2, (255, 180, 0)),
         ):
             if gate is None:
                 continue
@@ -1028,30 +1054,28 @@ class VisionRX:
                 )
                 cx = int(np.mean(pts[:, 0]))
                 cy = int(np.mean(pts[:, 1]))
-                tag = f'{label} {gate.range_m:.1f}m'
-                if active:
-                    tag = f'BASE {tag}'
                 cv2.putText(
                     annotated,
-                    tag,
-                    (cx - 28, cy - 10),
+                    f'{label} {gate.range_m:.1f}m',
+                    (cx - 28, cy - 12),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     color,
                     2,
                     cv2.LINE_AA,
                 )
-            # RGB = gate X (right) / Y (down) / Z (through).
+            # Same axis length on both — user needs to compare orientations.
             draw_gate_frame_axes(
                 annotated,
                 gate,
-                axis_length_m=0.85 if active else 0.55,
-                thickness=3 if active else 2,
-                label='XYZ' if active else None,
+                axis_length_m=1.35,
+                thickness=4,
+                label=f'{label} XYZ',
             )
+        n = 1 + int(obs.gate2 is not None)
         cv2.putText(
             annotated,
-            'axes: X=right Y=down Z=through',
+            f'dual PnP n={n}  axes: X=right Y=down Z=through',
             (8, annotated.shape[0] - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
@@ -1061,7 +1085,11 @@ class VisionRX:
         )
 
     def _publish_dual_gate_pnp(self, timestamp_ns: int) -> None:
-        """YOLO → two closest gates → PnP body centres for the EKF planner."""
+        """YOLO-locked gate1 (+ nearest other) → PnP for planner range/body.
+
+        Must prefer the detector's selected identity. Nearest-by-range alone
+        flipped assist onto a far gate (18 m → 34 m) mid-approach.
+        """
         pose_debug = getattr(self.detector, 'last_pose_debug', None)
         candidates = getattr(pose_debug, 'candidates', None) or ()
         preferred = getattr(pose_debug, 'selected', None)
@@ -1072,6 +1100,19 @@ class VisionRX:
             preferred=preferred,
         )
         if obs is None:
+            # Hold last good dual while YOLO lock is still alive (preferred
+            # PnP failed this frame — do not fall back to nearest-range).
+            prev = self.data.get('dual_gate_pnp') or {}
+            if (
+                preferred is not None
+                and prev.get('gate1_body') is not None
+                and int(prev.get('n_solved') or 0) >= 1
+            ):
+                held = dict(prev)
+                held['ts'] = timestamp_ns
+                held['held'] = True
+                self.data['dual_gate_pnp'] = held
+                return
             self.data['dual_gate_pnp'] = {
                 'ts': timestamp_ns,
                 'gate1_body': None,
@@ -1082,6 +1123,7 @@ class VisionRX:
                 'gate1_norm_x': None,
                 'gate1_norm_y': None,
                 'n_solved': 0,
+                'held': False,
             }
             return
         # Image-normalized centre for altitude (immune to camera-tilt body-z bias).
@@ -1109,6 +1151,8 @@ class VisionRX:
             'gate1_norm_x': norm_x,
             'gate1_norm_y': norm_y,
             'n_solved': 1 if obs.gate2 is None else 2,
+            'held': False,
+            'preferred': preferred is not None,
         }
 
     # ------------------------------------------------------------------

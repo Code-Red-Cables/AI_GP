@@ -183,6 +183,19 @@ class Logger:
             'active_gate':    race.get('active_gate', 'nan'),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
+            # assist / kalman path snapshot
+            'path_phase':     str((d.get('kalman_path') or {}).get('phase', 'none')),
+            'path_source':    str((d.get('kalman_path') or {}).get('source', 'none')),
+            'path_nx':        self._f((d.get('kalman_path') or {}).get('norm_x')),
+            'path_ny':        self._f((d.get('kalman_path') or {}).get('norm_y')),
+            'path_thrust':    self._f((d.get('kalman_path') or {}).get('thrust')),
+            'path_climbed':   self._f((d.get('kalman_path') or {}).get('climbed')),
+            'path_vert_src':  str(
+                (d.get('kalman_path') or {}).get('vert_src', 'none')
+            ),
+            'tgt_thrust':     self._f(tgt.get('thrust')),
+            'tgt_roll_rate':  self._f(tgt.get('roll_rate')),
+            'tgt_pitch_rate': self._f(tgt.get('pitch_rate')),
             # teleop inputs
             'tel_fwd':        str(int(tel.get('fwd',   0))),
             'tel_right':      str(int(tel.get('right', 0))),
