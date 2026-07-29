@@ -114,8 +114,47 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # assist  = image-chase on the manual attitude+hover plant (default).
 # kalman  = dual-gate PnP body-path / EKF geometric planner.
 FLIGHT_MODE = os.environ.get('FLIGHT_MODE', 'assist').strip().lower()
-if FLIGHT_MODE not in {'assist', 'kalman'}:
-    raise ValueError('FLIGHT_MODE must be "assist" or "kalman"')
+if FLIGHT_MODE not in {'assist', 'kalman', 'spline'}:
+    raise ValueError(
+        'FLIGHT_MODE must be "assist", "kalman" or "spline"'
+    )
+
+# ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
+# Vision-free: follows a captured path using the EKF's own position.
+# Capture and replay MUST use the same EKF_USE_PNP setting, or the drift
+# stops being common-mode between the two and nothing cancels.
+SPLINE_MISSION_PATH = os.environ.get(
+    'SPLINE_MISSION_PATH', 'captured_waypoints.json'
+)
+SPLINE_CRUISE_MPS = float(os.environ.get('SPLINE_CRUISE_MPS', '2.0'))
+SPLINE_FINISH_MPS = float(os.environ.get('SPLINE_FINISH_MPS', '0.0'))
+# Curvature/brake limits for the speed profile (m/s^2).
+SPLINE_A_LAT = float(os.environ.get('SPLINE_A_LAT', '4.0'))
+SPLINE_A_LON = float(os.environ.get('SPLINE_A_LON', '2.5'))
+# Carrot distance: LOOKAHEAD_M + LOOKAHEAD_TIME_S * speed, clamped.
+SPLINE_LOOKAHEAD_M = float(os.environ.get('SPLINE_LOOKAHEAD_M', '1.5'))
+SPLINE_LOOKAHEAD_TIME_S = float(
+    os.environ.get('SPLINE_LOOKAHEAD_TIME_S', '0.6')
+)
+SPLINE_LOOKAHEAD_MAX_M = float(
+    os.environ.get('SPLINE_LOOKAHEAD_MAX_M', '4.0')
+)
+SPLINE_YAW_LOOKAHEAD_M = float(
+    os.environ.get('SPLINE_YAW_LOOKAHEAD_M', '2.5')
+)
+SPLINE_KP_YAW = float(os.environ.get('SPLINE_KP_YAW', '1.2'))
+# NED velocity error (m/s) -> desired lean (rad).
+SPLINE_KP_VEL_LEAN = float(os.environ.get('SPLINE_KP_VEL_LEAN', '0.09'))
+SPLINE_MAX_LEAN_DEG = float(os.environ.get('SPLINE_MAX_LEAN_DEG', '12.0'))
+SPLINE_VERT_AUTH = float(os.environ.get('SPLINE_VERT_AUTH', '0.08'))
+# Client-side fail-safes on the derived estimate (all we have).
+SPLINE_MAX_ALT_M = float(os.environ.get('SPLINE_MAX_ALT_M', '8.0'))
+SPLINE_MAX_XTE_M = float(os.environ.get('SPLINE_MAX_XTE_M', '6.0'))
+SPLINE_FINISH_TOL_M = float(os.environ.get('SPLINE_FINISH_TOL_M', '0.6'))
+# Waypoint capture (tools/tune_flight.py manual, 'M' key).
+SPLINE_CAPTURE_PATH = os.environ.get(
+    'SPLINE_CAPTURE_PATH', 'captured_waypoints.json'
+)
 
 # Assist (image IBVS) knobs — no EKF position in the loop.
 # 024550: yaw locked but loft→pitch-cap→ny=-0.7 with full lean (camera 20° up).

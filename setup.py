@@ -63,7 +63,10 @@ def setup_components(shared_data, system_boot_ms, server_ip, server_udp_port):
     state_estimator = EKFEstimator.create_ekf_estimator(shared_data)
     logger.log_event('EKF', 'dual_gate_pnp+imu')
 
-    if config.FLIGHT_MODE == 'assist':
+    if config.FLIGHT_MODE == 'spline':
+        from spline_planner import SplinePlanner
+        planner = SplinePlanner()
+    elif config.FLIGHT_MODE == 'assist':
         from assist_planner import AssistImagePlanner
         planner = AssistImagePlanner()
     else:

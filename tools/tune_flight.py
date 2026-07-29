@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
 import statistics
@@ -364,6 +365,10 @@ def build_parser() -> argparse.ArgumentParser:
         help='open-loop collective offset while R/F held (only with --open-loop-thrust)',
     )
     p_man.add_argument(
+        '--capture', nargs='?', const='', default=None, metavar='PATH',
+        help='record waypoints: press M to mark the current derived pose. Saved on exit to PATH (default SPLINE_CAPTURE_PATH). Replay with FLIGHT_MODE=spline.',
+    )
+    p_man.add_argument(
         '--wait-pad', action='store_true',
         help='block until dual-gate PnP sees gate 1 before arm',
     )
@@ -494,6 +499,7 @@ def _poll_manual_controls(
 
     ``hold_state`` is mutated across ticks (stores last-seen times + values).
     Returns (des_roll, des_pitch, yaw_rate, thrust_delta, quit).
+    Pressing M bumps ``hold_state['marks']`` — the caller captures a waypoint.
 
       W/S or ↑/↓   pitch while held
       A/D or ←/→   roll while held
@@ -551,6 +557,8 @@ def _poll_manual_controls(
             _press('thrust', thrust_step)
         elif key == 'f':
             _press('thrust', -thrust_step)
+        elif key == 'm':
+            hold_state['marks'] = int(hold_state.get('marks', 0)) + 1
         elif key == ' ':
             for axis in ('roll', 'pitch', 'yaw', 'thrust'):
                 hold_state[axis] = 0.0
@@ -1112,6 +1120,53 @@ def vertical_observables(shared_data, z0, norm_y0):
     z = _f((shared_data.get('position_ned') or {}).get('z'))
     d_ekf_z = z0 - z if (z is not None and z0 is not None) else None
     return d_norm_y, d_ekf_z, _f(dual.get('gate1_range_m'))
+
+
+class WaypointCapture:
+    """Append derived poses to a mission JSON as the pilot marks them.
+
+    Records ``shared_data['position_ned']`` (EKF-derived) plus the EKF yaw, in
+    the ``{n, e, d, yaw_deg, name}`` shape ``mission.load_mission`` expects.
+    Absolute accuracy does not matter here — what matters is that the same
+    estimator, with the same EKF_USE_PNP setting, is used again on replay, so
+    the drift is common mode between capture and follow.
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.waypoints = []
+
+    def mark(self, shared_data):
+        """Capture one waypoint. Returns a status string for the console."""
+        pos = shared_data.get('position_ned') or {}
+        att = shared_data.get('attitude') or {}
+        n, e, d = (_f(pos.get(k)) for k in ('x', 'y', 'z'))
+        yaw = _f(att.get('yaw'))
+        if n is None or e is None or d is None or yaw is None:
+            return 'MARK REJECTED — no derived pose yet (is the EKF running?)'
+        idx = len(self.waypoints)
+        self.waypoints.append({
+            'n': n, 'e': e, 'd': d,
+            'yaw_deg': math.degrees(yaw),
+            'name': f'wp{idx}',
+        })
+        return (f'MARK wp{idx}  n={n:+.2f} e={e:+.2f} d={d:+.2f} '
+                f'yaw={math.degrees(yaw):+.1f}deg')
+
+    def save(self):
+        """Write the mission file. Returns the path, or None if nothing marked."""
+        if len(self.waypoints) < 2:
+            return None
+        import config
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'name': 'captured',
+            'loop': False,
+            'ekf_use_pnp': int(bool(getattr(config, 'EKF_USE_PNP', True))),
+            'waypoints': self.waypoints,
+        }
+        self.path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        return self.path
 
 
 def _vertical_rate_down(shared_data):
@@ -3123,6 +3178,12 @@ def run_manual(args) -> int:
         ki=getattr(args, 'climb_ki', None),
         authority=float(getattr(args, 'climb_auth', 0.08) or 0.08),
     )
+    cap_arg = getattr(args, 'capture', None)
+    capture = (
+        None if cap_arg is None
+        else WaypointCapture(cap_arg or config.SPLINE_CAPTURE_PATH)
+    )
+    marks_seen = 0
     max_rate = config.KALMAN_MAX_RATE_RAD_S
     roll_pid = PIDController(PIDConfig(
         kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
@@ -3222,6 +3283,11 @@ def run_manual(args) -> int:
             if quit_req:
                 print('\n[STOP] quit key', flush=True)
                 break
+            if capture is not None:
+                marks = int(hold_state.get('marks', 0))
+                while marks_seen < marks:
+                    marks_seen += 1
+                    print('  ' + capture.mark(shared_data), flush=True)
 
             dt = period if last_t is None else max(1e-3, now - last_t)
             last_t = now
@@ -3308,6 +3374,14 @@ def run_manual(args) -> int:
         recorder.close()
         shutdown(components)
 
+    if capture is not None:
+        saved = capture.save()
+        if saved is None:
+            print(f'\n[CAPTURE] only {len(capture.waypoints)} waypoint(s) marked — need >=2, nothing written', flush=True)
+        else:
+            print(f'\n[CAPTURE] {len(capture.waypoints)} waypoints -> {saved}', flush=True)
+            print('[CAPTURE] replay: FLIGHT_MODE=spline SPLINE_MISSION_PATH=' + str(saved), flush=True)
+            print('[CAPTURE] keep EKF_USE_PNP identical on replay', flush=True)
     print(f'\nCSV: {recorder.path}')
     return 0
 
