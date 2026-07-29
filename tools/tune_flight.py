@@ -158,8 +158,16 @@ def build_parser() -> argparse.ArgumentParser:
         help='yaw rate while Q/E held (default 40, same as manual)',
     )
     p_loc.add_argument(
+        '--climb-rate', type=float, default=0.6,
+        help='climb/sink RATE in m/s while R/F held (default 0.6, same as manual)',
+    )
+    p_loc.add_argument('--climb-auth', type=float, default=0.08)
+    p_loc.add_argument('--climb-kp', type=float, default=None)
+    p_loc.add_argument('--climb-ki', type=float, default=None)
+    p_loc.add_argument('--open-loop-thrust', action='store_true')
+    p_loc.add_argument(
         '--thrust-step', type=float, default=0.022,
-        help='collective offset while R/F held (default 0.022, same as manual)',
+        help='open-loop collective offset (only with --open-loop-thrust)',
     )
     p_loc.add_argument('--lean-boost', type=float, default=None)
     p_loc.add_argument('--hover-thrust', type=float, default=None)
@@ -338,8 +346,22 @@ def build_parser() -> argparse.ArgumentParser:
         help='yaw rate while Q/E held (default 40 deg/s)',
     )
     p_man.add_argument(
+        '--climb-rate', type=float, default=0.6,
+        help='climb/sink RATE in m/s while R/F held (default 0.6). Release brakes to zero instead of coasting.',
+    )
+    p_man.add_argument(
+        '--climb-auth', type=float, default=0.08,
+        help='max thrust offset the rate loop may command (default 0.08)',
+    )
+    p_man.add_argument('--climb-kp', type=float, default=None)
+    p_man.add_argument('--climb-ki', type=float, default=None)
+    p_man.add_argument(
+        '--open-loop-thrust', action='store_true',
+        help='revert to the old behaviour: R/F is a raw thrust offset (acceleration command, coasts on release)',
+    )
+    p_man.add_argument(
         '--thrust-step', type=float, default=0.022,
-        help='collective offset while R/F held (default 0.022; release=hover)',
+        help='open-loop collective offset while R/F held (only with --open-loop-thrust)',
     )
     p_man.add_argument(
         '--wait-pad', action='store_true',
@@ -714,7 +736,16 @@ def run_localize(args) -> int:
     roll_pid = pitch_pid = None
     lean_rad = math.radians(float(getattr(args, 'teleop_lean_deg', 14.0)))
     yaw_rate_cmd = math.radians(float(getattr(args, 'yaw_rate_deg', 40.0)))
-    thrust_step = float(getattr(args, 'thrust_step', 0.022))
+    open_loop = bool(getattr(args, 'open_loop_thrust', False))
+    climb_rate_cmd = float(getattr(args, 'climb_rate', 0.6) or 0.6)
+    # Key returns a raw thrust offset in open loop, else a rate setpoint.
+    thrust_step = (float(getattr(args, 'thrust_step', 0.022))
+                   if open_loop else climb_rate_cmd)
+    vrate = None if open_loop else VerticalRateHold(
+        kp=getattr(args, 'climb_kp', None),
+        ki=getattr(args, 'climb_ki', None),
+        authority=float(getattr(args, 'climb_auth', 0.08) or 0.08),
+    )
     last_t = None
 
     if teleop:
@@ -823,6 +854,12 @@ def run_localize(args) -> int:
                     config.HOVER_THRUST, des_roll, des_pitch,
                     lean_boost=lean_boost,
                 )
+                if vrate is None:
+                    climb_meas, climb_src = None, None
+                else:
+                    thrust_delta, climb_meas, climb_src = vrate.update(
+                        shared_data, thrust_delta, dt
+                    )
                 thrust = float(max(0.18, min(0.36, thrust + thrust_delta)))
                 shared_data['planner_target'] = {
                     'kalman': True,
@@ -1075,6 +1112,77 @@ def vertical_observables(shared_data, z0, norm_y0):
     z = _f((shared_data.get('position_ned') or {}).get('z'))
     d_ekf_z = z0 - z if (z is not None and z0 is not None) else None
     return d_norm_y, d_ekf_z, _f(dual.get('gate1_range_m'))
+
+
+def _vertical_rate_down(shared_data):
+    """Measured vertical velocity, NED down-positive, or None.
+
+    EKF velocity first (works on both sim builds); sim odometry only as a
+    fallback, since VQ2 does not publish it.
+    """
+    ekf = shared_data.get('ekf_state') or {}
+    vel = ekf.get('velocity_ned') or []
+    if len(vel) > 2:
+        vz = _f(vel[2])
+        if vz is not None:
+            return vz, 'ekf'
+    vz = _f((shared_data.get('position_ned') or {}).get('vz'))
+    if vz is not None:
+        return vz, 'ekf_pos'
+    vz = _f((shared_data.get('local_position_ned') or {}).get('vz'))
+    if vz is not None:
+        return vz, 'truth'
+    return None, None
+
+
+class VerticalRateHold:
+    """Turn R/F into a climb-RATE command with active braking on release.
+
+    An open-loop thrust offset is an *acceleration* command: releasing the key
+    stops accelerating but leaves the vertical velocity, so the craft coasts
+    and you have to counter-hold to stop it — and it also feels slow to start,
+    because velocity has to build. Closing a PI loop on measured vertical
+    velocity makes the key a rate command: hold = climb at a fixed rate,
+    release = commanded rate zero, which the loop brakes toward.
+
+    Sign convention matches controller.py's thrust PI: error is
+    ``measured_down - target_down``, so descending faster than commanded is a
+    positive error and asks for more thrust.
+    """
+
+    def __init__(self, *, kp=None, ki=None, authority=0.08):
+        import config
+        from control.pid import PIDConfig, PIDController
+
+        self.authority = float(authority)
+        self.pid = PIDController(PIDConfig(
+            kp=float(config.KP_THRUST_VEL if kp is None else kp),
+            ki=float(config.KI_THRUST_VEL if ki is None else ki),
+            output_min=-self.authority,
+            output_max=self.authority,
+            integral_min=-config.THRUST_INTEGRAL_LIMIT,
+            integral_max=config.THRUST_INTEGRAL_LIMIT,
+        ))
+        self.vz_down = None
+        self.source = None
+
+    def reset(self):
+        self.pid.reset()
+
+    def update(self, shared_data, climb_rate_cmd, dt):
+        """Return (thrust_delta, measured_climb_rate_up, source).
+
+        ``climb_rate_cmd`` is positive-up m/s (0 when no key is held).
+        """
+        vz_down, source = _vertical_rate_down(shared_data)
+        self.vz_down, self.source = vz_down, source
+        if vz_down is None:
+            # No vertical velocity available — fall back to open loop so the
+            # craft is still controllable, just without braking.
+            return float(climb_rate_cmd) * 0.03, None, None
+        target_down = -float(climb_rate_cmd)
+        delta = self.pid.update(vz_down - target_down, dt)
+        return float(delta), -vz_down, source
 
 
 def _tilt_compensated_thrust(hover_thrust, des_roll, des_pitch, *, lean_boost=None):
@@ -3005,7 +3113,16 @@ def run_manual(args) -> int:
 
     lean_rad = math.radians(float(getattr(args, 'lean_deg', 10.0)))
     yaw_rate_cmd = math.radians(float(getattr(args, 'yaw_rate_deg', 25.0)))
-    thrust_step = float(getattr(args, 'thrust_step', 0.004))
+    open_loop = bool(getattr(args, 'open_loop_thrust', False))
+    climb_rate_cmd = float(getattr(args, 'climb_rate', 0.6) or 0.6)
+    # Key returns a raw thrust offset in open loop, else a rate setpoint.
+    thrust_step = (float(getattr(args, 'thrust_step', 0.022))
+                   if open_loop else climb_rate_cmd)
+    vrate = None if open_loop else VerticalRateHold(
+        kp=getattr(args, 'climb_kp', None),
+        ki=getattr(args, 'climb_ki', None),
+        authority=float(getattr(args, 'climb_auth', 0.08) or 0.08),
+    )
     max_rate = config.KALMAN_MAX_RATE_RAD_S
     roll_pid = PIDController(PIDConfig(
         kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
@@ -3027,6 +3144,13 @@ def run_manual(args) -> int:
     print('  R/F          climb / sink (while held)', flush=True)
     print('  Space        force level now', flush=True)
     print('  Esc / X      disarm and quit', flush=True)
+    if vrate is None:
+        print('  R/F mode: OPEN LOOP thrust offset (coasts on release)', flush=True)
+    else:
+        print(
+            f'  R/F mode: RATE hold +/-{climb_rate_cmd:.2f} m/s (release brakes to 0)',
+            flush=True,
+        )
     print(
         f'  lean={math.degrees(lean_rad):.0f}°  '
         f'yaw={math.degrees(yaw_rate_cmd):.0f}°/s  '
@@ -3073,7 +3197,7 @@ def run_manual(args) -> int:
     started = time.monotonic()
     if not args.quiet:
         print(
-            '\n    t   climb  roll  pitch   yaw_r   thr   '
+            '\n    t   climb  vz_up  roll  pitch   yaw_r   thr   '
             'des_r  des_p   g1_rng  n',
             flush=True,
         )
@@ -3109,6 +3233,12 @@ def run_manual(args) -> int:
             thrust = _tilt_compensated_thrust(
                 config.HOVER_THRUST, des_roll, des_pitch, lean_boost=lean_boost,
             )
+            if vrate is None:
+                climb_meas, climb_src = None, None
+            else:
+                thrust_delta, climb_meas, climb_src = vrate.update(
+                    shared_data, thrust_delta, dt
+                )
             # Wider clamp than race planner — manual R/F needs authority.
             thrust = float(max(0.18, min(0.36, thrust + thrust_delta)))
 
@@ -3136,6 +3266,9 @@ def run_manual(args) -> int:
                 'yaw_rate': yaw_rate,
                 'thrust': thrust,
                 'thrust_delta': thrust_delta,
+                'climb_cmd_mps': thrust_delta if vrate is None else None,
+                'climb_meas_mps': climb_meas,
+                'climb_src': climb_src,
                 'gate1_range_m': _f(dual.get('gate1_range_m')),
                 'n_solved': int(dual.get('n_solved') or 0),
             }
@@ -3143,6 +3276,7 @@ def run_manual(args) -> int:
             if not args.quiet:
                 print(
                     f"{elapsed:5.1f} {_fmt(climb, '6.2f')}"
+                    f" {_fmt(climb_meas, '6.2f')}"
                     f" {_fmt(roll, '6.3f')} {_fmt(pitch, '6.3f')}"
                     f" {_fmt(yaw_rate, '6.3f')} {_fmt(thrust, '5.3f')}"
                     f" {_fmt(des_roll, '6.3f')} {_fmt(des_pitch, '6.3f')}"
