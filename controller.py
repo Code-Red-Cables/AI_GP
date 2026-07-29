@@ -195,6 +195,16 @@ class Controller:
                 # Run 043812: +cmd produced left turns and walked the
                 # gate off-frame.
                 yaw_rate = yaw_rate * config.RATE_SIGN_YAW
+                # Yaw uses its own ceiling — MAX_RATE_RAD_S (~60°/s) was
+                # clipping assist extreme yaw (132028 planner asked 70°/s).
+                yaw_lim = float(
+                    getattr(
+                        config,
+                        'YAW_RATE_MAX_RAD_S',
+                        config.MAX_RATE_RAD_S,
+                    )
+                )
+                yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
                 # Kalman skips the attitude vertical loop — boost only until
                 # clear of the ground. 063921: 0.32×2s rocketed to −4 m.
                 if (
@@ -292,10 +302,10 @@ class Controller:
         yaw_rate_feedback = 0.0
         if not kalman_direct:
             yaw_rate = requested_yaw_rate * config.RATE_SIGN_YAW
-            yaw_rate = max(
-                -config.MAX_RATE_RAD_S,
-                min(config.MAX_RATE_RAD_S, yaw_rate),
+            yaw_lim = float(
+                getattr(config, 'YAW_RATE_MAX_RAD_S', config.MAX_RATE_RAD_S)
             )
+            yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
 
             # Thrust: with a fresh VIO velocity the vertical loop is CLOSED — the
             # PI tracks the commanded NED down-velocity ``vd`` against the VIO's
@@ -340,10 +350,10 @@ class Controller:
             else:
                 thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
         else:
-            yaw_rate = max(
-                -config.MAX_RATE_RAD_S,
-                min(config.MAX_RATE_RAD_S, yaw_rate),
+            yaw_lim = float(
+                getattr(config, 'YAW_RATE_MAX_RAD_S', config.MAX_RATE_RAD_S)
             )
+            yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
             thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
             vertical_lift_fraction = max(
                 config.MIN_TILT_COMPENSATION_COSINE,

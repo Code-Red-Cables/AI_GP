@@ -2958,12 +2958,15 @@ def run_assist(args) -> int:
                 'yaw_rate': tgt.get('yaw_rate'),
                 'climbed': path.get('climbed'),
                 'range_m': path.get('range_m'),
+                'vert_src': path.get('vert_src'),
+                'pose_dz': path.get('pose_dz'),
             }
             recorder.write(row)
             if not args.quiet and int(elapsed * args.hz) % max(1, int(args.hz)) == 0:
                 print(
                     f"{elapsed:5.1f} {path.get('phase')} "
-                    f"nx={path.get('norm_x')} thr={tgt.get('thrust')}",
+                    f"nx={path.get('norm_x')} thr={tgt.get('thrust')} "
+                    f"vert={path.get('vert_src')} dz={path.get('pose_dz')}",
                     flush=True,
                 )
             time.sleep(period)

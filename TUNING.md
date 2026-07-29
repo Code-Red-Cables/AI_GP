@@ -62,16 +62,22 @@ lean, and force `AUTO_RESET_ON_CRASH=0` so a run cannot be yanked mid-measuremen
 
 ## Default race client — image assist (`main.py`)
 
-`FLIGHT_MODE=assist` (default) flies the **image-chase** planner: YOLO/`nx`/`ny`
-→ yaw + forward lean + hover thrust on the same attitude plant as `manual`.
-It does **not** steer on EKF position.
+`FLIGHT_MODE=assist` (default) flies the **image + PnP gate1** planner on the
+same attitude plant as `manual`. It does **not** steer on EKF position.
+
+Policy:
+- **Pitch + yaw** — keep gate1 in frame (YOLO / dual norms).
+- **Altitude** — gate1 PnP *geometric* height only (`body→NED` z). Climb if
+  the gate is above us, sink if below. Never from image-`ny` (that lofted /
+  crashed takeoff) and never from camera boresight Y (041233 false-sank a
+  same-height gate that only looked low under the 20° cam tilt).
 
 ```powershell
 # Full run (logs → logs/telem_*.csv + logs/events_*.txt)
 .\winvenv\Scripts\python.exe main.py
 
 # Short tune harness
-.\winvenv\Scripts\python.exe tools\tune_flight.py assist --seconds 30
+.\winvenv\Scripts\python.exe tools\tune_flight.py assist --seconds 55
 
 # Offline
 .\winvenv\Scripts\python.exe test_assist_planner.py
@@ -80,10 +86,10 @@ It does **not** steer on EKF position.
 $env:FLIGHT_MODE="kalman"; .\winvenv\Scripts\python.exe main.py
 ```
 
-Tune: `ASSIST_LEAN_DEG`, `ASSIST_FWD_FRAC`, `ASSIST_NY_AIM`,
-`ASSIST_NY_THRUST_GAIN`, plus existing `HOVER_THRUST` / `KALMAN_KP_ATT` /
-`KALMAN_KP_YAW` / `LEAN_THRUST_BOOST`. Watch `[ASSIST]` lines and CSV columns
-`path_phase`, `path_nx`, `path_ny`, `path_thrust`.
+Tune: `ASSIST_LEAN_DEG`, `ASSIST_NY_AIM`, `HOVER_THRUST`, `KALMAN_KP_ATT`,
+`KALMAN_KP_YAW`, `KALMAN_BODY_Z_THRUST_GAIN`, `ASSIST_CAM_TILT_BIAS`,
+`ASSIST_CAM_TILT_SPEED_MPS` (bias grows with speed/pitch). Watch `[ASSIST]`
+`vert=` / `dz=` and CSV `vert_src`, `pose_dz`, `tilt_bias`.
 
 ---
 

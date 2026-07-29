@@ -94,7 +94,7 @@ CONTROL_MAX_DT_S = 0.05
 # The camera FOV is narrow, so keep YAW_RATE_MAX_DEG_S low or a fast yaw
 # sweeps the gate out of frame.
 YAW_RATE_MAX_RAD_S = math.radians(
-    float(os.environ.get('YAW_RATE_MAX_DEG_S', '70.0'))
+    float(os.environ.get('YAW_RATE_MAX_DEG_S', '95.0'))
 )
 # Vertical-velocity thrust PI (closes the loop the open-loop path cannot:
 # thrust = HOVER_THRUST + PID(vd_measured - vd_target)). Gains seeded from the
@@ -122,18 +122,312 @@ if FLIGHT_MODE not in {'assist', 'kalman'}:
 ASSIST_LEAN_DEG = float(os.environ.get('ASSIST_LEAN_DEG', '10.0'))
 ASSIST_FWD_FRAC = float(os.environ.get('ASSIST_FWD_FRAC', '0.90'))
 ASSIST_ROLL_SCALE = float(os.environ.get('ASSIST_ROLL_SCALE', '0.45'))
+# Scale gate-tracking roll/yaw and thrust deltas only — does NOT change aims,
+# floors, punch/sink ranges, speed cap, or other hard-fought setpoints.
+# 114108 @ 1.40: coast_lift thr→0.278 lofted to 4.9 m + gate collision;
+# yaw sat 22°/s. Soften; vertical auth only applies on sink/climb (code).
+ASSIST_LATERAL_AUTH = float(os.environ.get('ASSIST_LATERAL_AUTH', '1.20'))
+ASSIST_VERTICAL_AUTH = float(os.environ.get('ASSIST_VERTICAL_AUTH', '1.25'))
 # Aim gate slightly below center — camera tilts 20° up from body forward.
-ASSIST_NY_AIM = float(os.environ.get('ASSIST_NY_AIM', '0.22'))
+# 105334: 0.22 held ~2.6 m slightly low of centre — nudge aim up a hair.
+ASSIST_NY_AIM = float(os.environ.get('ASSIST_NY_AIM', '0.20'))
+# Image nx aim (normalized). +nx → keep gate right in frame → path left.
+# Works with pose aim below; small trim for gate-1 right miss (105649).
+ASSIST_NX_AIM = float(os.environ.get('ASSIST_NX_AIM', '0.03'))
+# Body-right aim offset through the gate (m). Residual ey−aim drives roll/yaw
+# ∝ pose (angular size shrinks with range). +aim → path left of centre.
+ASSIST_POSE_AIM_Y_M = float(os.environ.get('ASSIST_POSE_AIM_Y_M', '0.15'))
+# Global forward speed cap (m/s) — brakes forward lean in chase/coast/seek.
+# Over cap → scale pitch down; well over → small reverse lean to scrub speed.
+ASSIST_SPEED_CAP_MPS = float(os.environ.get('ASSIST_SPEED_CAP_MPS', '4.0'))
+ASSIST_ALIGN_BRAKE_NX = float(os.environ.get('ASSIST_ALIGN_BRAKE_NX', '0.12'))
 ASSIST_NY_THRUST_GAIN = float(os.environ.get('ASSIST_NY_THRUST_GAIN', '0.050'))
+# Extra metres above pose-matched height on approach (NED-up). Off by default —
+# 105106 approach-high + false dz=-2.8 climb lofted over gate 1.
+ASSIST_APPROACH_HIGH_M = float(os.environ.get('ASSIST_APPROACH_HIGH_M', '0.0'))
+# Approach tip sink (mild): 124213 top-rail / 124438 bottom-rail.
+ASSIST_APPROACH_NY_OK = float(os.environ.get('ASSIST_APPROACH_NY_OK', '0.14'))
+ASSIST_APPROACH_TIP_SINK = float(
+    os.environ.get('ASSIST_APPROACH_TIP_SINK', '0.10')
+)
+ASSIST_APPROACH_TIP_MIN_ALT_M = float(
+    os.environ.get('ASSIST_APPROACH_TIP_MIN_ALT_M', '1.20')
+)
+ASSIST_APPROACH_TIP_MIN_RANGE_M = float(
+    os.environ.get('ASSIST_APPROACH_TIP_MIN_RANGE_M', '8.0')
+)
+# Cancel cam-tilt look-up in gate1 height when near image centre (085654 loft).
+# Bias *grows* with forward speed / body pitch (more lean ⇒ more cam coupling).
+# ASSIST_CAM_TILT_SPEED_MPS = speed that reaches +1 on the speed scale.
+ASSIST_CAM_TILT_BIAS = float(os.environ.get('ASSIST_CAM_TILT_BIAS', '1.0'))
+ASSIST_CAM_TILT_SPEED_MPS = float(
+    os.environ.get('ASSIST_CAM_TILT_SPEED_MPS', '6.0')
+)
+# Cancel bank/strafe lateral cam coupling in image nx (both left and right).
+# Fly left → cam looks right → gate appears too left; add +bias to nx.
+# Grows with |roll| and lateral/forward speed (same speed scale as height bias).
+ASSIST_CAM_ROLL_BIAS = float(os.environ.get('ASSIST_CAM_ROLL_BIAS', '0.40'))
 ASSIST_LOST_TIMEOUT_S = float(os.environ.get('ASSIST_LOST_TIMEOUT_S', '0.8'))
 # Through-opening only; abort early when next gate is visible (was 2.5 s
 # blind with yaw=0 — lost gate-2 glimpse in 031742).
-ASSIST_COAST_S = float(os.environ.get('ASSIST_COAST_S', '1.2'))
+ASSIST_COAST_S = float(os.environ.get('ASSIST_COAST_S', '0.8'))
 ASSIST_SEEK_S = float(os.environ.get('ASSIST_SEEK_S', '14.0'))
+# Visual commit only when |nx| below this (092927: 0.35 let left-edge hits through).
+ASSIST_COMMIT_NX_MAX = float(os.environ.get('ASSIST_COMMIT_NX_MAX', '0.12'))
+# Yaw from PnP bearing atan2(ey,ex) (093229 image-nx under-yawed into left edge).
+ASSIST_KP_YAW = float(os.environ.get('ASSIST_KP_YAW', '1.4'))  # legacy alias
+# Proportional yaw — mild near centre; extreme |nx| boosts below.
+ASSIST_KP_YAW_COARSE = float(os.environ.get('ASSIST_KP_YAW_COARSE', '2.6'))
+ASSIST_KP_YAW_FINE = float(os.environ.get('ASSIST_KP_YAW_FINE', '1.55'))
+ASSIST_YAW_COARSE_RAD = float(os.environ.get('ASSIST_YAW_COARSE_RAD', '0.12'))
+ASSIST_YAW_MAX_DEG = float(os.environ.get('ASSIST_YAW_MAX_DEG', '90.0'))
+ASSIST_YAW_SLEW_DEG = float(os.environ.get('ASSIST_YAW_SLEW_DEG', '280.0'))
+# Far-left / far-right in frame (|nx| above start) → harder yaw (g2 acquire).
+ASSIST_YAW_EXTREME_NX = float(os.environ.get('ASSIST_YAW_EXTREME_NX', '0.12'))
+ASSIST_YAW_EXTREME_KP_MULT = float(
+    os.environ.get('ASSIST_YAW_EXTREME_KP_MULT', '3.2')
+)
+ASSIST_YAW_EXTREME_MAX_MULT = float(
+    os.environ.get('ASSIST_YAW_EXTREME_MAX_MULT', '2.0')
+)
+# |nx| above this → saturate yaw rate (same sign as offset).
+# Raised after 132343: bang at 0.28 + left ghost = full circle.
+ASSIST_YAW_BANG_NX = float(os.environ.get('ASSIST_YAW_BANG_NX', '0.45'))
+# Seek left/right yaw — correct nx hard enough to center the next gate.
+ASSIST_SEEK_YAW_MAX_DEG = float(os.environ.get('ASSIST_SEEK_YAW_MAX_DEG', '55.0'))
+ASSIST_SEEK_YAW_KP = float(os.environ.get('ASSIST_SEEK_YAW_KP', '1.80'))
+ASSIST_SEEK_LIVE_YAW_MAX_DEG = float(
+    os.environ.get('ASSIST_SEEK_LIVE_YAW_MAX_DEG', '70.0')
+)
+ASSIST_SEEK_LIVE_YAW_KP = float(
+    os.environ.get('ASSIST_SEEK_LIVE_YAW_KP', '2.40')
+)
+# Pad lift used to hard-cap ±8.6°/s (131746 far-right uncorrected).
+ASSIST_PAD_YAW_MAX_DEG = float(os.environ.get('ASSIST_PAD_YAW_MAX_DEG', '45.0'))
+# Blend latched/live pose bearing into seek yaw when |nx| is meaningful.
+ASSIST_SEEK_YAW_POSE_WEIGHT = float(
+    os.environ.get('ASSIST_SEEK_YAW_POSE_WEIGHT', '0.45')
+)
+# Nose-down while seeking to cancel 20° cam-up (level the view forward).
+# Must stay on after lock too — 110826 crawl-only ~5° left the cam looking up.
+ASSIST_SEEK_CAM_LEVEL_FRAC = float(
+    os.environ.get('ASSIST_SEEK_CAM_LEVEL_FRAC', '0.80')
+)
+ASSIST_SEEK_PITCH_MAX_DEG = float(
+    os.environ.get('ASSIST_SEEK_PITCH_MAX_DEG', '16.0')
+)
+# Pitched seek + HT still climbs (101541: 3→15 m). Base bleed while seeking.
+ASSIST_SEEK_THRUST_BLEED = float(
+    os.environ.get('ASSIST_SEEK_THRUST_BLEED', '0.014')
+)
+# Image-height trim while seeking — proportional to (ny - aim), not a flat dig.
+ASSIST_SEEK_NY_DEAD = float(os.environ.get('ASSIST_SEEK_NY_DEAD', '0.10'))
+ASSIST_SEEK_NY_THRUST_GAIN = float(
+    os.environ.get('ASSIST_SEEK_NY_THRUST_GAIN', '0.035')
+)
+# Caps scale with |ny err| in code; these are the |err|=1 endpoints.
+ASSIST_SEEK_NY_SINK_CAP = float(
+    os.environ.get('ASSIST_SEEK_NY_SINK_CAP', '0.035')
+)
+ASSIST_SEEK_NY_CLIMB_CAP = float(
+    os.environ.get('ASSIST_SEEK_NY_CLIMB_CAP', '0.022')
+)
+# Hard floor while seeking — pad bury only. 112536: 1.80 m arrested a good
+# gate-2 sink (good runs 103411/095531 continued seek_sink down to ~0.5 m).
+ASSIST_SEEK_MIN_ALT_M = float(os.environ.get('ASSIST_SEEK_MIN_ALT_M', '0.55'))
+# Descent-rate brake (114816 overshot pad; 115153 braked too early at ~2 m).
+# Full cancel only when YOLO near aim or climb ≤ BRAKE_ALT; while still low,
+# only floor thrust at hover−MIN_SINK if falling ≥ FULL.
+ASSIST_SEEK_DESCENT_START_MPS = float(
+    os.environ.get('ASSIST_SEEK_DESCENT_START_MPS', '0.70')
+)
+ASSIST_SEEK_DESCENT_FULL_MPS = float(
+    os.environ.get('ASSIST_SEEK_DESCENT_FULL_MPS', '1.20')
+)
+# 115626: +0.014 barely moved thr while falling ~2.5 m/s into gate-2 rail.
+ASSIST_SEEK_DESCENT_BRAKE_THRUST = float(
+    os.environ.get('ASSIST_SEEK_DESCENT_BRAKE_THRUST', '0.028')
+)
+ASSIST_SEEK_BRAKE_ALT_M = float(os.environ.get('ASSIST_SEEK_BRAKE_ALT_M', '1.15'))
+ASSIST_SEEK_DESCENT_MIN_SINK = float(
+    os.environ.get('ASSIST_SEEK_DESCENT_MIN_SINK', '0.028')
+)
+# Floor collective when climbed < MIN_ALT (pad / bottom-rail arrest).
+ASSIST_SEEK_FLOOR_THRUST = float(
+    os.environ.get('ASSIST_SEEK_FLOOR_THRUST', '0.022')
+)
+# Pose sink scale while seeking (1.0 = true |pose_dz|).
+ASSIST_SEEK_POSE_SINK_SCALE = float(
+    os.environ.get('ASSIST_SEEK_POSE_SINK_SCALE', '1.0')
+)
+# Seek sink gain vs approach (same ∝|dz| shape).
+ASSIST_SEEK_SINK_GAIN_SCALE = float(
+    os.environ.get('ASSIST_SEEK_SINK_GAIN_SCALE', '1.10')
+)
+# Post-pass alt freeze — off; sink is range-gated instead.
+ASSIST_SEEK_HOLD_S = float(os.environ.get('ASSIST_SEEK_HOLD_S', '0.0'))
+# Allow sink out to ~two-gates (103411 sank from ~22 m). Farther = hold.
+ASSIST_SEEK_SINK_MAX_RANGE_M = float(
+    os.environ.get('ASSIST_SEEK_SINK_MAX_RANGE_M', '24.0')
+)
+# Stop YOLO seek-sink when pose_dz is at/below this (gate height reached),
+# but only if YOLO error is also small (see ASSIST_SEEK_POSE_STOP_NY_ERR).
+ASSIST_SEEK_POSE_STOP_SINK_M = float(
+    os.environ.get('ASSIST_SEEK_POSE_STOP_SINK_M', '0.25')
+)
+# 114438: pose_dz=0 with ny−aim≈0.5 held sink — require YOLO near aim too.
+ASSIST_SEEK_POSE_STOP_NY_ERR = float(
+    os.environ.get('ASSIST_SEEK_POSE_STOP_NY_ERR', '0.30')
+)
+# When pose missing: img_dz ≈ (ny−aim) * range * this → stop if ≤ STOP_SINK.
+ASSIST_SEEK_NY_TO_DZ = float(os.environ.get('ASSIST_SEEK_NY_TO_DZ', '0.55'))
+# Within this range, stop sinking if ny is not extreme — punch through.
+ASSIST_SEEK_PUNCH_RANGE_M = float(
+    os.environ.get('ASSIST_SEEK_PUNCH_RANGE_M', '9.0')
+)
+ASSIST_SEEK_PUNCH_NY_MAX = float(
+    os.environ.get('ASSIST_SEEK_PUNCH_NY_MAX', '0.80')
+)
+# Seek may look up to TWO gates ahead for yaw/latch/chase — never farther
+# (111515: 40–44 m end-course box).
+ASSIST_SEEK_MAX_AHEAD_M = float(
+    os.environ.get('ASSIST_SEEK_MAX_AHEAD_M', '28.0')
+)
+# After a pass, freeze the near next-gate latch so a mid-frame far box
+# (111515: 8 m latch → 44 m) cannot overwrite aim/yaw.
+ASSIST_LATCH_FREEZE_S = float(os.environ.get('ASSIST_LATCH_FREEZE_S', '5.0'))
+# Reject any live chase whose range jumps this far past the latch / last near.
+ASSIST_LATCH_MAX_RANGE_JUMP_M = float(
+    os.environ.get('ASSIST_LATCH_MAX_RANGE_JUMP_M', '6.0')
+)
+# While closing on the active gate, snapshot gate2 as next-next latch so
+# dual dropout at the slot does not age out the seed (115959 gate-3 miss).
+ASSIST_LATCH_APPROACH_FREEZE_M = float(
+    os.environ.get('ASSIST_LATCH_APPROACH_FREEZE_M', '12.0')
+)
+ASSIST_LATCH_SNAP_MAX_AGE_S = float(
+    os.environ.get('ASSIST_LATCH_SNAP_MAX_AGE_S', '15.0')
+)
+# seek_lock may soft-yaw from latch this long after last refresh.
+ASSIST_LATCH_HOLD_S = float(os.environ.get('ASSIST_LATCH_HOLD_S', '12.0'))
+# 120804: ~8.7 m residual; 122209: ~12.3 m / ny≈−0.21 still stole gate-2 dig.
+ASSIST_LATCH_MIN_AHEAD_M = float(
+    os.environ.get('ASSIST_LATCH_MIN_AHEAD_M', '14.0')
+)
+# Approach snap only if next_rng > primary_rng + this (truly behind).
+ASSIST_LATCH_BEHIND_MARGIN_M = float(
+    os.environ.get('ASSIST_LATCH_BEHIND_MARGIN_M', '6.0')
+)
+# Next-gate latch must not sit above the image aim (cleared-gate / sky).
+ASSIST_LATCH_NY_MIN = float(os.environ.get('ASSIST_LATCH_NY_MIN', '-0.05'))
+# Post-pass: climb to this height before tip-crawl / dig when low/blind
+# (115959 exited gate 2 at climb≈−0.2 m and never saw gate 3).
+ASSIST_SEEK_CRUISE_ALT_M = float(
+    os.environ.get('ASSIST_SEEK_CRUISE_ALT_M', '1.55')
+)
+ASSIST_SEEK_CRUISE_THRUST = float(
+    os.environ.get('ASSIST_SEEK_CRUISE_THRUST', '0.016')
+)
+# Blind seek (no latch): slow L/R yaw scan instead of mute tip-crawl
+# (121451: yaw=0 lofted to ~8 m and never found gate 3).
+# Smaller/slower scan — 124804 ±0.32 @ 0.20 Hz shook the craft.
+ASSIST_SEEK_SCAN_YAW_RAD = float(
+    os.environ.get('ASSIST_SEEK_SCAN_YAW_RAD', '0.22')
+)
+ASSIST_SEEK_SCAN_HZ = float(os.environ.get('ASSIST_SEEK_SCAN_HZ', '0.12'))
+# Course-2 memory after gate 1: yaw right + slight climb (user-allowed).
+ASSIST_COURSE = int(os.environ.get('ASSIST_COURSE', '2'))
+ASSIST_COURSE_MEMORY = os.environ.get('ASSIST_COURSE_MEMORY', '1') not in (
+    '0', 'false', 'False',
+)
+# One-shot g1→g2 on course 2 only (not after later gates).
+ASSIST_POST_G1_NX = float(os.environ.get('ASSIST_POST_G1_NX', '0.55'))
+ASSIST_POST_G1_NY = float(os.environ.get('ASSIST_POST_G1_NY', '0.05'))
+ASSIST_POST_G1_RANGE_M = float(os.environ.get('ASSIST_POST_G1_RANGE_M', '16.0'))
+# Right turn after g1 — bounded by angle budget + max time (133354 spun).
+ASSIST_POST_G1_YAW_DEG = float(os.environ.get('ASSIST_POST_G1_YAW_DEG', '40.0'))
+ASSIST_POST_G1_YAW_EXTRA_PER_NX = float(
+    os.environ.get('ASSIST_POST_G1_YAW_EXTRA_PER_NX', '15.0')
+)
+ASSIST_POST_G1_YAW_RATE_MAX_DEG = float(
+    os.environ.get('ASSIST_POST_G1_YAW_RATE_MAX_DEG', '45.0')
+)
+ASSIST_POST_G1_YAW_FLOOR_DEG = float(
+    os.environ.get('ASSIST_POST_G1_YAW_FLOOR_DEG', '22.0')
+)
+ASSIST_POST_G1_YAW_DEAD_DEG = float(
+    os.environ.get('ASSIST_POST_G1_YAW_DEAD_DEG', '5.0')
+)
+ASSIST_POST_G1_YAW_MAX_S = float(
+    os.environ.get('ASSIST_POST_G1_YAW_MAX_S', '1.8')
+)
+# Live handoff after turn done: reject floor + far-left ghosts (133934).
+# Near-center / slight-left is OK once the right turn finished.
+ASSIST_POST_G1_LIVE_NX_MIN = float(
+    os.environ.get('ASSIST_POST_G1_LIVE_NX_MIN', '0.22')
+)
+ASSIST_POST_G1_LIVE_NX_LEFT = float(
+    os.environ.get('ASSIST_POST_G1_LIVE_NX_LEFT', '-0.18')
+)
+ASSIST_POST_G1_LIVE_NY_MAX = float(
+    os.environ.get('ASSIST_POST_G1_LIVE_NY_MAX', '0.62')
+)
+ASSIST_POST_G1_LIVE_AREA_MIN = float(
+    os.environ.get('ASSIST_POST_G1_LIVE_AREA_MIN', '700.0')
+)
+# After turn done: block far-left ghost yaw; allow fine left to center g2.
+ASSIST_POST_G1_YAW_LOCK_S = float(
+    os.environ.get('ASSIST_POST_G1_YAW_LOCK_S', '2.5')
+)
+ASSIST_POST_G1_FINE_YAW_DEG = float(
+    os.environ.get('ASSIST_POST_G1_FINE_YAW_DEG', '22.0')
+)
+ASSIST_POST_G1_CLIMB_THRUST = float(
+    os.environ.get('ASSIST_POST_G1_CLIMB_THRUST', '0.010')
+)
+# Pitch slew — 125233 tip↔brake every tick shook the craft.
+ASSIST_PITCH_SLEW_DEG = float(os.environ.get('ASSIST_PITCH_SLEW_DEG', '60.0'))
+# Bleed collective when blind-seeking above cruise (stop the loft).
+ASSIST_SEEK_SCAN_CAP_THRUST = float(
+    os.environ.get('ASSIST_SEEK_SCAN_CAP_THRUST', '0.022')
+)
+# Hard alt while seeking — 123610 lofted to ~6 m after scan-cap window died.
+ASSIST_SEEK_CEILING_M = float(os.environ.get('ASSIST_SEEK_CEILING_M', '2.35'))
+# Legacy alias (tests / env); prefer ASSIST_SEEK_POSE_SINK_SCALE.
+ASSIST_SEEK_POSE_SINK_BOOST = float(
+    os.environ.get(
+        'ASSIST_SEEK_POSE_SINK_BOOST',
+        os.environ.get('ASSIST_SEEK_POSE_SINK_SCALE', '1.0'),
+    )
+)
+# Keep last box and soft-yaw through SEARCH blips (102331: 0.65s still short).
+ASSIST_SEEK_GHOST_S = float(os.environ.get('ASSIST_SEEK_GHOST_S', '1.20'))
+# Seeking chaseable: allow lower-in-frame / smaller next-gate boxes.
+ASSIST_SEEK_NY_MAX = float(os.environ.get('ASSIST_SEEK_NY_MAX', '0.92'))
+ASSIST_SEEK_MIN_AREA = float(os.environ.get('ASSIST_SEEK_MIN_AREA', '180.0'))
+# After first post-pass glimpse: keep at least this forward lean (closes range).
+ASSIST_SEEK_CRAWL_DEG = float(os.environ.get('ASSIST_SEEK_CRAWL_DEG', '5.5'))
+# Post-pass: stable frames before full chase (was 12 — gate-2 flash too short).
+ASSIST_LOCK_FRAMES = int(os.environ.get('ASSIST_LOCK_FRAMES', '5'))
+ASSIST_LOCK_NX_JUMP = float(os.environ.get('ASSIST_LOCK_NX_JUMP', '0.18'))
+# Pose yaw only fills when image is near centre (095259 over-yawed from pose).
+ASSIST_YAW_POSE_WEIGHT = float(os.environ.get('ASSIST_YAW_POSE_WEIGHT', '0.25'))
+ASSIST_HFOV_DEG = float(os.environ.get('ASSIST_HFOV_DEG', '70.0'))
+# Hold yaw near zero inside this bearing error (rad).
+ASSIST_YAW_ALIGN_DEAD_RAD = float(
+    os.environ.get('ASSIST_YAW_ALIGN_DEAD_RAD', '0.035')
+)
+# Was amplifying rightward corrections into overshoot — keep neutral.
+ASSIST_YAW_LEFT_MISS_BOOST = float(
+    os.environ.get('ASSIST_YAW_LEFT_MISS_BOOST', '1.0')
+)
+ASSIST_ROLL_LEFT_MISS_BOOST = float(
+    os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.6')
+)
 # Skip controller takeoff boost — assist clears the pad with soft lean only.
 if FLIGHT_MODE == 'assist' and 'TAKEOFF_DURATION_S' not in os.environ:
     TAKEOFF_DURATION_S = 0.0
-# LEAN_THRUST_BOOST default is 0 (pose/cam-Y owns altitude in assist).
+# LEAN_THRUST_BOOST default is 0 (geometric gate1 height owns altitude in assist).
 
 # ---- Dual-gate EKF path planner knobs ----
 # Geometric path (body-frame PnP): aim at gate_center - approach*through,

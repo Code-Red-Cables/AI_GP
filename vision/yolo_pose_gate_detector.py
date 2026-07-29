@@ -1089,20 +1089,9 @@ class YoloPoseGateDetector:
             ):
                 continue
             # 0908: post-pass chase of v≈297–315 floor junk → dive.
-            # 0928: 0.72*H (=259) wiped real next-gate locks at cy≈258–280
-            # right after prefer correctly picked u≈378 — only edge remnants
-            # remained. Keep mid-low; reject true floor band only.
-            # 0930: right next-gate at cy≈310–321 (H=360) was wiped by 0.84
-            # → body_seek into the wall. Allow slightly lower when hunting right.
-            bot_frac = (
-                0.94
-                if (
-                    post_pass
-                    and self._prefer_nx is not None
-                    and float(self._prefer_nx) >= 0.18
-                )
-                else 0.84
-            )
+            # 100134: prefer_nx bot_frac=0.94 let cy≈337 floor box through
+            # (never acquired real gate 2). Cap at 0.82 even when hunting right.
+            bot_frac = 0.82 if post_pass else 0.88
             if post_pass and cy > bot_frac * frame_h:
                 continue
             filtered.append(candidate)
@@ -1122,7 +1111,8 @@ class YoloPoseGateDetector:
                 frame_area = max(ah * aw, 1.0)
                 large_close = area >= 0.012 * frame_area  # ~2.7k @ 640x360
                 top_junk = ay < 0.10 * ah and not large_close
-                bot_junk = ay > 0.92 * ah
+                # 100134: sticky assoc at y≈350 blocked all next-gate picks.
+                bot_junk = ay > 0.82 * ah
                 if top_junk or bot_junk:
                     association_target = None
                     self._previous_target = None
