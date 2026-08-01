@@ -9,6 +9,9 @@ venv/
 .venv/
 .venv_mac/
 winvenv/
+# Local practice checkpoints (regenerated as you fly).
+practice/
+
 # Ignore run logs, but keep the published personal-best package.
 logs/*
 !logs/best/

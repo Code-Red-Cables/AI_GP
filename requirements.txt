@@ -11,3 +11,6 @@ pyyaml
 
 # Tests
 pytest>=8
+
+# Pilot gamepad teleop (PlayStation / Xbox)
+pygame>=2.5

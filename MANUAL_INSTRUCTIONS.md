@@ -12,6 +12,9 @@ Focus the **PowerShell console** for keys — not the FlightSim window.
 Plug in a **PlayStation / Xbox** pad before starting. Console should print
 `[PAD] connected: …`. Keyboard still works; stick deflection overrides that axis.
 
+Manual pilot stays **disarmed with no setpoints** until you move a stick or
+flight key — then it arms and flies your input. No early hover / early start.
+
 ### Gamepad (Xbox / Mode 2)
 
 Unbind the controller inside FlightSim so sticks reach our XInput reader.
@@ -27,8 +30,9 @@ You want `[PAD] connected: … via XInput` in the console.
 | **A** | level |
 | **B** | quit |
 | **X** | HUMAN |
-| **Y** | **RESET** run (sim pad + re-arm) |
+| **Y** | **RESET** run (sim pad; arms on next stick/key) |
 | **LB** (or D-pad ↑) | AUTO on LOCK |
+| **D-pad ↓** | toggle **slow-mo** (client time scale) |
 | **Start** | KEEP |
 
 ### Keyboard
@@ -42,9 +46,27 @@ You want `[PAD] connected: … via XInput` in the console.
 | `Space` | level now |
 | **`T`** | **AUTO** on LOCK |
 | **`H`** | **HUMAN** sticks again |
-| **`Y`** | **RESET** run (sim pad + re-arm) |
+| **`Y`** | **RESET** run (sim pad; arms on next stick/key) |
+| **`O`** | toggle **slow-mo** (client time scale) |
 | **`K`** | **KEEP** remembered keys (with `--capture`) |
 | `Esc` / `X` | quit |
+
+### Slow-mo (practice with Cheat Engine / DxWnd)
+
+There is no MAVLink time-scale API. Slow the **sim** with CE Speedhack or
+DxWnd, and toggle the **client** to the same factor so attitude/key tapes
+stay aligned:
+
+| Control | Effect |
+|---|---|
+| **`O`** / **D-pad ↓** | toggle client slow-mo |
+| `--slow-mo` | start with it ON |
+| `PILOT_SLOW_MO_SCALE=0.5` | factor when ON (default 0.5) |
+| `PILOT_SLOW_MO=1` | start ON via env |
+
+When ON, the pilot sleeps longer and advances tape/key playheads slower
+(HUD shows `x0.50`). **Always match CE/DxWnd to that same number** or
+replay drifts. Timed runs / PBs: leave slow-mo **OFF**.
 
 Human teleop boosts collective while leaned (`PILOT_TILT_COMPENSATE=1`) so
 hard forward does not drop altitude. Set `PILOT_TILT_COMPENSATE=0` for flat
@@ -73,6 +95,31 @@ Faithful tape: `logs/best/attitude_pb.json` (replay drifts; use as reference onl
 .\winvenv\Scripts\python.exe tools\tune_flight.py pilot `
   --replay-attitude logs\best\attitude_pb.json --seconds 55
 ```
+
+## Practice from a gate (optimize splits)
+
+The sim **cannot teleport** mid-course. Practice works by replaying your best
+**pad attitude commands** (lean / yaw-rate / thrust — full analog precision)
+from the start pad **through gate N**, then giving you the sticks for **N+1**.
+
+While you fly normally, faster clears auto-save under `practice/`:
+
+| File | Meaning |
+|---|---|
+| `practice/through_gate_3.json` | Best attitude tape through GATE 3 |
+| `practice/index.json` | Times / splits summary |
+
+```powershell
+# See what you've banked
+.\winvenv\Scripts\python.exe tools\tune_flight.py practice
+
+# Replay your saved run through gate 3, then YOU fly gate 4+
+.\winvenv\Scripts\python.exe tools\tune_flight.py pilot --practice-from-gate 3
+```
+
+- **Y** / pad **Y** during practice restarts that attitude prefix.
+- **K** / Start force-saves every through-gate checkpoint from the current run.
+- Disable auto-save: `--no-practice-save` or `PRACTICE_AUTO_SAVE=0`.
 
 ## Remember-path (exact key presses)
 

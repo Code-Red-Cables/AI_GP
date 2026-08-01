@@ -47,6 +47,17 @@ Subcommands, smallest blast radius first:
               main.py FLIGHT_MODE=assist). Prefer `python main.py` for
               full races; use this for short gain tweaks.
 
+  pilot       Manual-first: you fly with YOLO still tracking. Console shows
+              LOCK when a gate is locked. Press T to hand that gate to
+              assist; press H to take the sticks again. Esc/X quits.
+
+              Remember-path (hybrid):
+                --capture [PATH]           record EXACT stick cmds vs time
+                --replay PATH              play that timeline open-loop
+                --keep-until-gate N        replay keys through gate N
+                --assist-after-gate N      then ASSIST (closed-loop next gate)
+                --human-after-gate M       then HUMAN after gate M (default N+1)
+
 Gains are passed as flags and exported to the environment *before* config is
 imported, so the values under test are the ones the live planner would use:
 
@@ -60,6 +71,11 @@ imported, so the values under test are the ones the live planner would use:
   python tools/tune_flight.py acquire --seconds 8
   python tools/tune_flight.py manual --seconds 0
   python tools/tune_flight.py assist --seconds 30
+  python tools/tune_flight.py pilot
+  python tools/tune_flight.py pilot --capture
+  python tools/tune_flight.py pilot --replay captured_controls.json --keep-until-gate 1
+  python tools/tune_flight.py pilot --replay captured_controls_g2_locked.json \\
+      --keep-until-gate 1 --assist-after-gate 1   # keys→G1, assist G2, human G3+
   python main.py   # default FLIGHT_MODE=assist
 
 Every run appends a CSV under logs/tuning/ for offline comparison.
@@ -72,6 +88,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import os
 import statistics
@@ -128,9 +145,9 @@ def build_parser() -> argparse.ArgumentParser:
             help='skip MAVLink 31000 pad reset before arm (default: always reset)',
         )
         p.add_argument(
-            '--early-start-hold-s', type=float, default=3.5,
-            help='seconds to wait after reset/pad-ready before arm '
-                 '(avoids OLD-sim early-start DQ; default 3.5)',
+            '--early-start-hold-s', type=float, default=None,
+            help='seconds from sim-reset until arm (match ~3s countdown; '
+                 'default EARLY_START_HOLD_S=3.55). Not stacked on settle.',
         )
 
     p_loc = sub.add_parser(
@@ -154,8 +171,8 @@ def build_parser() -> argparse.ArgumentParser:
         help='lean amplitude while a key is held (default 14, same as manual)',
     )
     p_loc.add_argument(
-        '--yaw-rate-deg', type=float, default=40.0,
-        help='yaw rate while Q/E held (default 40, same as manual)',
+        '--yaw-rate-deg', type=float, default=35.0,
+        help='yaw rate while Q/E held (default 35, same as manual)',
     )
     p_loc.add_argument(
         '--climb-rate', type=float, default=0.6,
@@ -338,20 +355,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     common(p_man, 0.0)  # 0 = until Esc / Ctrl+C
     p_man.add_argument(
-        '--lean-deg', type=float, default=14.0,
-        help='roll/pitch lean amplitude while a key is held (default 14)',
+        '--lean-deg', type=float, default=None,
+        help='roll/pitch lean while held (default PILOT_LEAN_DEG=38)',
     )
     p_man.add_argument(
-        '--yaw-rate-deg', type=float, default=40.0,
-        help='yaw rate while Q/E held (default 40 deg/s)',
+        '--yaw-rate-deg', type=float, default=None,
+        help='yaw rate while Q/E held (default PILOT_YAW_RATE_DEG=85)',
     )
     p_man.add_argument(
-        '--climb-rate', type=float, default=0.6,
-        help='climb/sink RATE in m/s while R/F held (default 0.6). Release brakes to zero instead of coasting.',
+        '--climb-rate', type=float, default=None,
+        help='climb/sink RATE m/s (default PILOT_CLIMB_RATE=2.2)',
     )
     p_man.add_argument(
-        '--climb-auth', type=float, default=0.08,
-        help='max thrust offset the rate loop may command (default 0.08)',
+        '--climb-auth', type=float, default=None,
+        help='max thrust offset the rate loop may command (default PILOT_CLIMB_AUTH=0.18)',
     )
     p_man.add_argument('--climb-kp', type=float, default=None)
     p_man.add_argument('--climb-ki', type=float, default=None)
@@ -362,6 +379,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_man.add_argument(
         '--thrust-step', type=float, default=0.022,
         help='open-loop collective offset while R/F held (only with --open-loop-thrust)',
+    )
+    p_man.add_argument(
+        '--capture', nargs='?', const='', default=None, metavar='PATH',
+        help='record waypoints: M marks pose; also samples at SPLINE_CAPTURE_HZ. '
+             'Saved on exit (default SPLINE_CAPTURE_PATH).',
     )
     p_man.add_argument(
         '--wait-pad', action='store_true',
@@ -383,6 +405,107 @@ def build_parser() -> argparse.ArgumentParser:
     p_assist.add_argument('--kd-att', type=float, default=None)
     p_assist.add_argument('--kp-yaw', type=float, default=None)
     p_assist.add_argument('--lean-boost', type=float, default=None)
+
+    p_pilot = sub.add_parser(
+        'pilot',
+        help='manual-first: T=auto on LOCK, H=human again (YOLO stays on)',
+    )
+    common(p_pilot, 0.0)
+    p_pilot.add_argument(
+        '--lean-deg', type=float, default=None,
+        help='roll/pitch lean while a key/stick is held (default PILOT_LEAN_DEG=38)',
+    )
+    p_pilot.add_argument(
+        '--yaw-rate-deg', type=float, default=None,
+        help='yaw rate while Q/E / R-stick (default PILOT_YAW_RATE_DEG=85)',
+    )
+    p_pilot.add_argument(
+        '--climb-rate', type=float, default=None,
+        help='climb/sink RATE in m/s (default PILOT_CLIMB_RATE=2.2)',
+    )
+    p_pilot.add_argument(
+        '--climb-auth', type=float, default=None,
+        help='max thrust offset the rate loop may command (default PILOT_CLIMB_AUTH=0.18)',
+    )
+    p_pilot.add_argument('--climb-kp', type=float, default=None)
+    p_pilot.add_argument('--climb-ki', type=float, default=None)
+    p_pilot.add_argument(
+        '--open-loop-thrust', action='store_true',
+        help='R/F is a raw thrust offset (coasts on release)',
+    )
+    p_pilot.add_argument(
+        '--thrust-step', type=float, default=0.022,
+        help='open-loop collective offset while R/F held (with --open-loop-thrust)',
+    )
+    p_pilot.add_argument(
+        '--lock-area', type=float, default=1200.0,
+        help='min YOLO area_px for LOCK (default 1200)',
+    )
+    p_pilot.add_argument('--hover-thrust', type=float, default=None)
+    p_pilot.add_argument('--kp-att', type=float, default=None)
+    p_pilot.add_argument('--kd-att', type=float, default=None)
+    p_pilot.add_argument('--max-rate', type=float, default=None)
+    p_pilot.add_argument('--lean-boost', type=float, default=None)
+    p_pilot.add_argument(
+        '--capture', nargs='?', const='', default=None, metavar='PATH',
+        help='remember-path: record which flight keys are held and for how long. '
+             'Default REMEMBER_PATH (captured_controls.json). Press K to keep.',
+    )
+    p_pilot.add_argument(
+        '--replay', default=None, metavar='PATH',
+        help='replay recorded key presses, then hand off sticks',
+    )
+    p_pilot.add_argument(
+        '--replay-attitude', default=None, metavar='PATH',
+        help='replay an attitude tape (des_roll/pitch + yaw_rate + thrust) '
+             'exported from telem via tools/export_attitude_tape.py',
+    )
+    p_pilot.add_argument(
+        '--keep-until-gate', type=int, default=None, metavar='N',
+        help='with --replay: play timeline through gate N, then HUMAN '
+             '(or ASSIST if --assist-after-gate is set). '
+             'Raise N later to extend the remembered segment.',
+    )
+    p_pilot.add_argument(
+        '--assist-after-gate', type=int, default=None, metavar='N',
+        help='with --replay: after real GATE N clears, hand REPLAY→ASSIST '
+             '(closed-loop tip-through). Typical: --keep-until-gate 1 '
+             '--assist-after-gate 1 (keys through G1, assist for G2).',
+    )
+    p_pilot.add_argument(
+        '--human-after-gate', type=int, default=None, metavar='M',
+        help='with --assist-after-gate: after real GATE M clears, ASSIST→HUMAN '
+             'so you can fly/append keys (default: assist-after-gate+1).',
+    )
+    p_pilot.add_argument(
+        '--practice-from-gate', type=int, default=None, metavar='N',
+        help='replay your best saved PAD attitude through GATE N, then '
+             'HUMAN (you fly gate N+1 onward). Example: after saving '
+             'through gate 3, use --practice-from-gate 3. '
+             'Auto-saves under practice/ (no mid-course teleport).',
+    )
+    p_pilot.add_argument(
+        '--list-practice', action='store_true',
+        help='print saved practice checkpoints and exit',
+    )
+    p_pilot.add_argument(
+        '--no-practice-save', action='store_true',
+        help='disable auto-saving faster through-gate checkpoints',
+    )
+    p_pilot.add_argument(
+        '--slow-mo', action='store_true',
+        help='start with client slow-mo ON (PILOT_SLOW_MO_SCALE, default 0.5). '
+             'Toggle anytime with O or D-pad ↓. Match Cheat Engine / DxWnd '
+             'to the same factor or tapes desync.',
+    )
+    p_prac = sub.add_parser(
+        'practice',
+        help='list / manage practice gate checkpoints',
+    )
+    p_prac.add_argument(
+        'action', nargs='?', default='list', choices=('list',),
+        help='list saved through-gate checkpoints (default)',
+    )
     return parser
 
 
@@ -411,17 +534,17 @@ def export_gain_overrides(args) -> dict:
     # `acquire` and `climb` keep the real takeoff path.
     if getattr(args, 'mode', None) in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive',
-            'yaw-align', 'authority', 'manual', 'assist',
+            'yaw-align', 'authority', 'manual', 'assist', 'pilot',
     ) or (
         getattr(args, 'mode', None) == 'localize'
         and bool(getattr(args, 'teleop', False))
     ):
         os.environ['TAKEOFF_DURATION_S'] = '0'
         applied['TAKEOFF_DURATION_S'] = 0.0
-    if getattr(args, 'mode', None) in ('acquire', 'manual', 'assist'):
+    if getattr(args, 'mode', None) in ('acquire', 'manual', 'assist', 'pilot'):
         os.environ.setdefault('CRASH_USE_SIM_ODOMETRY', '0')
         applied.setdefault('CRASH_USE_SIM_ODOMETRY', 0.0)
-    if getattr(args, 'mode', None) == 'assist':
+    if getattr(args, 'mode', None) in ('assist', 'pilot'):
         os.environ['FLIGHT_MODE'] = 'assist'
         applied['FLIGHT_MODE'] = 'assist'
     return applied
@@ -477,9 +600,38 @@ def _poll_teleop_lean(des_roll, des_pitch, lean_rad):
     return des_roll, des_pitch, quit_req
 
 
-# msvcrt has no key-up events — while a key is held the console autorepeats.
-# Treat an axis as released when it has not been refreshed for this long.
-_MANUAL_HOLD_RELEASE_S = 0.18
+# Fallback when GetAsyncKeyState is unavailable: msvcrt autorepeat timeout.
+_MANUAL_HOLD_RELEASE_S = 0.45
+
+# Opposing flight keys — pressing one releases the other in the chord.
+_MANUAL_KEY_OPPOSITE = {
+    'w': 's', 's': 'w', 'up': 'down', 'down': 'up',
+    'a': 'd', 'd': 'a', 'left': 'right', 'right': 'left',
+    'q': 'e', 'e': 'q',
+    'r': 'f', 'f': 'r',
+}
+_MANUAL_FLIGHT_KEYS = frozenset(_MANUAL_KEY_OPPOSITE)
+
+# Win32 VK codes for true key-down (hold matches physical press duration).
+_MANUAL_VK = {
+    'w': 0x57, 'a': 0x41, 's': 0x53, 'd': 0x44,
+    'q': 0x51, 'e': 0x45, 'r': 0x52, 'f': 0x46,
+    'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28,
+}
+
+
+def _async_flight_keys_down():
+    """Return currently held flight keys via Win32, or None if unavailable."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        down = set()
+        for name, vk in _MANUAL_VK.items():
+            if user32.GetAsyncKeyState(vk) & 0x8000:
+                down.add(name)
+        return down
+    except Exception:
+        return None
 
 
 def _poll_manual_controls(
@@ -489,88 +641,311 @@ def _poll_manual_controls(
     yaw_rate_cmd,
     thrust_step,
     now: float,
+    ignore_sticks: bool = False,
+    sink_step=None,
+    pitch_rad=None,
 ):
-    """Hold-to-fly keyboard (Windows msvcrt). Release → level / hover.
+    """Hold-to-fly keyboard + optional gamepad (Windows).
 
-    ``hold_state`` is mutated across ticks (stores last-seen times + values).
-    Returns (des_roll, des_pitch, yaw_rate, thrust_delta, quit).
+    Flight holds use ``GetAsyncKeyState`` so Q/E/W/A… stay active for the
+    whole time the key is physically down (msvcrt autorepeat is not enough).
+    msvcrt still drains the console buffer and edges T/H/K/Esc.
+
+    Gamepad (PlayStation / Xbox via pygame) uses Mode-2 sticks; analog
+    deflection overrides the matching keyboard axis while outside deadzone.
+
+    When ``ignore_sticks`` is True (REPLAY / AUTO), flight keys/sticks are
+    noted for handoff but do not move axes.
 
       W/S or ↑/↓   pitch while held
       A/D or ←/→   roll while held
       Q/E          yaw while held
       R/F          climb / sink thrust while held (back to hover on release)
       Space        force level now
+      M            mark waypoint (capture mode)
+      K            keep / commit remembered path to disk
+      T            pilot: request auto (assist) on LOCK
+      H            pilot: return sticks to human (letter H; not arrow-up)
+      O            toggle client slow-mo (match CE / DxWnd scale)
       Esc / X      quit
+
+      Pad L-stick  yaw / climb    R-stick roll / pitch
+      ✕/A level   ○/B quit   □/X human   △/Y reset   LB auto   Options keep
+      D-pad ↓      toggle client slow-mo
     """
     import config as _cfg
     fwd = float(getattr(_cfg, 'FORWARD_PITCH_SIGN', 1.0))
     yaw_sign = float(getattr(_cfg, 'RATE_SIGN_YAW', 1.0))
+    pitch_lim = float(lean_rad) if pitch_rad is None else float(pitch_rad)
     quit_req = False
 
-    def _press(axis: str, value: float) -> None:
-        hold_state[axis] = value
-        hold_state[f'{axis}_t'] = now
+    def _apply_chord_axes(chord: set) -> None:
+        """Set roll/pitch/yaw/thrust from the full held chord."""
+        if ignore_sticks:
+            return
+        for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+            hold_state[axis] = 0.0
+            hold_state[f'{axis}_t'] = 0.0
+        if chord & {'a', 'left'}:
+            hold_state['roll'] = -lean_rad
+            hold_state['roll_t'] = now
+        if chord & {'d', 'right'}:
+            hold_state['roll'] = lean_rad
+            hold_state['roll_t'] = now
+        if chord & {'w', 'up'}:
+            hold_state['pitch'] = fwd * pitch_lim
+            hold_state['pitch_t'] = now
+        if chord & {'s', 'down'}:
+            hold_state['pitch'] = -fwd * pitch_lim
+            hold_state['pitch_t'] = now
+        if 'q' in chord:
+            hold_state['yaw'] = -yaw_sign * yaw_rate_cmd
+            hold_state['yaw_t'] = now
+        if 'e' in chord:
+            hold_state['yaw'] = yaw_sign * yaw_rate_cmd
+            hold_state['yaw_t'] = now
+        if 'r' in chord:
+            hold_state['thrust'] = thrust_step
+            hold_state['thrust_t'] = now
+        if 'f' in chord:
+            # Mild F by default; caller passes PILOT_G2_SINK_RATE after GATE 1.
+            sink = (
+                abs(float(sink_step))
+                if sink_step is not None
+                else abs(float(
+                    getattr(_cfg, 'PILOT_SINK_RATE', abs(thrust_step))
+                ))
+            )
+            hold_state['thrust'] = -sink
+            hold_state['thrust_t'] = now
+
+    def _note_meta(name: str) -> None:
+        """msvcrt edge for non-hold keys (still used if async unavailable)."""
+        keys = hold_state.setdefault('keys_held', {})
+        opp = _MANUAL_KEY_OPPOSITE.get(name)
+        if opp:
+            keys.pop(opp, None)
+        keys[name] = now
+        for k in list(keys.keys()):
+            if k in _MANUAL_FLIGHT_KEYS:
+                keys[k] = now
 
     try:
         import msvcrt
     except ImportError:
-        return 0.0, 0.0, 0.0, 0.0, False
+        msvcrt = None
 
-    while msvcrt.kbhit():
-        ch = msvcrt.getch()
-        if ch in (b'\x00', b'\xe0'):
-            if not msvcrt.kbhit():
-                break
-            code = msvcrt.getch()
-            if code == b'K':
-                _press('roll', -lean_rad)
-            elif code == b'M':
-                _press('roll', lean_rad)
-            elif code == b'H':
-                _press('pitch', fwd * lean_rad)
-            elif code == b'P':
-                _press('pitch', -fwd * lean_rad)
-            continue
-        try:
-            key = ch.decode('ascii', errors='ignore').lower()
-        except Exception:
-            continue
-        if key == 'a':
-            _press('roll', -lean_rad)
-        elif key == 'd':
-            _press('roll', lean_rad)
-        elif key == 'w':
-            _press('pitch', fwd * lean_rad)
-        elif key == 's':
-            _press('pitch', -fwd * lean_rad)
-        elif key == 'q':
-            _press('yaw', -yaw_sign * yaw_rate_cmd)
-        elif key == 'e':
-            _press('yaw', yaw_sign * yaw_rate_cmd)
-        elif key == 'r':
-            _press('thrust', thrust_step)
-        elif key == 'f':
-            _press('thrust', -thrust_step)
-        elif key == ' ':
-            for axis in ('roll', 'pitch', 'yaw', 'thrust'):
-                hold_state[axis] = 0.0
-                hold_state[f'{axis}_t'] = 0.0
-        elif key in ('x', '\x1b'):
-            quit_req = True
+    # Drain console buffer + edge-detect meta keys (T/H/K/Space/quit).
+    if msvcrt is not None:
+        while msvcrt.kbhit():
+            ch = msvcrt.getch()
+            if ch in (b'\x00', b'\xe0'):
+                if not msvcrt.kbhit():
+                    break
+                code = msvcrt.getch()
+                # Arrows still noted as fallback when async is missing.
+                if code == b'K':
+                    _note_meta('left')
+                elif code == b'M':
+                    _note_meta('right')
+                elif code == b'H':
+                    _note_meta('up')
+                elif code == b'P':
+                    _note_meta('down')
+                continue
+            try:
+                key = ch.decode('ascii', errors='ignore').lower()
+            except Exception:
+                continue
+            if key in _MANUAL_FLIGHT_KEYS:
+                _note_meta(key)
+            elif key == 'm':
+                if not ignore_sticks:
+                    hold_state['marks'] = int(hold_state.get('marks', 0)) + 1
+            elif key == 'k':
+                hold_state['keeps'] = int(hold_state.get('keeps', 0)) + 1
+            elif key == 't':
+                hold_state['auto'] = int(hold_state.get('auto', 0)) + 1
+            elif key == 'h':
+                hold_state['human'] = int(hold_state.get('human', 0)) + 1
+            elif key == 'y':
+                hold_state['resets'] = int(hold_state.get('resets', 0)) + 1
+            elif key == 'o':
+                hold_state['slowmo'] = int(hold_state.get('slowmo', 0)) + 1
+            elif key == ' ':
+                for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+                    hold_state[axis] = 0.0
+                    hold_state[f'{axis}_t'] = 0.0
+                hold_state['keys_held'] = {}
+            elif key in ('x', '\x1b'):
+                quit_req = True
+
+    # True held state (Q stays yawing the whole time you hold it).
+    async_down = _async_flight_keys_down()
+    keys = hold_state.setdefault('keys_held', {})
+    if async_down is not None:
+        chord = set(async_down)
+        # Resolve opposites: keep both letter and arrow aliases; drop pairs.
+        for a, b in (('w', 's'), ('a', 'd'), ('q', 'e'), ('r', 'f'),
+                     ('up', 'down'), ('left', 'right')):
+            if a in chord and b in chord:
+                chord.discard(b)
+        for k in list(keys.keys()):
+            if k in _MANUAL_FLIGHT_KEYS and k not in chord:
+                keys.pop(k, None)
+        for k in chord:
+            keys[k] = now
+        hold_state['keys_down'] = set(chord)
+    else:
+        hold_state['keys_down'] = {
+            k for k, t in keys.items()
+            if k in _MANUAL_FLIGHT_KEYS
+            and t > 0.0
+            and (now - float(t)) <= _MANUAL_HOLD_RELEASE_S
+        }
+
+    _apply_chord_axes(hold_state['keys_down'])
 
     def _active(axis: str) -> float:
-        t = float(hold_state.get(f'{axis}_t') or 0.0)
-        if t <= 0.0 or (now - t) > _MANUAL_HOLD_RELEASE_S:
+        if ignore_sticks:
             return 0.0
+        # With async holds, axes are rewritten every tick while down.
+        if axis not in hold_state or not hold_state.get(f'{axis}_t'):
+            return 0.0
+        if async_down is None:
+            t = float(hold_state.get(f'{axis}_t') or 0.0)
+            if t <= 0.0 or (now - t) > _MANUAL_HOLD_RELEASE_S:
+                return 0.0
         return float(hold_state.get(axis) or 0.0)
 
-    return (
-        _active('roll'),
-        _active('pitch'),
-        _active('yaw'),
-        _active('thrust'),
-        quit_req,
-    )
+    roll = _active('roll')
+    pitch = _active('pitch')
+    yaw = _active('yaw')
+    thrust = _active('thrust')
+
+    # Gamepad: always poll for meta buttons (Y/H/O/…); sticks only when flying.
+    pad = None
+    try:
+        from gamepad_input import read_pad_axes
+        pad = read_pad_axes(
+            deadzone=float(
+                getattr(_cfg, 'PILOT_PAD_DEADZONE', 0.16) or 0.16
+            ),
+            expo=float(getattr(_cfg, 'PILOT_PAD_EXPO', 0.55) or 0.0),
+            smooth=float(getattr(_cfg, 'PILOT_PAD_SMOOTH', 0.28) or 0.28),
+        )
+    except Exception:
+        pad = None
+    if pad is not None:
+        if not ignore_sticks:
+            sink = abs(
+                float(getattr(_cfg, 'PILOT_SINK_RATE', abs(thrust_step)))
+            )
+            soft = float(getattr(_cfg, 'PILOT_PAD_SOFT_GAIN', 0.70) or 0.70)
+            soft_yaw = float(
+                getattr(_cfg, 'PILOT_PAD_SOFT_YAW', 0.55) or 0.55
+            )
+            soft_thr = float(
+                getattr(_cfg, 'PILOT_PAD_SOFT_THRUST', 1.0) or 1.0
+            )
+            bump = float(
+                getattr(_cfg, 'PILOT_PAD_THRUST_BUMP', 0.035) or 0.0
+            )
+            g_att = soft
+            g_yaw = soft_yaw
+            g_thr = soft_thr
+            if pad.level:
+                roll = pitch = yaw = thrust = 0.0
+                for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+                    hold_state[axis] = 0.0
+                    hold_state[f'{axis}_t'] = 0.0
+                hold_state['keys_held'] = {}
+                hold_state.pop('thrust_bump', None)
+            else:
+                if abs(pad.roll) > 1e-4:
+                    roll = float(pad.roll) * float(lean_rad) * g_att
+                    hold_state['roll'] = roll
+                    hold_state['roll_t'] = now
+                if abs(pad.pitch) > 1e-4:
+                    pitch = (
+                        float(fwd) * float(pad.pitch) * float(pitch_lim) * g_att
+                    )
+                    hold_state['pitch'] = pitch
+                    hold_state['pitch_t'] = now
+                if abs(pad.yaw) > 1e-4:
+                    yaw = (
+                        float(yaw_sign)
+                        * float(pad.yaw)
+                        * float(yaw_rate_cmd)
+                        * g_yaw
+                    )
+                    hold_state['yaw'] = yaw
+                    hold_state['yaw_t'] = now
+                if abs(pad.thrust) > 1e-4:
+                    # RT = +climb rate, LT = -sink rate.
+                    if pad.thrust >= 0.0:
+                        thrust = (
+                            float(pad.thrust) * float(thrust_step) * g_thr
+                        )
+                    else:
+                        thrust = float(pad.thrust) * float(sink) * g_thr
+                    hold_state['thrust'] = thrust
+                    hold_state['thrust_t'] = now
+                # RB: raw collective bump (applied in pilot tick via hold_state).
+                if pad.thrust_bump and bump > 0.0:
+                    hold_state['thrust_bump'] = bump
+                    hold_state['thrust_bump_t'] = now
+                else:
+                    hold_state.pop('thrust_bump', None)
+                    hold_state.pop('thrust_bump_t', None)
+            hold_state['pad'] = {
+                'name': pad.name,
+                'roll': pad.roll,
+                'pitch': pad.pitch,
+                'yaw': pad.yaw,
+                'thrust': pad.thrust,
+                'thrust_bump': bool(pad.thrust_bump),
+            }
+            moved = max(
+                abs(pad.roll), abs(pad.pitch), abs(pad.yaw), abs(pad.thrust)
+            )
+            last_log = float(hold_state.get('_pad_log_t') or 0.0)
+            if (moved > 0.08 or pad.thrust_bump) and (now - last_log) > 1.0:
+                hold_state['_pad_log_t'] = now
+                print(
+                    f'[PAD] R={pad.roll:+.2f} P={pad.pitch:+.2f} '
+                    f'Y={pad.yaw:+.2f} T={pad.thrust:+.2f}'
+                    f'{" RB+" if pad.thrust_bump else ""}',
+                    flush=True,
+                )
+            elif (
+                moved <= 0.08
+                and not pad.thrust_bump
+                and (now - last_log) > 8.0
+            ):
+                hold_state['_pad_log_t'] = now
+                if not hold_state.get('_pad_silent_warned'):
+                    hold_state['_pad_silent_warned'] = True
+                    print(
+                        '[PAD] sticks idle — if you are moving them, disable '
+                        'the controller inside FlightSim (it is eating '
+                        'XInput).',
+                        flush=True,
+                    )
+        if pad.auto:
+            hold_state['auto'] = int(hold_state.get('auto', 0)) + 1
+        if pad.human:
+            hold_state['human'] = int(hold_state.get('human', 0)) + 1
+        if pad.keep:
+            hold_state['keeps'] = int(hold_state.get('keeps', 0)) + 1
+        if getattr(pad, 'reset', False):
+            hold_state['resets'] = int(hold_state.get('resets', 0)) + 1
+        if getattr(pad, 'slowmo', False):
+            hold_state['slowmo'] = int(hold_state.get('slowmo', 0)) + 1
+        if pad.quit:
+            quit_req = True
+
+    return (roll, pitch, yaw, thrust, quit_req)
 
 
 # --------------------------------------------------------------------------
@@ -587,6 +962,177 @@ def _f(value, default=None):
 
 def _fmt(value, spec='7.2f'):
     return format(value, spec) if isinstance(value, float) else '     --'
+
+
+class WaypointCapture:
+    """Append derived poses to a mission JSON for spline replay.
+
+    Records ``shared_data['position_ned']`` (EKF-derived) plus yaw. Absolute
+    accuracy does not matter — capture and replay must share ``EKF_USE_PNP``.
+
+    Use ``mark()`` for M-key / GATE_PASSED tags, and ``maybe_sample()`` for
+    continuous sampling at ``SPLINE_CAPTURE_HZ``.
+    """
+
+    def __init__(self, path, *, continuous_hz: float = 0.0):
+        self.path = Path(path)
+        self.waypoints = []
+        self.continuous_hz = float(continuous_hz or 0.0)
+        self._last_sample_t = None
+        self._last_active_gate = None
+        self.saved_once = False
+
+    def seed_from_mission(self, mission) -> int:
+        """Copy existing waypoints (replay prefix) so KEEP extends that path."""
+        if mission is None:
+            return 0
+        n0 = len(self.waypoints)
+        for w in mission.waypoints:
+            row = {
+                'n': float(w.pos[0]),
+                'e': float(w.pos[1]),
+                'd': float(w.pos[2]),
+                'yaw_deg': (
+                    float(w.yaw_deg) if w.yaw is not None else 0.0
+                ),
+                'name': w.name or f'wp{len(self.waypoints)}',
+            }
+            if w.active_gate is not None:
+                row['active_gate'] = int(w.active_gate)
+                prev = self._last_active_gate
+                self._last_active_gate = (
+                    int(w.active_gate)
+                    if prev is None
+                    else max(prev, int(w.active_gate))
+                )
+            if w.event:
+                row['event'] = w.event
+            if w.t is not None:
+                row['t'] = float(w.t)
+            self.waypoints.append(row)
+        return len(self.waypoints) - n0
+
+    def max_gate(self) -> int | None:
+        gates = [
+            int(w['active_gate'])
+            for w in self.waypoints
+            if w.get('active_gate') is not None
+        ]
+        for w in self.waypoints:
+            name = str(w.get('name') or '')
+            if name.lower().startswith('gate'):
+                try:
+                    gates.append(int(''.join(ch for ch in name if ch.isdigit())))
+                except ValueError:
+                    pass
+        return max(gates) if gates else None
+
+    def mark(
+        self,
+        shared_data,
+        *,
+        name=None,
+        event=None,
+        active_gate=None,
+        t=None,
+    ):
+        """Capture one waypoint. Returns a status string for the console."""
+        pos = shared_data.get('position_ned') or {}
+        att = shared_data.get('attitude') or {}
+        n, e, d = (_f(pos.get(k)) for k in ('x', 'y', 'z'))
+        yaw = _f(att.get('yaw'))
+        if n is None or e is None or d is None or yaw is None:
+            return 'MARK REJECTED — no derived pose yet (is the EKF running?)'
+        idx = len(self.waypoints)
+        row = {
+            'n': n, 'e': e, 'd': d,
+            'yaw_deg': math.degrees(yaw),
+            'name': name or f'wp{idx}',
+        }
+        if active_gate is not None:
+            row['active_gate'] = int(active_gate)
+        if event:
+            row['event'] = event
+        if t is not None:
+            row['t'] = float(t)
+        self.waypoints.append(row)
+        tag = ''
+        if event:
+            tag = f'  event={event}'
+        if active_gate is not None:
+            tag += f'  gate={int(active_gate)}'
+        return (
+            f'MARK {row["name"]}  n={n:+.2f} e={e:+.2f} d={d:+.2f} '
+            f'yaw={math.degrees(yaw):+.1f}deg{tag}'
+        )
+
+    def maybe_sample(self, shared_data, t: float):
+        """Periodic sample when continuous_hz > 0. Returns status or None."""
+        if self.continuous_hz <= 0.0:
+            return None
+        period = 1.0 / self.continuous_hz
+        if (
+            self._last_sample_t is not None
+            and (t - self._last_sample_t) < period
+        ):
+            return None
+        msg = self.mark(shared_data, t=t)
+        if 'REJECTED' in msg:
+            return None
+        self._last_sample_t = t
+        return msg
+
+    def watch_gate_pass(self, shared_data, t: float):
+        """If race ``active_gate`` advanced, tag a gate_pass mark. Else None."""
+        race = shared_data.get('race_status') or {}
+        ag = race.get('active_gate')
+        if ag is None:
+            return None
+        try:
+            ag_i = int(ag)
+        except (TypeError, ValueError):
+            return None
+        prev = self._last_active_gate
+        self._last_active_gate = ag_i if prev is None else max(prev, ag_i)
+        if prev is None or ag_i <= prev:
+            return None
+        # active_gate became ag_i after clearing that gate (or the next index —
+        # we tag with the new value so keep_until_gate can find it).
+        return self.mark(
+            shared_data,
+            name=f'gate{ag_i}',
+            event='gate_pass',
+            active_gate=ag_i,
+            t=t,
+        )
+
+    def save(self):
+        """Write the mission file. Returns the path, or None if nothing marked."""
+        if len(self.waypoints) < 2:
+            return None
+        import config
+        from mission import Mission, Waypoint, save_mission
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        wps = [
+            Waypoint(
+                w['n'], w['e'], w['d'], w.get('yaw_deg', 0.0),
+                name=w.get('name', ''),
+                active_gate=w.get('active_gate'),
+                event=w.get('event'),
+                t=w.get('t'),
+            )
+            for w in self.waypoints
+        ]
+        mission = Mission(
+            wps,
+            loop=False,
+            name='captured',
+            ekf_use_pnp=int(bool(getattr(config, 'EKF_USE_PNP', True))),
+        )
+        save_mission(mission, str(self.path))
+        self.saved_once = True
+        return self.path
 
 
 class Recorder:
@@ -735,7 +1281,7 @@ def run_localize(args) -> int:
     hold_state: dict = {}
     roll_pid = pitch_pid = None
     lean_rad = math.radians(float(getattr(args, 'teleop_lean_deg', 14.0)))
-    yaw_rate_cmd = math.radians(float(getattr(args, 'yaw_rate_deg', 40.0)))
+    yaw_rate_cmd = math.radians(float(getattr(args, 'yaw_rate_deg', 35.0)))
     open_loop = bool(getattr(args, 'open_loop_thrust', False))
     climb_rate_cmd = float(getattr(args, 'climb_rate', 0.6) or 0.6)
     # Key returns a raw thrust offset in open loop, else a rate setpoint.
@@ -781,7 +1327,7 @@ def run_localize(args) -> int:
             print('[SIM] reset (command 31000) before arm...', flush=True)
             controller.send_sim_reset()
             time.sleep(max(0.5, float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5))))
-        hold_s = max(0.0, float(getattr(args, 'early_start_hold_s', 3.5) or 3.5))
+        hold_s = _countdown_hold_s(args)
         print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
         time.sleep(hold_s)
         print('Arming...', flush=True)
@@ -1135,6 +1681,23 @@ def _vertical_rate_down(shared_data):
     return None, None
 
 
+def _stick_rate_to_thrust_delta(
+    stick_vert: float,
+    *,
+    climb_rate: float,
+    sink_rate: float,
+    climb_auth: float,
+    sink_auth: float,
+) -> float:
+    """Map ±m/s stick command to a collective offset (no EKF loop)."""
+    sv = float(stick_vert)
+    if sv >= 0.0:
+        scale = float(climb_auth) / max(1e-3, float(climb_rate))
+        return max(0.0, min(float(climb_auth), sv * scale))
+    scale = float(sink_auth) / max(1e-3, float(sink_rate))
+    return max(-float(sink_auth), min(0.0, sv * scale))
+
+
 class VerticalRateHold:
     """Turn R/F into a climb-RATE command with active braking on release.
 
@@ -1192,8 +1755,14 @@ def _tilt_compensated_thrust(hover_thrust, des_roll, des_pitch, *, lean_boost=No
     cleanly. Flight still uses config.LEAN_THRUST_BOOST via kalman_planner.
     """
     import config
+    # Floor must allow full pilot lean (~28–35°) — old 0.88 capped at ~28°
+    # and still sank on hard forward.
+    cos_floor = float(
+        getattr(config, 'MIN_TILT_COMPENSATION_COSINE', 0.70) or 0.70
+    )
+    cos_floor = max(0.55, min(0.95, cos_floor))
     tilt = max(
-        0.88,
+        cos_floor,
         math.cos(abs(float(des_pitch))) * math.cos(abs(float(des_roll))),
     )
     thrust = float(hover_thrust) / tilt
@@ -1310,7 +1879,7 @@ def run_attitude_loop(args, desired_at, label, *, tilt_compensate=False):
             return None, 'no gate in view (not on pad)', 0.0
     # Arming / thrusting immediately after reset tips off the pad → early-start
     # DQ on the OLD sim. Hold still once the race/spawn is live.
-    hold_s = max(0.0, float(getattr(args, 'early_start_hold_s', 3.5) or 3.5))
+    hold_s = _countdown_hold_s(args)
     print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
     time.sleep(hold_s)
     print('Arming...', flush=True)
@@ -2699,7 +3268,7 @@ def run_acquire(args) -> int:
     print('[SIM] reset (command 31000) before arm...', flush=True)
     controller.send_sim_reset()
     time.sleep(max(0.5, float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5))))
-    hold_s = max(0.0, float(getattr(args, 'early_start_hold_s', 3.5) or 3.5))
+    hold_s = _countdown_hold_s(args)
     print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
     time.sleep(hold_s)
     print('Arming...', flush=True)
@@ -2998,7 +3567,7 @@ def run_assist(args) -> int:
         shutdown(components)
         return 1
 
-    hold_s = max(0.0, float(getattr(args, 'early_start_hold_s', 3.5) or 3.5))
+    hold_s = _countdown_hold_s(args)
     print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
     time.sleep(hold_s)
     controller.arm()
@@ -3111,18 +3680,41 @@ def run_manual(args) -> int:
         Path(args.csv) if args.csv else default_csv_path('manual')
     )
 
-    lean_rad = math.radians(float(getattr(args, 'lean_deg', 10.0)))
-    yaw_rate_cmd = math.radians(float(getattr(args, 'yaw_rate_deg', 25.0)))
+    lean_deg = getattr(args, 'lean_deg', None)
+    if lean_deg is None:
+        lean_deg = float(getattr(config, 'PILOT_LEAN_DEG', 24.0) or 24.0)
+    yaw_deg = getattr(args, 'yaw_rate_deg', None)
+    if yaw_deg is None:
+        yaw_deg = float(getattr(config, 'PILOT_YAW_RATE_DEG', 45.0) or 45.0)
+    climb_rate_cmd = getattr(args, 'climb_rate', None)
+    if climb_rate_cmd is None:
+        climb_rate_cmd = float(
+            getattr(config, 'PILOT_CLIMB_RATE', 1.5) or 1.5
+        )
+    climb_auth = getattr(args, 'climb_auth', None)
+    if climb_auth is None:
+        climb_auth = float(getattr(config, 'PILOT_CLIMB_AUTH', 0.12) or 0.12)
+    lean_rad = math.radians(float(lean_deg))
+    yaw_rate_cmd = math.radians(float(yaw_deg))
     open_loop = bool(getattr(args, 'open_loop_thrust', False))
-    climb_rate_cmd = float(getattr(args, 'climb_rate', 0.6) or 0.6)
+    climb_rate_cmd = float(climb_rate_cmd)
     # Key returns a raw thrust offset in open loop, else a rate setpoint.
     thrust_step = (float(getattr(args, 'thrust_step', 0.022))
                    if open_loop else climb_rate_cmd)
     vrate = None if open_loop else VerticalRateHold(
         kp=getattr(args, 'climb_kp', None),
         ki=getattr(args, 'climb_ki', None),
-        authority=float(getattr(args, 'climb_auth', 0.08) or 0.08),
+        authority=float(climb_auth),
     )
+    cap_arg = getattr(args, 'capture', None)
+    capture = (
+        None if cap_arg is None
+        else WaypointCapture(
+            cap_arg or config.SPLINE_CAPTURE_PATH,
+            continuous_hz=float(getattr(config, 'SPLINE_CAPTURE_HZ', 5.0)),
+        )
+    )
+    marks_seen = 0
     max_rate = config.KALMAN_MAX_RATE_RAD_S
     roll_pid = PIDController(PIDConfig(
         kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
@@ -3143,6 +3735,10 @@ def run_manual(args) -> int:
     print('  Q/E          yaw left / right', flush=True)
     print('  R/F          climb / sink (while held)', flush=True)
     print('  Space        force level now', flush=True)
+    if capture is not None:
+        print('  M            mark waypoint (also auto-samples + GATE_PASSED)',
+              flush=True)
+        print(f'  capture -> {capture.path}', flush=True)
     print('  Esc / X      disarm and quit', flush=True)
     if vrate is None:
         print('  R/F mode: OPEN LOOP thrust offset (coasts on release)', flush=True)
@@ -3184,7 +3780,7 @@ def run_manual(args) -> int:
         else:
             print('[PAD] timeout — arming anyway', flush=True)
 
-    hold_s = max(0.0, float(getattr(args, 'early_start_hold_s', 3.5) or 3.5))
+    hold_s = _countdown_hold_s(args)
     print(f'[SIM] early-start hold {hold_s:.1f}s before arm...', flush=True)
     time.sleep(hold_s)
     print('Arming...', flush=True)
@@ -3222,25 +3818,47 @@ def run_manual(args) -> int:
             if quit_req:
                 print('\n[STOP] quit key', flush=True)
                 break
+            if capture is not None:
+                marks = int(hold_state.get('marks', 0))
+                while marks_seen < marks:
+                    marks_seen += 1
+                    print('  ' + capture.mark(shared_data, t=elapsed), flush=True)
+                gmsg = capture.watch_gate_pass(shared_data, elapsed)
+                if gmsg:
+                    print('  ' + gmsg, flush=True)
+                capture.maybe_sample(shared_data, elapsed)
 
             dt = period if last_t is None else max(1e-3, now - last_t)
             last_t = now
             roll, pitch, _, _ = read_attitude(shared_data)
             roll_rate = roll_pid.update(des_roll - roll, dt)
             pitch_rate = pitch_pid.update(des_pitch - pitch, dt)
-            lean_boost = float(getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0)
-            # Optional CLI override already exported via LEAN_THRUST_BOOST.
-            thrust = _tilt_compensated_thrust(
-                config.HOVER_THRUST, des_roll, des_pitch, lean_boost=lean_boost,
-            )
+            # Flat hover by default — W pitches forward without lofting.
+            if bool(getattr(config, 'PILOT_TILT_COMPENSATE', 1)):
+                lean_boost = float(
+                    getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0
+                )
+                thrust = _tilt_compensated_thrust(
+                    config.HOVER_THRUST, des_roll, des_pitch,
+                    lean_boost=lean_boost,
+                )
+            else:
+                thrust = float(config.HOVER_THRUST)
+            stick_vert = float(thrust_delta)
             if vrate is None:
                 climb_meas, climb_src = None, None
             else:
                 thrust_delta, climb_meas, climb_src = vrate.update(
                     shared_data, thrust_delta, dt
                 )
+            bump = float(hold_state.get('thrust_bump') or 0.0)
+            bump_t = float(hold_state.get('thrust_bump_t') or 0.0)
+            if bump_t <= 0.0 or (now - bump_t) > 0.25:
+                bump = 0.0
+            if stick_vert < -1e-3:
+                bump = 0.0
             # Wider clamp than race planner — manual R/F needs authority.
-            thrust = float(max(0.18, min(0.36, thrust + thrust_delta)))
+            thrust = float(max(0.06, min(0.45, thrust + thrust_delta + bump)))
 
             shared_data['planner_target'] = {
                 'kalman': True,
@@ -3308,6 +3926,25 @@ def run_manual(args) -> int:
         recorder.close()
         shutdown(components)
 
+    if capture is not None:
+        saved = capture.save()
+        if saved is None:
+            print(
+                f'\n[CAPTURE] only {len(capture.waypoints)} waypoint(s) — '
+                'need >=2, nothing written',
+                flush=True,
+            )
+        else:
+            print(
+                f'\n[CAPTURE] {len(capture.waypoints)} waypoints -> {saved}',
+                flush=True,
+            )
+            print(
+                '[CAPTURE] replay: '
+                f'pilot --replay {saved} --keep-until-gate N',
+                flush=True,
+            )
+            print('[CAPTURE] keep EKF_USE_PNP identical on replay', flush=True)
     print(f'\nCSV: {recorder.path}')
     return 0
 
@@ -3325,6 +3962,1936 @@ def _climb_estimate(shared_data) -> float | None:
     if z is not None:
         return max(0.0, -z)
     return None
+
+
+def _pilot_lock_info(shared_data, *, min_area: float = 1200.0) -> dict:
+    """YOLO/PnP lock status for pilot mode (vision stays on in both modes)."""
+    from assist_planner import image_gate_norm
+
+    nx, ny, src = image_gate_norm(shared_data)
+    det = shared_data.get('gate_detection') or {}
+    dual = shared_data.get('dual_gate_pnp') or {}
+    area = _f(det.get('area_px')) if isinstance(det, dict) else None
+    rng = _f(dual.get('gate1_range_m'))
+    yolo_ok = (
+        src == 'yolo'
+        and nx is not None
+        and ny is not None
+        and area is not None
+        and float(area) >= float(min_area)
+    )
+    pnp_ok = (
+        src == 'dual_pnp'
+        and nx is not None
+        and ny is not None
+        and rng is not None
+        and 1.5 <= float(rng) <= 30.0
+    )
+    locked = bool(yolo_ok or pnp_ok)
+    return {
+        'locked': locked,
+        'nx': nx,
+        'ny': ny,
+        'source': src,
+        'area_px': area,
+        'range_m': rng,
+    }
+
+
+def _seed_assist_from_lock(planner, shared_data, now: float) -> bool:
+    """Prime AssistImagePlanner to chase the currently locked gate."""
+    import config
+    import numpy as np
+    from assist_planner import image_gate_norm
+
+    nx, ny, src = image_gate_norm(shared_data)
+    if nx is None or ny is None:
+        return False
+    det = shared_data.get('gate_detection') or {}
+    dual = shared_data.get('dual_gate_pnp') or {}
+    area = _f(det.get('area_px')) if isinstance(det, dict) else None
+    rng = _f(dual.get('gate1_range_m'))
+    if rng is None and area is not None and area > 50.0:
+        rng = float((320.0 * 1.5) / math.sqrt(area))
+    body = dual.get('gate1_body')
+
+    # CRITICAL: do NOT set _arm_z to the current airborne z. That makes
+    # climbed≈0 at handoff, so _seek_ny_thrust keeps returning seek_floor
+    # (hover+boost) and the craft loft instead of chasing the locked gate.
+    # NED origin is the arm point — prefer recorded pad z, else 0.
+    pad_z = _f(shared_data.get('pilot_pad_z'))
+    if pad_z is not None:
+        planner._arm_z = float(pad_z)
+    else:
+        planner._arm_z = 0.0
+    climbed_now = planner._climb_m(shared_data)
+    if climbed_now < 0.2:
+        # Fallback if pad_z missing / odom odd: use HUD climb estimate.
+        est = _climb_estimate(shared_data)
+        if est is not None and float(est) > climbed_now:
+            z_now = None
+            for key in ('local_position_ned', 'position_ned'):
+                z = (shared_data.get(key) or {}).get('z')
+                if z is not None and math.isfinite(float(z)):
+                    z_now = float(z)
+                    break
+            if z_now is not None:
+                planner._arm_z = float(z_now) + float(est)
+                climbed_now = float(est)
+    planner._climb_f = float(climbed_now)
+    planner._peak_climbed = max(
+        float(getattr(planner, '_peak_climbed', 0.0) or 0.0),
+        float(climbed_now),
+    )
+
+    planner._have_filt = True
+    planner._nx_f = float(nx)
+    planner._ny_f = float(ny)
+    planner._last_see_t = float(now)
+    planner._seek_until = float(now) + float(
+        getattr(config, 'ASSIST_SEEK_S', 14.0)
+    )
+    planner._coast_until = 0.0
+    planner._seek_seen = True
+    planner._gate_lock = True
+    planner._lock_count = 99
+    planner._lock_nx = float(nx)
+    planner._lock_ok_t = float(now)
+    planner._left_pad = True
+    planner._airborne_t = float(now) - 1.0
+    planner._lift_start_t = float(now) - 2.0
+    planner._last_range_m = rng
+    # Must be ndarray — list breaks (1-a)*_body_f + a*body_raw in assist.
+    if body is not None:
+        try:
+            planner._body_f = np.asarray(
+                [float(body[0]), float(body[1]), float(body[2])],
+                dtype=float,
+            ).copy()
+        except (TypeError, ValueError, IndexError):
+            planner._body_f = None
+    else:
+        planner._body_f = None
+    # Pilot hands a live lock — do not inject course-2 right-yaw memory.
+    planner._course_mem = False
+    planner._course_mem_yaw_tgt = None
+    planner._course_mem_spent = True
+    planner._course_mem_done = True
+    planner._yaw_pid.reset()
+    planner._last_yaw_cmd = 0.0
+    print(
+        f'[PILOT] seeded assist from {src} '
+        f'nx={float(nx):+.3f} ny={float(ny):+.3f} rng={rng} '
+        f'climb={climbed_now:.2f}m arm_z={planner._arm_z}',
+        flush=True,
+    )
+    return True
+
+
+def _pilot_beep() -> None:
+    """Audible lock cue on Windows; no-op elsewhere."""
+    try:
+        import winsound
+        winsound.Beep(1200, 120)
+    except Exception:
+        print('\a', end='', flush=True)
+
+
+def _countdown_hold_s(args) -> float:
+    """Seconds from sim-reset to arm (match the ~3s race countdown)."""
+    import config as _cfg
+    v = getattr(args, 'early_start_hold_s', None)
+    if v is None:
+        v = getattr(_cfg, 'EARLY_START_HOLD_S', 3.0)
+    return max(0.0, float(v))
+
+
+def _wait_aligned_to_countdown(
+    shared_data,
+    t0: float,
+    hold_s: float,
+    *,
+    label: str = 'PAD',
+    vision_grace_s: float = 2.0,
+) -> bool:
+    """Wait until ``t0 + hold_s``, polling vision in parallel.
+
+    Avoids stacking settle + vision-wait + early-start on top of the sim's
+    3s countdown (that leftover ~1s felt like dead sticks after GO).
+    Returns True if a gate was seen by arm time (or shortly after).
+    """
+    deadline = float(t0) + float(hold_s)
+    print(
+        f'[SIM] arm in {hold_s:.1f}s (aligned to countdown from reset)',
+        flush=True,
+    )
+    ready = False
+    while True:
+        dual = shared_data.get('dual_gate_pnp') or {}
+        det = shared_data.get('gate_detection') or {}
+        if dual.get('gate1_body') is not None or (
+            isinstance(det, dict) and det.get('center_px') is not None
+        ):
+            if not ready:
+                print(f'[{label}] ready', flush=True)
+                ready = True
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        time.sleep(min(0.05, max(0.0, deadline - now)))
+    if ready:
+        return True
+    grace_end = time.monotonic() + max(0.0, float(vision_grace_s))
+    while time.monotonic() < grace_end:
+        dual = shared_data.get('dual_gate_pnp') or {}
+        det = shared_data.get('gate_detection') or {}
+        if dual.get('gate1_body') is not None or (
+            isinstance(det, dict) and det.get('center_px') is not None
+        ):
+            print(f'[{label}] ready', flush=True)
+            return True
+        time.sleep(0.05)
+    return False
+
+
+# --------------------------------------------------------------------------
+# pilot — manual-first, T=auto on LOCK, H=human
+# --------------------------------------------------------------------------
+def run_pilot(args) -> int:
+    """You fly; YOLO stays on. T hands the locked gate to assist; H returns sticks.
+
+    Optional remember-path: ``--capture`` records the flight; ``--replay`` +
+    ``--keep-until-gate N`` flies keys through gate N. With
+    ``--assist-after-gate 1``, REPLAY hands to ASSIST after GATE 1 (closed-loop
+    G2 tip-through), then HUMAN after GATE 2 by default.
+
+    Practice: faster through-gate pad clears auto-save under ``practice/``.
+    ``--practice-from-gate N`` replays the best attitude tape through gate N
+    (pad start; no teleport), then hands sticks for gate N+1 onward.
+    """
+    if bool(getattr(args, 'list_practice', False)):
+        from practice_store import format_list
+        print(format_list(), flush=True)
+        return 0
+
+    import config
+    from assist_planner import AssistImagePlanner
+    from control.pid import PIDConfig, PIDController
+    from setup import setup_components
+
+    shared_data = {}
+    components = setup_components(
+        shared_data, int(time.time() * 1000),
+        SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
+    )
+    controller = components['controller']
+    state_estimator = components.get('state_estimator')
+    planner = AssistImagePlanner()
+    shared_data['planner'] = planner
+    recorder = Recorder(
+        Path(args.csv) if args.csv else default_csv_path('pilot')
+    )
+
+    lean_deg = getattr(args, 'lean_deg', None)
+    if lean_deg is None:
+        lean_deg = float(getattr(config, 'PILOT_LEAN_DEG', 24.0) or 24.0)
+    pitch_deg = float(
+        getattr(config, 'PILOT_PITCH_LEAN_DEG', lean_deg) or lean_deg
+    )
+    yaw_deg = getattr(args, 'yaw_rate_deg', None)
+    if yaw_deg is None:
+        yaw_deg = float(getattr(config, 'PILOT_YAW_RATE_DEG', 45.0) or 45.0)
+    climb_rate_cmd = getattr(args, 'climb_rate', None)
+    if climb_rate_cmd is None:
+        climb_rate_cmd = float(
+            getattr(config, 'PILOT_CLIMB_RATE', 1.5) or 1.5
+        )
+    climb_auth = getattr(args, 'climb_auth', None)
+    if climb_auth is None:
+        climb_auth = float(getattr(config, 'PILOT_CLIMB_AUTH', 0.12) or 0.12)
+    lean_rad = math.radians(float(lean_deg))
+    pitch_rad = math.radians(float(pitch_deg))
+    # Stay inside the hard controller clamp.
+    max_lean = float(getattr(config, 'MAX_LEAN_RAD', pitch_rad))
+    lean_rad = min(lean_rad, max_lean)
+    pitch_rad = min(pitch_rad, max_lean)
+    yaw_rate_cmd = math.radians(float(yaw_deg))
+    open_loop = bool(getattr(args, 'open_loop_thrust', False))
+    climb_rate_cmd = float(climb_rate_cmd)
+    sink_rate_cmd = float(getattr(config, 'PILOT_SINK_RATE', climb_rate_cmd))
+    sink_auth = float(getattr(config, 'PILOT_SINK_AUTH', climb_auth) or climb_auth)
+    # Stick values are m/s unless --open-loop-thrust (raw collective).
+    rate_stick = not open_loop
+    thrust_step = (
+        float(getattr(args, 'thrust_step', 0.022))
+        if open_loop else climb_rate_cmd
+    )
+    # Default OFF: EKF vz rate-hold was lofting at neutral sticks (215823).
+    use_rate_hold = (
+        rate_stick
+        and bool(int(getattr(config, 'PILOT_RATE_HOLD', 0) or 0))
+    )
+    vrate = None if not use_rate_hold else VerticalRateHold(
+        kp=getattr(args, 'climb_kp', None),
+        ki=getattr(args, 'climb_ki', None),
+        authority=float(climb_auth),
+    )
+    min_area = float(getattr(args, 'lock_area', 1200.0) or 1200.0)
+    max_rate = config.KALMAN_MAX_RATE_RAD_S
+    roll_pid = PIDController(PIDConfig(
+        kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
+        output_min=-max_rate, output_max=max_rate,
+    ))
+    pitch_pid = PIDController(PIDConfig(
+        kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
+        output_min=-max_rate, output_max=max_rate,
+    ))
+
+    from attitude_tape import (
+        AttitudeTapeClock,
+        AttitudeTapeRecorder,
+        load_attitude_tape,
+        trim_tape_until_gate,
+    )
+    from practice_store import (
+        PRACTICE_DIR,
+        best_through,
+        format_list,
+        load_through_gate,
+        maybe_update_through_gate,
+        sync_all_gates,
+    )
+    from remember_timeline import (
+        KeyReplayClock,
+        KeyTimeline,
+        apply_keys_to_hold_state,
+        load_timeline,
+    )
+
+    cap_arg = getattr(args, 'capture', None)
+    replay_path = getattr(args, 'replay', None)
+    attitude_path = getattr(args, 'replay_attitude', None)
+    practice_from = getattr(args, 'practice_from_gate', None)
+    practice_auto = (
+        bool(int(getattr(config, 'PRACTICE_AUTO_SAVE', 1) or 0))
+        and not bool(getattr(args, 'no_practice_save', False))
+    )
+    # --practice-from-gate N: replay best ATTITUDE tape THROUGH N, then HUMAN.
+    # (N = last gate the prefix clears — matches practice/through_gate_N.json.)
+    if practice_from is not None:
+        pf = int(practice_from)
+        if pf < 1:
+            print('[FAIL] --practice-from-gate must be >= 1', flush=True)
+            shutdown(components)
+            return 1
+        if replay_path or attitude_path:
+            print(
+                '[FAIL] --practice-from-gate cannot combine with '
+                '--replay / --replay-attitude',
+                flush=True,
+            )
+            shutdown(components)
+            return 1
+        pref = load_through_gate(pf)
+        if pref is None:
+            print(
+                f'[FAIL] no practice checkpoint through gate {pf}.\n'
+                f'{format_list()}',
+                flush=True,
+            )
+            shutdown(components)
+            return 1
+        # Stash the already-trimmed tape; do not re-load a shorter file.
+        practice_tape = pref
+        src = pref.get('_source_path') or best_through(pf)
+        if getattr(args, 'keep_until_gate', None) is None:
+            args.keep_until_gate = pf
+        print(
+            f'[PRACTICE] replay PAD attitude through GATE {pf} '
+            f'(source={src}, {pref.get("n", 0)} samples, '
+            f'{float(pref.get("duration_s") or 0):.1f}s), '
+            f'then YOU fly gate {pf + 1}+',
+            flush=True,
+        )
+    else:
+        practice_tape = None
+    if attitude_path and replay_path:
+        print('[FAIL] use only one of --replay / --replay-attitude', flush=True)
+        return 1
+    att_clock = None
+    practice_att_src = None
+    practice_att_gate = None
+    if practice_tape is not None:
+        try:
+            att_clock = AttitudeTapeClock(practice_tape)
+            # Reload via load_through_gate on Y-reset (keeps longest-source trim).
+            practice_att_src = str(
+                practice_tape.get('_source_path')
+                or best_through(int(practice_from))
+                or ''
+            )
+            practice_att_gate = int(practice_from)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f'[FAIL] attitude tape: {exc}', flush=True)
+            return 1
+        print(
+            f'[REPLAY] attitude tape through GATE {practice_from}  '
+            f'{att_clock.duration:.1f}s  n={len(att_clock.samples)} '
+            f'(same prefix as higher practice-from-gate targets)',
+            flush=True,
+        )
+    elif attitude_path:
+        try:
+            raw_tape = load_attitude_tape(attitude_path)
+            keep_pre = getattr(args, 'keep_until_gate', None)
+            if keep_pre is not None:
+                raw_tape = trim_tape_until_gate(
+                    raw_tape, int(keep_pre), after_s=0.35,
+                )
+            att_clock = AttitudeTapeClock(raw_tape)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f'[FAIL] attitude tape: {exc}', flush=True)
+            return 1
+        print(
+            f'[REPLAY] attitude tape {attitude_path}  '
+            f'{att_clock.duration:.1f}s  n={len(att_clock.samples)}',
+            flush=True,
+        )
+    keep_until = getattr(args, 'keep_until_gate', None)
+    assist_after = getattr(args, 'assist_after_gate', None)
+    if assist_after is None:
+        cfg_aa = int(getattr(config, 'PILOT_ASSIST_AFTER_GATE', 0) or 0)
+        assist_after = cfg_aa if cfg_aa > 0 else None
+    human_after = getattr(args, 'human_after_gate', None)
+    if human_after is None:
+        cfg_ha = int(getattr(config, 'PILOT_HUMAN_AFTER_GATE', 0) or 0)
+        if cfg_ha > 0:
+            human_after = cfg_ha
+        elif assist_after is not None:
+            human_after = int(assist_after) + 1
+    # Keys only need to cover the assist-after gate; trim there by default.
+    if (
+        replay_path
+        and assist_after is not None
+        and keep_until is None
+    ):
+        keep_until = int(assist_after)
+    # Key press timeline: record which keys are held and for how long.
+    remember_mode = bool(replay_path) or (cap_arg is not None)
+    save_path = (
+        (cap_arg if cap_arg not in (None, '') else None)
+        or replay_path
+        or getattr(config, 'REMEMBER_PATH', 'captured_controls.json')
+    )
+    timeline = None if not remember_mode else KeyTimeline(save_path)
+    memorizing = timeline is not None and not bool(replay_path)
+    mem_t0 = None
+    commit_only_on_k = bool(replay_path)
+    keeps_seen = 0
+    # Continuous pad/controller attitude capture for practice checkpoints.
+    practice_rec: AttitudeTapeRecorder | None = None
+    if practice_auto:
+        PRACTICE_DIR.mkdir(parents=True, exist_ok=True)
+        practice_rec = AttitudeTapeRecorder(name='practice_session')
+
+    replay_clock = None
+    if replay_path:
+        full_tl = load_timeline(replay_path)
+        if full_tl is None:
+            print(
+                f'[FAIL] cannot load key timeline {replay_path!r} '
+                '(need a fresh pilot --capture; type=key_timeline)',
+                flush=True,
+            )
+            shutdown(components)
+            return 1
+        play_tl = full_tl
+        post_yaw_rate = max(1.0, math.degrees(abs(yaw_rate_cmd)))
+        frozen_g = int(getattr(full_tl, 'frozen_through_gate', 0) or 0)
+        if frozen_g > 0:
+            print(
+                f'[REMEMBER] frozen_through_gate={frozen_g} — '
+                'playing keys as-is (no rewrite)',
+                flush=True,
+            )
+        else:
+            yaw_msgs = full_tl.ensure_pilot_gate_yaws(
+                yaw_rate_deg=post_yaw_rate
+            )
+            if yaw_msgs:
+                for msg in yaw_msgs:
+                    print(f'[REMEMBER] replay: inserted {msg}', flush=True)
+                try:
+                    full_tl.save()
+                    print(
+                        f'[REMEMBER] wrote gate yaws into {full_tl.path}',
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(
+                        f'[REMEMBER] could not rewrite capture: {exc}',
+                        flush=True,
+                    )
+        if keep_until is not None:
+            try:
+                play_tl, trim_warn = full_tl.trim_until_gate(int(keep_until))
+            except ValueError as exc:
+                print(f'[FAIL] keep-until-gate: {exc}', flush=True)
+                shutdown(components)
+                return 1
+            if trim_warn:
+                print(f'[WARN] {trim_warn}', flush=True)
+            else:
+                print(
+                    f'[REMEMBER] trimmed through GATE {int(keep_until)}: '
+                    f'{len(play_tl)} events, {play_tl.duration:.1f}s '
+                    f'(keys held ~{play_tl.key_hold_s():.1f}s)',
+                    flush=True,
+                )
+            # Only re-bake yaws when the capture is not frozen.
+            if frozen_g <= 0:
+                for msg in play_tl.ensure_pilot_gate_yaws(
+                    yaw_rate_deg=post_yaw_rate
+                ):
+                    print(f'[REMEMBER] after trim: {msg}', flush=True)
+        ekf_cap = full_tl.ekf_use_pnp
+        if ekf_cap is not None and int(ekf_cap) != int(bool(config.EKF_USE_PNP)):
+            print(
+                f'[WARN] capture ekf_use_pnp={ekf_cap} but live '
+                f'EKF_USE_PNP={int(bool(config.EKF_USE_PNP))} — match them.',
+                flush=True,
+            )
+        try:
+            replay_clock = KeyReplayClock(play_tl)
+        except ValueError as exc:
+            print(f'[FAIL] remember replay: {exc}', flush=True)
+            shutdown(components)
+            return 1
+        # Fresh vertical PI each replay so odom noise from the last run
+        # cannot bias F/R thrust on this one (keys stay the same).
+        if vrate is not None:
+            vrate.reset()
+            print('[REMEMBER] climb PI reset for deterministic key replay', flush=True)
+        if timeline is not None:
+            n_seed = timeline.seed_prefix(play_tl)
+            print(
+                f'[REMEMBER] seeded {n_seed} key events through gate '
+                f'{keep_until if keep_until is not None else "end"}; '
+                'will record YOUR keys after handoff',
+                flush=True,
+            )
+
+    print('', flush=True)
+    print('=== PILOT (manual ↔ auto) ===', flush=True)
+    print('  Focus THIS console for keys (pad works in background too).',
+          flush=True)
+    print('  Manual: WASD/arrows lean, Q/E yaw, R/F climb/sink, Space level',
+          flush=True)
+    print(
+        '  Pad: L=roll/pitch  Rx=yaw  RT=climb  LT=sink  RB=thrust+',
+        flush=True,
+    )
+    print(
+        '       A level  B quit  X human  Y reset  LB auto  Start keep',
+        flush=True,
+    )
+    print(
+        f'  Soft caps: roll={math.degrees(lean_rad):.0f}°  '
+        f'pitch={math.degrees(pitch_rad):.0f}°  '
+        f'yaw={math.degrees(yaw_rate_cmd):.0f}°/s  '
+        f'climb={climb_rate_cmd:.2f} m/s  '
+        f'sink_auth={sink_auth:.2f}  HT={config.HOVER_THRUST:.3f}',
+        flush=True,
+    )
+    if use_rate_hold:
+        print('  Vertical: EKF rate-hold (PILOT_RATE_HOLD=1)', flush=True)
+    else:
+        print(
+            '  Vertical: direct collective (LT/F always cuts thrust)',
+            flush=True,
+        )
+    print('  T            AUTO — assist flies the LOCKED gate', flush=True)
+    print('  H            HUMAN — you take the sticks again', flush=True)
+    print(
+        '  Y / pad Y    RESET — sim pad; arms on your next stick/key',
+        flush=True,
+    )
+    print(
+        '  O / D-pad ↓  SLOW-MO — client time scale '
+        f'(x{float(getattr(config, "PILOT_SLOW_MO_SCALE", 0.5) or 0.5):.2f}; '
+        'match CE/DxWnd)',
+        flush=True,
+    )
+    if att_clock is not None:
+        print(
+            f'  ATTITUDE REPLAY {att_clock.duration:.1f}s '
+            f'(H aborts to sticks)',
+            flush=True,
+        )
+    try:
+        from gamepad_input import get_gamepad
+        get_gamepad()  # announce once if connected
+    except Exception:
+        pass
+    if replay_clock is not None:
+        print(
+            '  REPLAY/AUTO: sticks locked, but hold WASD to carry into HUMAN',
+            flush=True,
+        )
+    if timeline is not None:
+        print('  K            KEEP — save the key presses you like', flush=True)
+        print(
+            f'  remember -> {timeline.path}  (which keys + how long)',
+            flush=True,
+        )
+    if replay_clock is not None:
+        ku = keep_until if keep_until is not None else 'end'
+        if assist_after is not None:
+            ha = human_after if human_after is not None else int(assist_after) + 1
+            print(
+                f'  REPLAY keys through GATE {ku} → ASSIST (after GATE '
+                f'{int(assist_after)}) → HUMAN (after GATE {ha}) '
+                f'({len(replay_clock.timeline)} events, '
+                f'{replay_clock._t_end:.1f}s)',
+                flush=True,
+            )
+            print(
+                '  ASSIST tip-through is closed-loop; after HUMAN your keys APPEND',
+                flush=True,
+            )
+        else:
+            print(
+                f'  REPLAY your keys through gate {ku} then HUMAN '
+                f'({len(replay_clock.timeline)} events, '
+                f'{replay_clock._t_end:.1f}s)',
+                flush=True,
+            )
+            print(
+                '  After GATE passes: sticks → you; your keys APPEND to remember',
+                flush=True,
+            )
+        print(
+            '  Fly the next segment, then K to keep the extended timeline',
+            flush=True,
+        )
+        print(
+            f'  F sink: {float(getattr(config, "PILOT_SINK_RATE", 0.6)):.2f} m/s '
+            f'until GATE 1, then '
+            f'{float(getattr(config, "PILOT_G2_SINK_RATE", 1.0)):.2f} m/s '
+            f'(PILOT_G2_SINK_RATE)',
+            flush=True,
+        )
+    print('  Esc / X      disarm and quit', flush=True)
+    print(
+        f'  roll={math.degrees(lean_rad):.0f}°  '
+        f'pitch={math.degrees(pitch_rad):.0f}°  '
+        f'yaw={math.degrees(yaw_rate_cmd):.0f}°/s  '
+        f'lock_area>={min_area:.0f}  HT={config.HOVER_THRUST:.3f}',
+        flush=True,
+    )
+    print('', flush=True)
+
+    hold_s = _countdown_hold_s(args)
+    if bool(getattr(args, 'no_sim_reset', False)):
+        t_reset = time.monotonic()
+    else:
+        print('[SIM] reset (command 31000) before arm...', flush=True)
+        t_reset = time.monotonic()
+        controller.send_sim_reset()
+        # Tiny settle only — rest of the countdown is spent waiting for vision.
+        time.sleep(min(0.25, max(0.0, hold_s * 0.08)))
+
+    if not _wait_aligned_to_countdown(
+        shared_data, t_reset, hold_s, label='PAD',
+    ):
+        print('[FAIL] no gate in view', flush=True)
+        shutdown(components)
+        return 1
+    # Pad NED z for assist climb math after T (must be pad, not airborne).
+    pad_z = None
+    for key in ('local_position_ned', 'position_ned'):
+        z = (shared_data.get(key) or {}).get('z')
+        if z is not None and math.isfinite(float(z)):
+            pad_z = float(z)
+            break
+    if pad_z is None:
+        pad_z = 0.0
+    shared_data['pilot_pad_z'] = pad_z
+    # Fresh run — don't treat a leftover latch as "just passed gate 1".
+    shared_data['last_gate_passed'] = None
+
+    hold_state: dict = {}
+    if att_clock is not None:
+        mode = 'attitude'
+    elif replay_clock is not None:
+        mode = 'replay'
+    else:
+        mode = 'manual'
+    # Manual: no arm / no setpoints until the pilot moves a stick or key.
+    # Replay / attitude tapes arm immediately (the tape is the input).
+    pilot_engaged = mode != 'manual'
+    if pilot_engaged:
+        controller.arm()
+        shared_data['flight_started'] = True
+    else:
+        shared_data['flight_started'] = False
+        print(
+            '[PILOT] waiting for your stick/key — arms on first input '
+            '(no hover until then)',
+            flush=True,
+        )
+    autos_seen = 0
+    humans_seen = 0
+    resets_seen = 0
+    slowmo_seen = 0
+    was_locked = False
+    last_t = None
+    last_pad_reset = 0.0
+    period = 1.0 / max(args.hz, 1.0)
+    started = time.monotonic()
+    sim_elapsed = 0.0
+    last_wall_for_sim = started
+    slow_mo_scale = max(
+        1e-3,
+        float(getattr(config, 'PILOT_SLOW_MO_SCALE', 0.5) or 0.5),
+    )
+    slow_mo = bool(
+        getattr(args, 'slow_mo', False)
+        or int(getattr(config, 'PILOT_SLOW_MO', 0) or 0)
+    )
+    time_scale = slow_mo_scale if slow_mo else 1.0
+    if slow_mo and not args.quiet:
+        print(
+            f'[SLOW-MO] ON x{time_scale:.2f} — match Cheat Engine / DxWnd '
+            'to the same factor (O / D-pad ↓ toggles)',
+            flush=True,
+        )
+    # After GATE 1: open-loop yaw right ~20° (same sign as E), once per run.
+    post_g1_yaw_deg = float(
+        getattr(config, 'PILOT_POST_G1_YAW_DEG', 20.0) or 20.0
+    )
+    post_g1 = {
+        'prev_latch': None,
+        'until': None,
+        'rate': 0.0,
+        'done': False,
+    }
+    # Defer remember / practice clocks until first stick for manual engage.
+    if pilot_engaged:
+        if memorizing:
+            mem_t0 = started
+        if practice_rec is not None:
+            practice_rec.start(started)
+    if practice_auto and not args.quiet:
+        print(
+            f'[PRACTICE] auto-save ON (pad attitude) -> '
+            f'{PRACTICE_DIR}/through_gate_*.json  '
+            'List: pilot --list-practice',
+            flush=True,
+        )
+    if not args.quiet:
+        print(
+            '\n    t   mode     lock  climb   thr   des_p   phase   src',
+            flush=True,
+        )
+
+    def _axis_active(axis: str, now_t: float) -> float:
+        t = float(hold_state.get(f'{axis}_t') or 0.0)
+        if t <= 0.0 or (now_t - t) > _MANUAL_HOLD_RELEASE_S:
+            return 0.0
+        return float(hold_state.get(axis) or 0.0)
+
+    def _sink_step_now() -> float:
+        """Mild F before GATE 1; fast dive for the gate-2 path afterward."""
+        mild = float(getattr(config, 'PILOT_SINK_RATE', abs(thrust_step)))
+        fast = float(getattr(config, 'PILOT_G2_SINK_RATE', 1.8))
+        latched = shared_data.get('last_gate_passed')
+        try:
+            latch_i = int(latched) if latched is not None else None
+        except (TypeError, ValueError):
+            latch_i = None
+        if latch_i is not None and latch_i >= 1:
+            return abs(fast)
+        return abs(mild)
+
+    def _rebuild_practice_attitude() -> bool:
+        """Reload --practice-from-gate attitude prefix after a mid-run Y reset."""
+        nonlocal att_clock, mode, memorizing, mem_t0, started, sim_elapsed
+        nonlocal last_wall_for_sim
+        if practice_att_gate is None:
+            return False
+        try:
+            raw = load_through_gate(int(practice_att_gate))
+            if raw is None:
+                raise ValueError(
+                    f'no tape through gate {practice_att_gate}'
+                )
+            att_clock = AttitudeTapeClock(raw)
+            att_clock.reset()
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f'[PRACTICE] reload failed: {exc}', flush=True)
+            return False
+        hold_state.pop('_gate_handoff_done', None)
+        hold_state.pop('_keep_gate_real_t', None)
+        hold_state.pop('_assist_handoff_done', None)
+        hold_state.pop('_att_wait_logged', None)
+        mode = 'attitude'
+        memorizing = False
+        mem_t0 = None
+        sim_elapsed = 0.0
+        last_wall_for_sim = time.monotonic()
+        if practice_rec is not None:
+            practice_rec.start(time.monotonic())
+        print(
+            f'[PRACTICE] restarted PAD attitude through GATE '
+            f'{practice_att_gate} — then you fly',
+            flush=True,
+        )
+        return True
+
+    def _flight_input_active(
+        des_roll, des_pitch, yaw_rate, stick_vert,
+    ) -> bool:
+        """True when the pilot is commanding lean / yaw / climb / bump."""
+        if (
+            abs(float(des_roll)) > 1e-4
+            or abs(float(des_pitch)) > 1e-4
+            or abs(float(yaw_rate)) > 1e-4
+            or abs(float(stick_vert)) > 1e-4
+        ):
+            return True
+        bump = float(hold_state.get('thrust_bump') or 0.0)
+        bump_t = float(hold_state.get('thrust_bump_t') or 0.0)
+        if bump > 0.0 and bump_t > 0.0 and (time.monotonic() - bump_t) <= 0.25:
+            return True
+        return False
+
+    def _engage_pilot(reason: str) -> None:
+        """Arm and start the flight clock on first real pilot input."""
+        nonlocal pilot_engaged, started, sim_elapsed, last_wall_for_sim
+        nonlocal mem_t0
+        if pilot_engaged:
+            return
+        controller.arm()
+        shared_data['flight_started'] = True
+        pilot_engaged = True
+        started = time.monotonic()
+        sim_elapsed = 0.0
+        last_wall_for_sim = started
+        if memorizing:
+            mem_t0 = started
+        if practice_rec is not None:
+            practice_rec.start(started)
+        print(f'[PILOT] armed — {reason}', flush=True)
+
+    def _do_run_reset() -> None:
+        """Pad Y / key Y: sim reset + clear state; arm on next stick/key."""
+        nonlocal mode, was_locked, started, last_pad_reset, memorizing, mem_t0
+        nonlocal pad_z, sim_elapsed, last_wall_for_sim, pilot_engaged
+        now_r = time.monotonic()
+        if (now_r - last_pad_reset) < 3.0:
+            print('[SIM] reset ignored — wait a moment', flush=True)
+            return
+        last_pad_reset = now_r
+        print('[SIM] Y — reset run (cmd 31000) + re-arm...', flush=True)
+        log = shared_data.get('log_event')
+        if log:
+            log('SIM_RESET', 'pilot_pad_y')
+        shared_data['flight_started'] = False
+        shared_data['vision_reset_episode'] = True
+        shared_data['course_bearing'] = None
+        shared_data['gate_detection'] = None
+        shared_data['dual_gate_pnp'] = None
+        shared_data['kalman_path'] = None
+        shared_data['planner_target'] = None
+        shared_data['collision'] = None
+        shared_data['last_gate_passed'] = None
+        shared_data['post_pass_hunt'] = False
+        try:
+            controller.disarm()
+        except Exception:
+            pass
+        t_reset = time.monotonic()
+        controller.send_sim_reset()
+        time.sleep(0.25)
+        resetter = getattr(planner, 'reset_episode', None)
+        if callable(resetter):
+            resetter()
+        if state_estimator is not None:
+            ekf_reset = getattr(state_estimator, 'reset_episode', None)
+            if callable(ekf_reset):
+                ekf_reset()
+        shared_data['local_position_ned'] = None
+        shared_data['vision_reset_episode'] = True
+        hold_s_r = _countdown_hold_s(args)
+        if not _wait_aligned_to_countdown(
+            shared_data, t_reset, hold_s_r, label='PAD',
+        ):
+            print('[SIM] reset — no gate yet; waiting for your input', flush=True)
+        pad_z = 0.0
+        for key in ('local_position_ned', 'position_ned'):
+            z = (shared_data.get(key) or {}).get('z')
+            if z is not None and math.isfinite(float(z)):
+                pad_z = float(z)
+                break
+        shared_data['pilot_pad_z'] = pad_z
+        for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+            hold_state[axis] = 0.0
+            hold_state[f'{axis}_t'] = 0.0
+        hold_state['keys_held'] = {}
+        hold_state.pop('thrust_bump', None)
+        hold_state.pop('_assist_handoff_done', None)
+        post_g1['prev_latch'] = None
+        post_g1['until'] = None
+        post_g1['rate'] = 0.0
+        post_g1['done'] = False
+        if vrate is not None:
+            vrate.reset()
+        roll_pid.reset()
+        pitch_pid.reset()
+        # Mid-run reset: practice-from-gate restarts its attitude prefix;
+        # otherwise return to HUMAN sticks (not stuck in AUTO).
+        was_locked = False
+        started = time.monotonic()
+        sim_elapsed = 0.0
+        last_wall_for_sim = started
+        if timeline is not None and practice_att_gate is None:
+            timeline.clear()
+        if practice_att_gate is not None:
+            if not _rebuild_practice_attitude():
+                mode = 'manual'
+                memorizing = timeline is not None
+                mem_t0 = started
+                if practice_rec is not None:
+                    practice_rec.start(started)
+        else:
+            mode = 'manual'
+            if memorizing:
+                mem_t0 = started
+            if practice_rec is not None:
+                practice_rec.start(started)
+        if replay_clock is not None:
+            try:
+                replay_clock.reset_episode()
+            except Exception:
+                pass
+        # Replay / attitude: arm now. Manual: wait for the next stick/key.
+        pilot_engaged = mode != 'manual'
+        if pilot_engaged:
+            controller.arm()
+            shared_data['flight_started'] = True
+            print('[SIM] re-armed — fly', flush=True)
+        else:
+            shared_data['flight_started'] = False
+            print(
+                '[SIM] reset — touch sticks/keys to arm (no inputs until then)',
+                flush=True,
+            )
+
+    def _enter_auto(reason: str, *, require_lock: bool = False) -> bool:
+        """Hand sticks to AssistImagePlanner (closed-loop tip-through)."""
+        nonlocal mode
+        seeded = False
+        if locked:
+            seeded = _seed_assist_from_lock(planner, shared_data, now)
+        if require_lock and not seeded:
+            return False
+        mode = 'auto'
+        shared_data['planner'] = planner
+        if vrate is not None:
+            vrate.reset()
+        roll_pid.reset()
+        pitch_pid.reset()
+        for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+            hold_state[axis] = 0.0
+            hold_state[f'{axis}_t'] = 0.0
+        hold_state['_assist_handoff_done'] = True
+        suffix = ' (seeded from LOCK)' if seeded else ' (seeking next gate)'
+        print(f'[PILOT] AUTO — {reason}{suffix}', flush=True)
+        log = shared_data.get('log_event')
+        if log:
+            log('PILOT', f'auto_handoff:{reason}')
+        return True
+
+    def _to_human(reason: str) -> None:
+        nonlocal mode, memorizing, mem_t0, pilot_engaged
+        now_h = time.monotonic()
+        # Keys held during REPLAY/AUTO (prep) carry into HUMAN.
+        prep = {
+            k for k, t in (hold_state.get('keys_held') or {}).items()
+            if t > 0.0 and (now_h - float(t)) <= _MANUAL_HOLD_RELEASE_S
+        }
+        mode = 'manual'
+        # Already airborne from REPLAY/AUTO — don't re-wait for a stick.
+        pilot_engaged = True
+        shared_data['flight_started'] = True
+        shared_data['planner'] = planner
+        # Do NOT reset attitude PIDs / vrate — that noses up and kills speed.
+        for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+            hold_state[axis] = 0.0
+            hold_state[f'{axis}_t'] = 0.0
+        if prep:
+            apply_keys_to_hold_state(
+                prep,
+                hold_state,
+                lean_rad=lean_rad,
+                yaw_rate_cmd=yaw_rate_cmd,
+                thrust_step=thrust_step,
+                now=now_h,
+                sink_step=_sink_step_now(),
+                pitch_rad=pitch_rad,
+            )
+            # Sustain at least the lean we already have so W doesn't command
+            # a shallower pitch than AUTO/REPLAY and actively brake.
+            roll_now, pitch_now, _, _ = read_attitude(shared_data)
+            fwd = float(getattr(config, 'FORWARD_PITCH_SIGN', 1.0))
+            cap = float(getattr(config, 'MAX_LEAN_RAD', math.radians(25.0)))
+            if prep & {'w', 'up'}:
+                cur_fwd = float(pitch_now) * fwd
+                mag = min(cap, max(pitch_rad, max(0.0, cur_fwd)))
+                hold_state['pitch'] = fwd * mag
+                hold_state['pitch_t'] = now_h
+            if prep & {'s', 'down'}:
+                cur_back = -float(pitch_now) * fwd
+                mag = min(cap, max(pitch_rad, max(0.0, cur_back)))
+                hold_state['pitch'] = -fwd * mag
+                hold_state['pitch_t'] = now_h
+            if 'a' in prep or 'left' in prep:
+                cur_l = -float(roll_now)
+                mag = min(cap, max(lean_rad, max(0.0, cur_l)))
+                hold_state['roll'] = -mag
+                hold_state['roll_t'] = now_h
+            if 'd' in prep or 'right' in prep:
+                cur_r = float(roll_now)
+                mag = min(cap, max(lean_rad, max(0.0, cur_r)))
+                hold_state['roll'] = mag
+                hold_state['roll_t'] = now_h
+            keys = hold_state.setdefault('keys_held', {})
+            for k in prep:
+                keys[k] = now_h
+            hold_state['keys_down'] = set(prep)
+            print(
+                f'[PILOT] HUMAN — {reason}  (carrying {",".join(sorted(prep))}'
+                f'  pitch={hold_state.get("pitch", 0):+.3f})',
+                flush=True,
+            )
+        else:
+            hold_state['keys_held'] = {}
+            hold_state['keys_down'] = set()
+            print(f'[PILOT] HUMAN — {reason}', flush=True)
+        if timeline is not None and not memorizing:
+            memorizing = True
+            mem_t0 = time.monotonic()
+            print(
+                '[REMEMBER] recording your KEY PRESSES (which + how long) — '
+                'press K when you LIKE this segment',
+                flush=True,
+            )
+        log = shared_data.get('log_event')
+        if log:
+            log('PILOT', f'human_handoff:{reason}')
+
+    def _collision_hot() -> bool:
+        col = shared_data.get('collision')
+        if not col:
+            return False
+        if isinstance(col, dict):
+            return bool(col.get('active') or col.get('count') or col)
+        return True
+
+    def _practice_note_gate(gate: int | None, *, force: bool = False) -> None:
+        if not practice_auto or practice_rec is None or gate is None:
+            return
+        msg = maybe_update_through_gate(
+            practice_rec,
+            int(gate),
+            source='live' if not force else 'keep',
+            force=force,
+            collision=_collision_hot(),
+        )
+        if msg:
+            print(f'[PRACTICE] {msg}', flush=True)
+
+    def _commit_practice(*, force: bool = True) -> None:
+        if practice_rec is None:
+            return
+        gmax = practice_rec.max_gate()
+        for msg in sync_all_gates(
+            practice_rec,
+            source='keep',
+            force=force,
+            collision=_collision_hot(),
+        ):
+            print(f'[PRACTICE] {msg}', flush=True)
+        if gmax is not None:
+            print(
+                f'[PRACTICE] replay through GATE {int(gmax)}, then you fly:  '
+                f'pilot --practice-from-gate {int(gmax)}',
+                flush=True,
+            )
+
+    def _commit_remember() -> None:
+        if timeline is None and practice_rec is None:
+            return
+        if timeline is not None:
+            saved = timeline.save()
+            if saved is None:
+                print(
+                    f'[REMEMBER] need key events to keep (have {len(timeline)})',
+                    flush=True,
+                )
+            else:
+                gmax = timeline.max_gate()
+                nxt = (int(gmax) + 1) if gmax is not None else (
+                    int(keep_until) + 1 if keep_until is not None else 1
+                )
+                print(
+                    f'[REMEMBER] KEPT {len(timeline)} key events '
+                    f'({timeline.duration:.1f}s, held ~{timeline.key_hold_s():.1f}s) '
+                    f'-> {saved}',
+                    flush=True,
+                )
+                if gmax is None:
+                    print(
+                        '[REMEMBER] WARNING: no GATE_PASSED tag — '
+                        'fly through a gate before K (look for "GATE 1 @ t=...")',
+                        flush=True,
+                    )
+                print(
+                    f'[REMEMBER] next run: --replay {saved} '
+                    f'--keep-until-gate {nxt}',
+                    flush=True,
+                )
+                log = shared_data.get('log_event')
+                if log:
+                    log('REMEMBER', f'kept n={len(timeline)} path={saved}')
+        if practice_auto:
+            _commit_practice(force=True)
+
+    def _record_practice_attitude(
+        t_wall: float,
+        *,
+        des_roll: float,
+        des_pitch: float,
+        yaw_rate: float,
+        thrust: float,
+        t_rel: float | None = None,
+    ) -> None:
+        """Store the actual commanded attitude (pad/keys after mapping)."""
+        if practice_rec is None:
+            return
+        if mode in ('attitude', 'auto', 'replay'):
+            # During prefix replay, do not append — session restarts on handoff.
+            return
+        if not practice_rec.started:
+            practice_rec.start(t_wall)
+        pad = hold_state.get('pad') if isinstance(hold_state.get('pad'), dict) else {}
+        practice_rec.sample(
+            t_wall,
+            des_roll=des_roll,
+            des_pitch=des_pitch,
+            yaw_rate=yaw_rate,
+            thrust=thrust,
+            pad_roll=pad.get('roll'),
+            pad_pitch=pad.get('pitch'),
+            pad_yaw=pad.get('yaw'),
+            pad_thrust=pad.get('thrust'),
+            t=t_rel,
+        )
+        gmsg = practice_rec.watch_gate_pass(
+            shared_data, t_wall, t=t_rel,
+        )
+        if gmsg:
+            print('  ' + gmsg, flush=True)
+            _practice_note_gate(practice_rec.max_gate())
+
+    def _record_keys(t_wall: float, t_rel: float | None = None) -> None:
+        """Append live key events + gate tags (keyboard remember path)."""
+        if timeline is None:
+            return
+        if mode in ('replay', 'auto', 'attitude'):
+            return
+        if not memorizing:
+            return
+        if t_rel is None:
+            t0 = mem_t0 if mem_t0 is not None else started
+            t_rel = max(0.0, t_wall - t0)
+        else:
+            t_rel = max(0.0, float(t_rel))
+        held = set(hold_state.get('keys_down') or set())
+        new_ev = timeline.note_keys(t_rel, held)
+        for ev in new_ev:
+            state = 'DOWN' if ev.get('down') else 'UP'
+            print(f'  KEY {ev["key"].upper()} {state} @ t={ev["t"]:.2f}s',
+                  flush=True)
+        gmsg = timeline.watch_gate_pass(shared_data, t_rel)
+        if gmsg:
+            print('  ' + gmsg, flush=True)
+
+    def _update_post_g1_yaw(now_t: float) -> float | None:
+        """Optional live yaw-right after gate 1 (off unless enabled).
+
+        Replay uses synthetic E in the remember timeline — skip here.
+        Pure manual flying defaults off so W is pitch-only (no surprise turn).
+        """
+        if mode == 'replay':
+            return None
+        if not bool(getattr(config, 'PILOT_LIVE_POST_G1_YAW', 0)):
+            return None
+        if float(post_g1_yaw_deg or 0.0) <= 0.0:
+            return None
+        latched = shared_data.get('last_gate_passed')
+        try:
+            latch_i = int(latched) if latched is not None else None
+        except (TypeError, ValueError):
+            latch_i = None
+        prev = post_g1['prev_latch']
+        if latch_i is not None:
+            rising = (
+                not post_g1['done']
+                and post_g1['until'] is None
+                and latch_i >= 1
+                and prev is not None
+                and int(prev) < 1
+            )
+            if prev is None:
+                # Seed — do not fire on a latch already present at startup.
+                post_g1['prev_latch'] = latch_i
+            elif rising:
+                yaw_sign = float(getattr(config, 'RATE_SIGN_YAW', 1.0))
+                rate_deg = max(1.0, math.degrees(abs(yaw_rate_cmd)))
+                dur = float(post_g1_yaw_deg) / rate_deg
+                post_g1['rate'] = yaw_sign * abs(yaw_rate_cmd)
+                post_g1['until'] = now_t + dur
+                post_g1['done'] = True
+                post_g1['prev_latch'] = latch_i
+                print(
+                    f'[PILOT] GATE 1 → yaw right {post_g1_yaw_deg:.0f}° '
+                    f'as KEY E ({dur:.2f}s @ {rate_deg:.0f}°/s)',
+                    flush=True,
+                )
+            else:
+                post_g1['prev_latch'] = latch_i
+        until = post_g1.get('until')
+        if until is None:
+            return None
+        if now_t >= float(until):
+            post_g1['until'] = None
+            # Drop the synthetic E so it cannot stick after the pulse.
+            keys = hold_state.get('keys_held') or {}
+            keys.pop('e', None)
+            kd = hold_state.get('keys_down')
+            if isinstance(kd, set):
+                kd.discard('e')
+            hold_state['yaw'] = 0.0
+            hold_state['yaw_t'] = 0.0
+            print('[PILOT] post-gate-1 KEY E done', flush=True)
+            return None
+        # Make remember capture see E as held (same as a real press).
+        keys = hold_state.setdefault('keys_held', {})
+        keys['e'] = now_t
+        hold_state.setdefault('keys_down', set()).add('e')
+        return float(post_g1['rate'])
+
+    def _manual_tick(des_roll, des_pitch, yaw_rate, stick_vert, dt, lock, locked):
+        auto_yaw = _update_post_g1_yaw(time.monotonic())
+        if auto_yaw is not None:
+            yaw_rate = auto_yaw
+        roll, pitch, _, _ = read_attitude(shared_data)
+        roll_rate = roll_pid.update(des_roll - roll, dt)
+        pitch_rate = pitch_pid.update(des_pitch - pitch, dt)
+        # Hold altitude while leaned: HT/cos(tilt). Flat HOVER sinks on hard W.
+        tilt_comp = bool(getattr(config, 'PILOT_TILT_COMPENSATE', 1))
+        if mode == 'replay' or tilt_comp:
+            lean_boost = float(
+                getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0
+            )
+            thrust = _tilt_compensated_thrust(
+                config.HOVER_THRUST, des_roll, des_pitch, lean_boost=lean_boost,
+            )
+        else:
+            thrust = float(config.HOVER_THRUST)
+        if vrate is not None:
+            thrust_delta, _, _ = vrate.update(shared_data, stick_vert, dt)
+        elif rate_stick:
+            # Direct collective from trigger/key rate — no EKF vertical loop.
+            thrust_delta = _stick_rate_to_thrust_delta(
+                stick_vert,
+                climb_rate=climb_rate_cmd,
+                sink_rate=max(sink_rate_cmd, _sink_step_now()),
+                climb_auth=float(climb_auth),
+                sink_auth=sink_auth,
+            )
+        else:
+            thrust_delta = float(stick_vert)
+        # RB: extra collective while held — never while commanding sink (LT/F).
+        bump = float(hold_state.get('thrust_bump') or 0.0)
+        bump_t = float(hold_state.get('thrust_bump_t') or 0.0)
+        if bump_t <= 0.0 or (time.monotonic() - bump_t) > 0.25:
+            bump = 0.0
+        if float(stick_vert) < -1e-3:
+            bump = 0.0
+        # Floor low enough that full sink authority is not clamped away.
+        thrust = float(max(0.06, min(0.45, thrust + thrust_delta + bump)))
+        shared_data['planner_target'] = {
+            'kalman': True,
+            'roll_rate': roll_rate,
+            'pitch_rate': pitch_rate,
+            'yaw_rate': yaw_rate,
+            'thrust': thrust,
+            'desired_roll': des_roll,
+            'desired_pitch': des_pitch,
+        }
+        shared_data['planner_mode'] = 'pilot_manual'
+        shared_data['kalman_path'] = {
+            'phase': 'pilot_manual' if mode != 'replay' else 'key_replay',
+            'source': 'teleop' if mode != 'replay' else 'remember',
+            'norm_x': lock.get('nx'),
+            'norm_y': lock.get('ny'),
+            'thrust': thrust,
+            'locked': locked,
+            'keys': sorted(hold_state.get('keys_down') or []),
+            'post_g1_yaw': auto_yaw is not None,
+            'thrust_bump': bump > 0.0,
+        }
+        controller.update()
+        _record_practice_attitude(
+            time.monotonic(),
+            des_roll=des_roll,
+            des_pitch=des_pitch,
+            yaw_rate=yaw_rate,
+            thrust=thrust,
+            t_rel=sim_elapsed,
+        )
+        return shared_data['planner_target'], shared_data['kalman_path']
+
+    try:
+        while True:
+            now = time.monotonic()
+            wall_dt_sim = max(0.0, now - last_wall_for_sim)
+            last_wall_for_sim = now
+            # Freeze the flight clock until the pilot engages (manual).
+            if pilot_engaged:
+                sim_elapsed += wall_dt_sim * time_scale
+            # Tape / HUD / time-limit use sim time (matches CE when scaled).
+            elapsed = sim_elapsed
+            if args.seconds > 0 and elapsed >= args.seconds:
+                print('\n[STOP] time limit', flush=True)
+                break
+
+            # During key-replay: drain WASD but ignore them — sticks are
+            # timeline-only. Prep mashing must not alter the path. H/Esc still work.
+            (
+                des_roll, des_pitch, yaw_rate, stick_vert, quit_req
+            ) = _poll_manual_controls(
+                hold_state,
+                lean_rad=lean_rad,
+                yaw_rate_cmd=yaw_rate_cmd,
+                thrust_step=thrust_step,
+                now=now,
+                ignore_sticks=(mode in ('replay', 'auto', 'attitude')),
+                sink_step=_sink_step_now(),
+                pitch_rad=pitch_rad,
+            )
+            if quit_req:
+                print('\n[STOP] quit key', flush=True)
+                break
+
+            slowmos = int(hold_state.get('slowmo', 0))
+            if slowmos > slowmo_seen:
+                slowmo_seen = slowmos
+                slow_mo = not slow_mo
+                time_scale = slow_mo_scale if slow_mo else 1.0
+                state = 'ON' if slow_mo else 'OFF'
+                print(
+                    f'[SLOW-MO] {state} x{time_scale:.2f} — set Cheat Engine '
+                    f'/ DxWnd to the same factor (O / D-pad ↓)',
+                    flush=True,
+                )
+
+            resets = int(hold_state.get('resets', 0))
+            if resets > resets_seen:
+                resets_seen = resets
+                if att_clock is not None:
+                    att_clock._i = 0
+                    mode = 'attitude'
+                _do_run_reset()
+                last_t = None
+                continue
+
+            keeps = int(hold_state.get('keeps', 0))
+            if keeps > keeps_seen:
+                keeps_seen = keeps
+                if timeline is None and practice_rec is None:
+                    print('[REMEMBER] K ignored — nothing to keep',
+                          flush=True)
+                elif (
+                    timeline is not None
+                    and not memorizing
+                    and mode in ('replay', 'attitude')
+                ):
+                    print(
+                        '[REMEMBER] K ignored — still in REPLAY; '
+                        'wait for handoff then fly, then K',
+                        flush=True,
+                    )
+                else:
+                    _commit_remember()
+
+            # Manual: sit disarmed with zero setpoints until first real input.
+            if mode == 'manual' and not pilot_engaged:
+                if _flight_input_active(
+                    des_roll, des_pitch, yaw_rate, stick_vert,
+                ):
+                    _engage_pilot('go')
+                else:
+                    time.sleep(period / max(1e-3, time_scale))
+                    continue
+
+            lock = _pilot_lock_info(shared_data, min_area=min_area)
+            locked = bool(lock['locked'])
+            # Vision overlay reads this for green LOCK / amber weak colors.
+            with shared_data['lock']:
+                shared_data['pilot_lock'] = {
+                    'locked': locked,
+                    'mode': mode,
+                    'source': lock.get('source'),
+                    'nx': lock.get('nx'),
+                    'ny': lock.get('ny'),
+                    'area_px': lock.get('area_px'),
+                    'range_m': lock.get('range_m'),
+                    't': now,
+                }
+            if locked and not was_locked:
+                print(
+                    f'[PILOT] LOCKED  src={lock["source"]} '
+                    f'nx={_fmt(lock["nx"], "+.3f")} '
+                    f'ny={_fmt(lock["ny"], "+.3f")} '
+                    f'area={_fmt(lock["area_px"], ".0f")} '
+                    f'rng={_fmt(lock["range_m"], ".1f")}',
+                    flush=True,
+                )
+                log = shared_data.get('log_event')
+                if log:
+                    log('PILOT', f'LOCKED src={lock["source"]}')
+                _pilot_beep()
+            elif was_locked and not locked:
+                print('[PILOT] NO_LOCK', flush=True)
+                log = shared_data.get('log_event')
+                if log:
+                    log('PILOT', 'NO_LOCK')
+            was_locked = locked
+
+            autos = int(hold_state.get('auto', 0))
+            if autos > autos_seen:
+                autos_seen = autos
+                if mode == 'manual':
+                    if not _enter_auto(
+                        'assist chasing locked gate (H = human)',
+                        require_lock=True,
+                    ):
+                        print(
+                            '[PILOT] T ignored — no LOCK '
+                            '(point at a gate until LOCKED)',
+                            flush=True,
+                        )
+                elif mode == 'replay':
+                    print('[PILOT] T ignored — still in REPLAY', flush=True)
+                else:
+                    print('[PILOT] T ignored — already AUTO', flush=True)
+
+            humans = int(hold_state.get('human', 0))
+            if humans > humans_seen:
+                humans_seen = humans
+                if mode in ('auto', 'replay', 'attitude'):
+                    _to_human(
+                        'you have the sticks (T = auto on LOCK)'
+                        if mode == 'auto'
+                        else 'aborted REPLAY — you have the sticks'
+                    )
+                else:
+                    print('[PILOT] H ignored — already HUMAN', flush=True)
+
+            dt = period if last_t is None else max(1e-3, now - last_t)
+            last_t = now
+            path = shared_data.get('kalman_path') or {}
+            tgt = shared_data.get('planner_target') or {}
+
+            if mode == 'attitude' and att_clock is not None:
+                # Practice handoff: wait for REAL keep_until gate. If the tape
+                # ends early (open-loop miss), HOLD last attitude — do not
+                # dump to HUMAN (that made from-4 vs from-5 feel different).
+                gate_handoff = False
+                latch_i = None
+                if (
+                    keep_until is not None
+                    and not hold_state.get('_gate_handoff_done')
+                ):
+                    latched = shared_data.get('last_gate_passed')
+                    try:
+                        latch_i = (
+                            int(latched) if latched is not None else None
+                        )
+                    except (TypeError, ValueError):
+                        latch_i = None
+                    if (
+                        latch_i is not None
+                        and latch_i >= int(keep_until)
+                    ):
+                        gate_handoff = True
+                        hold_state['_gate_handoff_done'] = True
+                waiting_for_gate = (
+                    keep_until is not None
+                    and not hold_state.get('_gate_handoff_done')
+                    and (
+                        latch_i is None
+                        or latch_i < int(keep_until)
+                    )
+                )
+                samp = att_clock.sample_at(elapsed)
+                if samp is None and waiting_for_gate:
+                    last = att_clock.samples[-1]
+                    samp = {
+                        'des_roll': float(last['des_roll']),
+                        'des_pitch': float(last['des_pitch']),
+                        # Keep pushing forward if the last sample was soft.
+                        'yaw_rate': float(last['yaw_rate']),
+                        'thrust': float(last['thrust']),
+                    }
+                    if abs(samp['des_pitch']) < math.radians(8.0):
+                        samp['des_pitch'] = math.copysign(
+                            math.radians(18.0),
+                            float(
+                                getattr(config, 'FORWARD_PITCH_SIGN', 1.0)
+                            ) or 1.0,
+                        )
+                    if not hold_state.get('_att_wait_logged'):
+                        hold_state['_att_wait_logged'] = True
+                        print(
+                            f'[PRACTICE] attitude tape ended @ {elapsed:.1f}s '
+                            f'— holding last lean until GATE '
+                            f'{int(keep_until)} clears',
+                            flush=True,
+                        )
+                if gate_handoff or (
+                    samp is None and not waiting_for_gate
+                ):
+                    why = (
+                        f'GATE {int(keep_until)} passed'
+                        if gate_handoff and keep_until is not None
+                        else f'tape done ({elapsed:.1f}s)'
+                    )
+                    print(f'\n[REPLAY] attitude {why} → HUMAN', flush=True)
+                    if practice_rec is not None and att_clock is not None:
+                        n = practice_rec.seed_from_tape(
+                            att_clock.tape, time.monotonic(),
+                        )
+                        sim_elapsed = float(att_clock.duration)
+                        last_wall_for_sim = time.monotonic()
+                        print(
+                            f'[PRACTICE] seeded {n} pad attitude samples; '
+                            'recording your sticks from here',
+                            flush=True,
+                        )
+                    _to_human(f'attitude {why}')
+                    continue
+                des_roll = float(samp['des_roll'])
+                des_pitch = float(samp['des_pitch'])
+                yaw_rate = float(samp['yaw_rate'])
+                roll, pitch, _, _ = read_attitude(shared_data)
+                roll_rate = roll_pid.update(des_roll - roll, dt)
+                pitch_rate = pitch_pid.update(des_pitch - pitch, dt)
+                thrust = float(samp['thrust'])
+                thrust = float(max(0.08, min(0.45, thrust)))
+                shared_data['planner_target'] = {
+                    'kalman': True,
+                    'roll_rate': roll_rate,
+                    'pitch_rate': pitch_rate,
+                    'yaw_rate': yaw_rate,
+                    'thrust': thrust,
+                    'desired_roll': des_roll,
+                    'desired_pitch': des_pitch,
+                }
+                shared_data['planner_mode'] = 'attitude_replay'
+                shared_data['kalman_path'] = {
+                    'phase': 'attitude_replay',
+                    'source': 'tape',
+                    'norm_x': lock.get('nx'),
+                    'norm_y': lock.get('ny'),
+                    'thrust': thrust,
+                    'locked': locked,
+                }
+                controller.update()
+                tgt = shared_data['planner_target']
+                path = shared_data['kalman_path']
+                # fall through to CSV / HUD logging below
+            elif mode == 'replay' and replay_clock is not None:
+                try:
+                    _elapsed_r, held_keys, finished = replay_clock.tick(
+                        time_scale=time_scale,
+                    )
+                    t_abs = _elapsed_r + float(
+                        getattr(replay_clock, '_t_shift', 0.0)
+                    )
+                    if held_keys:
+                        hold_state['_last_replay_keys'] = set(held_keys)
+                    # Handoff after keep-until gate: wait for REAL GATE_PASSED
+                    # (not the early remember tag). With --assist-after-gate,
+                    # hand to ASSIST; otherwise HUMAN.
+                    gate_handoff = False
+                    latch_i = None
+                    if (
+                        keep_until is not None
+                        and not hold_state.get('_gate_handoff_done')
+                    ):
+                        latched = shared_data.get('last_gate_passed')
+                        try:
+                            latch_i = (
+                                int(latched) if latched is not None else None
+                            )
+                        except (TypeError, ValueError):
+                            latch_i = None
+                        if (
+                            latch_i is not None
+                            and latch_i >= int(keep_until)
+                        ):
+                            g = int(keep_until)
+                            yaw_done = (
+                                replay_clock.timeline.post_gate_yaw_done_t(g)
+                            )
+                            if assist_after is not None:
+                                after_s = float(
+                                    getattr(
+                                        config,
+                                        'PILOT_ASSIST_AFTER_GATE_DELAY_S',
+                                        0.35,
+                                    )
+                                )
+                            else:
+                                after_s = float(
+                                    getattr(
+                                        config,
+                                        'PILOT_HANDOFF_AFTER_GATE_S',
+                                        3.5,
+                                    )
+                                )
+                            # Handoff delay from REAL latch time, not tag t.
+                            real_t0 = hold_state.get('_keep_gate_real_t')
+                            if real_t0 is None:
+                                real_t0 = t_abs
+                                hold_state['_keep_gate_real_t'] = real_t0
+                            ready_yaw = (
+                                yaw_done is None
+                                or t_abs + 1e-3 >= float(yaw_done)
+                            )
+                            ready_sink = (
+                                t_abs + 1e-3
+                                >= float(real_t0) + max(0.0, after_s)
+                            )
+                            if ready_yaw and ready_sink:
+                                gate_handoff = True
+                                hold_state['_gate_handoff_done'] = True
+                    # BUGFIX: early gate tags (e.g. G2 @ 6.78) end the key
+                    # timeline before the physical clear (~12.3s). Do NOT hand
+                    # off on finished until keep-until gate actually passes
+                    # — keep flying last keys (or W).
+                    waiting_for_gate = (
+                        keep_until is not None
+                        and not hold_state.get('_gate_handoff_done')
+                        and (
+                            latch_i is None
+                            or latch_i < int(keep_until)
+                        )
+                    )
+                    if finished and waiting_for_gate:
+                        # Never coast on F-only: last timeline sample often
+                        # releases W right before the physical clear.
+                        held_keys = set(
+                            hold_state.get('_last_replay_keys') or set()
+                        )
+                        held_keys.add('w')
+                        held_keys.discard('s')
+                        if not hold_state.get('_replay_wait_logged'):
+                            hold_state['_replay_wait_logged'] = True
+                            print(
+                                f'[REMEMBER] key timeline ended — holding '
+                                f'{sorted(held_keys)} (W forced) until GATE '
+                                f'{int(keep_until)} actually clears',
+                                flush=True,
+                            )
+                        finished = False
+                    if gate_handoff or (
+                        finished and not waiting_for_gate
+                    ):
+                        if timeline is not None:
+                            timeline.clip_at(t_abs)
+                        to_assist = (
+                            assist_after is not None
+                            and gate_handoff
+                            and keep_until is not None
+                            and int(keep_until) >= int(assist_after)
+                        )
+                        if to_assist:
+                            _enter_auto(
+                                f'GATE {int(keep_until)} passed — '
+                                f'ASSIST tip-through '
+                                f'(HUMAN after GATE '
+                                f'{human_after if human_after is not None else int(assist_after) + 1})'
+                            )
+                            shared_data['remember'] = {
+                                'phase': 'assist',
+                                'elapsed': _elapsed_r,
+                                'keys': [],
+                            }
+                            continue
+                        reason = (
+                            f'GATE {int(keep_until)} passed — fly; '
+                            'keys append; K to keep'
+                            if gate_handoff and keep_until is not None
+                            else 'key timeline finished — T/H available'
+                        )
+                        _to_human(reason)
+                        tgt, path = _manual_tick(
+                            _axis_active('roll', now),
+                            _axis_active('pitch', now),
+                            _axis_active('yaw', now),
+                            _axis_active('thrust', now),
+                            dt, lock, locked,
+                        )
+                        shared_data['remember'] = {
+                            'phase': 'done',
+                            'elapsed': _elapsed_r,
+                            'keys': sorted(hold_state.get('keys_down') or []),
+                        }
+                        if memorizing:
+                            _record_keys(now, t_rel=sim_elapsed)
+                    else:
+                        apply_keys_to_hold_state(
+                            held_keys,
+                            hold_state,
+                            lean_rad=lean_rad,
+                            yaw_rate_cmd=yaw_rate_cmd,
+                            thrust_step=thrust_step,
+                            now=now,
+                            sink_step=_sink_step_now(),
+                            pitch_rad=pitch_rad,
+                        )
+                        if 'e' in held_keys and not hold_state.get('_e_yaw_logged'):
+                            hold_state['_e_yaw_logged'] = True
+                            print(
+                                f'[REPLAY] KEY E (post-gate yaw) @ '
+                                f't={_elapsed_r:.2f}s',
+                                flush=True,
+                            )
+                        # Prep keys (held during REPLAY): A/D/Q/E still ignored
+                        # for path shape, but W/S overlay forward lean so holding
+                        # W actually keeps speed when the timeline has no W.
+                        prep_held = {
+                            k for k, t in (hold_state.get('keys_held') or {}).items()
+                            if t > 0.0 and (now - float(t)) <= _MANUAL_HOLD_RELEASE_S
+                        }
+                        if prep_held & {'w', 'up', 's', 'down'}:
+                            fwd = float(
+                                getattr(config, 'FORWARD_PITCH_SIGN', 1.0)
+                            )
+                            cap = float(
+                                getattr(config, 'MAX_LEAN_RAD', math.radians(25.0))
+                            )
+                            cur_p = float(hold_state.get('pitch') or 0.0)
+                            if prep_held & {'w', 'up'}:
+                                # Keep at least manual W lean (timeline A/D unchanged).
+                                hold_state['pitch'] = fwd * min(
+                                    cap,
+                                    max(pitch_rad, max(0.0, cur_p * fwd)),
+                                )
+                                hold_state['pitch_t'] = now
+                            elif prep_held & {'s', 'down'}:
+                                hold_state['pitch'] = -fwd * min(
+                                    cap,
+                                    max(pitch_rad, max(0.0, -cur_p * fwd)),
+                                )
+                                hold_state['pitch_t'] = now
+                        hold_state['keys_down'] = set(held_keys) | (
+                            prep_held & {'w', 'up', 's', 'down'}
+                        )
+                        tgt, path = _manual_tick(
+                            _axis_active('roll', now),
+                            _axis_active('pitch', now),
+                            _axis_active('yaw', now),
+                            _axis_active('thrust', now),
+                            dt, lock, locked,
+                        )
+                        shared_data['remember'] = {
+                            'phase': 'play',
+                            'elapsed': _elapsed_r,
+                            'keys': sorted(held_keys),
+                            'prep': sorted(prep_held),
+                        }
+                except Exception as exc:
+                    print(
+                        f'\n[PILOT] REPLAY failed ({type(exc).__name__}: {exc}) '
+                        '— back to HUMAN',
+                        flush=True,
+                    )
+                    _to_human('replay failed')
+                    continue
+            elif mode == 'auto':
+                try:
+                    # Hybrid remember: after ASSIST clears human_after → sticks.
+                    if (
+                        human_after is not None
+                        and not hold_state.get('_assist_human_handoff_done')
+                    ):
+                        latched_a = shared_data.get('last_gate_passed')
+                        try:
+                            latch_a = (
+                                int(latched_a)
+                                if latched_a is not None
+                                else None
+                            )
+                        except (TypeError, ValueError):
+                            latch_a = None
+                        if (
+                            latch_a is not None
+                            and latch_a >= int(human_after)
+                        ):
+                            hold_state['_assist_human_handoff_done'] = True
+                            _to_human(
+                                f'GATE {int(human_after)} cleared — '
+                                'fly next; keys append; K to keep'
+                            )
+                            tgt, path = _manual_tick(
+                                _axis_active('roll', now),
+                                _axis_active('pitch', now),
+                                _axis_active('yaw', now),
+                                _axis_active('thrust', now),
+                                dt, lock, locked,
+                            )
+                            if memorizing:
+                                _record_keys(now, t_rel=sim_elapsed)
+                            continue
+                    tgt = planner.compute_target(shared_data)
+                    path = shared_data.get('kalman_path') or {}
+                    controller.update()
+                    # Don't record assist keys — only human sticks.
+                except Exception as exc:
+                    print(
+                        f'\n[PILOT] AUTO failed ({type(exc).__name__}: {exc}) '
+                        '— back to HUMAN',
+                        flush=True,
+                    )
+                    _to_human('auto failed')
+                    continue
+            else:
+                # Read sticks from hold_state (includes keys carried off AUTO/REPLAY).
+                tgt, path = _manual_tick(
+                    _axis_active('roll', now),
+                    _axis_active('pitch', now),
+                    _axis_active('yaw', now),
+                    _axis_active('thrust', now),
+                    dt, lock, locked,
+                )
+                _record_keys(now, t_rel=sim_elapsed)
+
+            climb = _climb_estimate(shared_data)
+            row = {
+                't': round(elapsed, 3),
+                'mode': mode,
+                'locked': int(locked),
+                'lock_src': lock.get('source'),
+                'nx': lock.get('nx'),
+                'ny': lock.get('ny'),
+                'area_px': lock.get('area_px'),
+                'range_m': lock.get('range_m'),
+                'phase': path.get('phase'),
+                'thrust': tgt.get('thrust'),
+                'des_pitch': tgt.get('desired_pitch'),
+                'yaw_rate': tgt.get('yaw_rate'),
+                'climb_m': climb,
+                'time_scale': round(time_scale, 3),
+            }
+            recorder.write(row)
+            if not args.quiet:
+                lock_s = 'LOCK' if locked else '----'
+                sm = f' x{time_scale:.2f}' if time_scale < 0.999 else ''
+                print(
+                    f"{elapsed:5.1f}{sm} {mode:8s} {lock_s:4s} "
+                    f"{_fmt(climb, '6.2f')} {_fmt(tgt.get('thrust'), '5.3f')} "
+                    f"{_fmt(tgt.get('desired_pitch'), '6.3f')} "
+                    f"{path.get('phase')} {lock.get('source')}",
+                    flush=True,
+                )
+            # Slow control rate with the playhead so sim+client stay aligned.
+            time.sleep(period / max(1e-3, time_scale))
+    except KeyboardInterrupt:
+        print('\n[STOP] interrupted', flush=True)
+    finally:
+        try:
+            shared_data['planner_target'] = {
+                'kalman': True,
+                'roll_rate': 0.0,
+                'pitch_rate': 0.0,
+                'yaw_rate': 0.0,
+                'thrust': float(config.HOVER_THRUST),
+                'desired_roll': 0.0,
+                'desired_pitch': 0.0,
+            }
+            for _ in range(8):
+                controller.update()
+                time.sleep(0.02)
+            controller.disarm()
+            print('Disarmed.', flush=True)
+        except Exception:
+            pass
+        recorder.close()
+        shutdown(components)
+
+    if timeline is not None:
+        if timeline.saved_once:
+            print(
+                f'\n[REMEMBER] last KEEP is on disk: {timeline.path}',
+                flush=True,
+            )
+        elif commit_only_on_k:
+            print(
+                '\n[REMEMBER] quit without K — timeline NOT saved '
+                '(good file left unchanged). Press K when you like it.',
+                flush=True,
+            )
+        else:
+            # --capture alone: still write on exit if they never pressed K.
+            saved = timeline.save()
+            if saved is None:
+                print(
+                    f'\n[CAPTURE] no key events — nothing written',
+                    flush=True,
+                )
+            else:
+                print(
+                    f'\n[CAPTURE] {len(timeline)} key events '
+                    f'({timeline.duration:.1f}s, '
+                    f'held ~{timeline.key_hold_s():.1f}s) -> {saved}',
+                    flush=True,
+                )
+                print(
+                    '[CAPTURE] next: '
+                    f'pilot --replay {saved} --keep-until-gate 1',
+                    flush=True,
+                )
+    print(f'\nCSV: {recorder.path}')
+    # Always keep the best/fastest run under logs/best/.
+    try:
+        from best_run import latest_events_stem, maybe_save_best
+        stem = latest_events_stem()
+        if stem:
+            maybe_save_best(
+                events_stem=stem,
+                pilot_csv=Path(recorder.path) if recorder.path else None,
+                label='pilot',
+            )
+    except Exception as exc:
+        print(f'[BEST] skip ({exc})', flush=True)
+    return 0
 
 
 def _prewarm_yolo() -> None:
@@ -3355,7 +5922,7 @@ def main() -> int:
     # during that load (fresh race → no early-start DQ).
     if args.mode in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive', 'yaw-align',
-            'authority', 'climb', 'acquire', 'manual', 'assist',
+            'authority', 'climb', 'acquire', 'manual', 'assist', 'pilot',
     ) or (args.mode == 'localize' and bool(getattr(args, 'teleop', False))):
         _prewarm_yolo()
     if args.mode == 'localize':
@@ -3382,6 +5949,12 @@ def main() -> int:
         return run_manual(args)
     if args.mode == 'assist':
         return run_assist(args)
+    if args.mode == 'pilot':
+        return run_pilot(args)
+    if args.mode == 'practice':
+        from practice_store import format_list
+        print(format_list(), flush=True)
+        return 0
     return 2
 
 

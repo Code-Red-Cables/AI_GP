@@ -21,7 +21,8 @@ def _env_int_tuple(name, default):
     return parsed
 
 # ---- Flight controller ----
-HOVER_THRUST    = float(os.environ.get('HOVER_THRUST', '0.264'))
+# Trimmed down: 0.264 + vertical-rate hold was lofting in pilot (215823).
+HOVER_THRUST    = float(os.environ.get('HOVER_THRUST', '0.255'))
 # Phase 5: 0.30×2.5s → ~6 m; 0.272×1.0s still peaked ~6 m EKF. Keep pad
 # clear soft — descent is handled by image-ny thrust once framed.
 # Soft pad clear — 0.268×0.8s + hard pitch step was the Phase-5 jitter/loft.
@@ -47,7 +48,10 @@ LATERAL_LEAN_SIGN = float(
     # farther inward than positive desired roll in the live VQ2 rate path.
     os.environ.get('LATERAL_LEAN_SIGN', '-1.0')
 )
-MAX_LEAN_RAD    = math.radians(25.0)
+# Hard attitude clamp in controller (pilot lean must stay ≤ this).
+MAX_LEAN_RAD    = math.radians(
+    float(os.environ.get('MAX_LEAN_DEG', '48.0'))
+)
 KP_ATT          = 1.8       # demo: 0.6 normalized gain * 3.0 max rate
 KD_ATT          = 0.09      # demo: 0.03 normalized damping * 3.0 max rate
 KI_ATT          = float(os.environ.get('KI_ATT', '0.0'))
@@ -65,8 +69,7 @@ ATTITUDE_DERIVATIVE_FILTER_TAU_S = float(
 )
 RATE_SIGN_PITCH = -1.0      # sim pitch rate axis is inverted
 RATE_SIGN_ROLL  = 1.0       # +cmd → +truth roll (EKF roll sign fixed to match)
-# Phase 4.7 yaw-align (2026-07-28): with -1.0, closed-loop yaw drove a
-# right-offset gate farther off-frame (nx 0.54→0.96). +1.0 recentres.
+# Yaw command polarity into the sim rate path. Default +1.0 (user/live).
 RATE_SIGN_YAW   = float(os.environ.get('RATE_SIGN_YAW', '1.0'))
 # Desired-pitch sign for *forward* translation. Old code used des_pitch<0
 # ("nose-down"). drive_e (2026-07-28): des_pitch=-10° tracked in ATTITUDE
@@ -114,14 +117,135 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # assist  = image-chase on the manual attitude+hover plant (default).
 # kalman  = dual-gate PnP body-path / EKF geometric planner.
 FLIGHT_MODE = os.environ.get('FLIGHT_MODE', 'assist').strip().lower()
-if FLIGHT_MODE not in {'assist', 'kalman'}:
-    raise ValueError('FLIGHT_MODE must be "assist" or "kalman"')
+if FLIGHT_MODE not in {'assist', 'kalman', 'spline'}:
+    raise ValueError(
+        'FLIGHT_MODE must be "assist", "kalman" or "spline"'
+    )
+
+# ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
+# Capture/replay use the same EKF_USE_PNP so drift stays common-mode.
+SPLINE_MISSION_PATH = os.environ.get(
+    'SPLINE_MISSION_PATH', 'captured_waypoints.json'
+)
+SPLINE_CRUISE_MPS = float(os.environ.get('SPLINE_CRUISE_MPS', '2.0'))
+SPLINE_FINISH_MPS = float(os.environ.get('SPLINE_FINISH_MPS', '0.0'))
+SPLINE_A_LAT = float(os.environ.get('SPLINE_A_LAT', '4.0'))
+SPLINE_A_LON = float(os.environ.get('SPLINE_A_LON', '2.5'))
+SPLINE_LOOKAHEAD_M = float(os.environ.get('SPLINE_LOOKAHEAD_M', '1.5'))
+SPLINE_LOOKAHEAD_TIME_S = float(
+    os.environ.get('SPLINE_LOOKAHEAD_TIME_S', '0.6')
+)
+SPLINE_LOOKAHEAD_MAX_M = float(
+    os.environ.get('SPLINE_LOOKAHEAD_MAX_M', '4.0')
+)
+SPLINE_YAW_LOOKAHEAD_M = float(
+    os.environ.get('SPLINE_YAW_LOOKAHEAD_M', '2.5')
+)
+SPLINE_KP_YAW = float(os.environ.get('SPLINE_KP_YAW', '1.2'))
+SPLINE_KP_VEL_LEAN = float(os.environ.get('SPLINE_KP_VEL_LEAN', '0.09'))
+SPLINE_MAX_LEAN_DEG = float(os.environ.get('SPLINE_MAX_LEAN_DEG', '12.0'))
+# When |yaw_err| exceeds this, kill pitch/roll and turn in place so we do not
+# reverse-tip toward a carrot behind the nose (125956 flew "backward").
+SPLINE_YAW_ALIGN_DEG = float(os.environ.get('SPLINE_YAW_ALIGN_DEG', '35.0'))
+SPLINE_VERT_AUTH = float(os.environ.get('SPLINE_VERT_AUTH', '0.08'))
+SPLINE_MAX_ALT_M = float(os.environ.get('SPLINE_MAX_ALT_M', '8.0'))
+SPLINE_MAX_XTE_M = float(os.environ.get('SPLINE_MAX_XTE_M', '6.0'))
+SPLINE_FINISH_TOL_M = float(os.environ.get('SPLINE_FINISH_TOL_M', '0.6'))
+SPLINE_CAPTURE_PATH = os.environ.get(
+    'SPLINE_CAPTURE_PATH', 'captured_waypoints.json'
+)
+# Continuous capture sample rate while recording a remember-path (Hz).
+SPLINE_CAPTURE_HZ = float(os.environ.get('SPLINE_CAPTURE_HZ', '5.0'))
+# Time-synced stick/command remember file (pilot --capture / --replay).
+REMEMBER_PATH = os.environ.get('REMEMBER_PATH', 'captured_controls.json')
+# Practice checkpoints (best through-gate pad attitude tapes). Sim cannot
+# teleport, so --practice-from-gate N replays best attitude through gate N.
+PRACTICE_DIR = os.environ.get('PRACTICE_DIR', 'practice')
+PRACTICE_AUTO_SAVE = int(
+    float(os.environ.get('PRACTICE_AUTO_SAVE', '1') or 0)
+)
 
 # Assist (image IBVS) knobs — no EKF position in the loop.
 # 024550: yaw locked but loft→pitch-cap→ny=-0.7 with full lean (camera 20° up).
 ASSIST_LEAN_DEG = float(os.environ.get('ASSIST_LEAN_DEG', '10.0'))
 ASSIST_FWD_FRAC = float(os.environ.get('ASSIST_FWD_FRAC', '0.90'))
 ASSIST_ROLL_SCALE = float(os.environ.get('ASSIST_ROLL_SCALE', '0.45'))
+# Seek (pre-lock / ghost): fraction of ASSIST_ROLL_SCALE when not using roll plan.
+ASSIST_SEEK_ROLL_FRAC = float(os.environ.get('ASSIST_SEEK_ROLL_FRAC', '0.85'))
+# Lateral by roll: L/R translation from bank pulses; yaw only keeps gate in frame.
+ASSIST_LATERAL_BY_ROLL = os.environ.get(
+    'ASSIST_LATERAL_BY_ROLL', '1'
+).strip() not in ('0', 'false', 'False', 'no', 'NO')
+# One bank pulse hold time (s) → metres via ½·g·tan(φ)·T²·eff.
+ASSIST_ROLL_PULSE_S = float(os.environ.get('ASSIST_ROLL_PULSE_S', '0.80'))
+ASSIST_ROLL_PULSE_EFF = float(os.environ.get('ASSIST_ROLL_PULSE_EFF', '1.0'))
+ASSIST_ROLL_PLAN_LEAN_FRAC = float(
+    os.environ.get('ASSIST_ROLL_PLAN_LEAN_FRAC', '0.95')
+)
+ASSIST_ROLL_PLAN_DEAD_M = float(os.environ.get('ASSIST_ROLL_PLAN_DEAD_M', '0.20'))
+# Far L/R in image (|nx|) → push lean toward full.
+# Mid between 035017 (roll=0 right clip) and 035647 (over-bank right hit).
+ASSIST_ROLL_EXTREME_NX = float(os.environ.get('ASSIST_ROLL_EXTREME_NX', '0.16'))
+ASSIST_ROLL_EXTREME_BOOST = float(
+    os.environ.get('ASSIST_ROLL_EXTREME_BOOST', '0.28')
+)
+# Coast punch: soft centre-seeking bank when |nx| grows (not full chase).
+ASSIST_COAST_ROLL_NX = float(os.environ.get('ASSIST_COAST_ROLL_NX', '0.10'))
+ASSIST_COAST_ROLL_FRAC = float(os.environ.get('ASSIST_COAST_ROLL_FRAC', '0.30'))
+# Forward speed in roll plan: faster → harder bank (less time to close ey).
+ASSIST_ROLL_SPEED_REF_MPS = float(
+    os.environ.get('ASSIST_ROLL_SPEED_REF_MPS', '3.5')
+)
+ASSIST_ROLL_SPEED_BOOST = float(
+    os.environ.get('ASSIST_ROLL_SPEED_BOOST', '0.25')
+)
+# Extra lean when time-to-gate < time needed to close lateral gap.
+ASSIST_ROLL_TTG_BOOST = float(os.environ.get('ASSIST_ROLL_TTG_BOOST', '0.35'))
+# Floor on |cos α| so skewed heading still plans finite rolls (α = face-on angle).
+ASSIST_ROLL_ALIGN_COS_MIN = float(
+    os.environ.get('ASSIST_ROLL_ALIGN_COS_MIN', '0.25')
+)
+# Below this face-on cos, add soft yaw to re-square the nose for efficient rolls.
+ASSIST_ROLL_ALIGN_YAW_COS = float(
+    os.environ.get('ASSIST_ROLL_ALIGN_YAW_COS', '0.70')
+)
+ASSIST_YAW_ALIGN_MAX_DEG = float(
+    os.environ.get('ASSIST_YAW_ALIGN_MAX_DEG', '28.0')
+)
+ASSIST_YAW_ALIGN_KP = float(os.environ.get('ASSIST_YAW_ALIGN_KP', '1.4'))
+# On the gate perpendicular / approach line → yaw to face gate centre + through.
+ASSIST_CENTERLINE_EY_M = float(os.environ.get('ASSIST_CENTERLINE_EY_M', '0.55'))
+ASSIST_CENTERLINE_NX = float(os.environ.get('ASSIST_CENTERLINE_NX', '0.16'))
+ASSIST_CENTERLINE_YAW_DEAD_RAD = float(
+    os.environ.get('ASSIST_CENTERLINE_YAW_DEAD_RAD', '0.04')
+)
+ASSIST_CENTERLINE_YAW_KP = float(
+    os.environ.get('ASSIST_CENTERLINE_YAW_KP', '2.0')
+)
+ASSIST_CENTERLINE_YAW_MAX_DEG = float(
+    os.environ.get('ASSIST_CENTERLINE_YAW_MAX_DEG', '45.0')
+)
+# Yaw when |nx| exceeds this (frame edge keep).
+ASSIST_YAW_FRAME_NX = float(os.environ.get('ASSIST_YAW_FRAME_NX', '0.55'))
+ASSIST_YAW_FRAME_MAX_DEG = float(
+    os.environ.get('ASSIST_YAW_FRAME_MAX_DEG', '40.0')
+)
+ASSIST_YAW_FRAME_KP = float(os.environ.get('ASSIST_YAW_FRAME_KP', '2.2'))
+# Legacy roll-first blend (used only when ASSIST_LATERAL_BY_ROLL=0).
+ASSIST_ROLL_FIRST_NX = float(os.environ.get('ASSIST_ROLL_FIRST_NX', '0.18'))
+ASSIST_ROLL_FIRST_NX_FULL = float(
+    os.environ.get('ASSIST_ROLL_FIRST_NX_FULL', '0.38')
+)
+ASSIST_ROLL_FIRST_EY_M = float(os.environ.get('ASSIST_ROLL_FIRST_EY_M', '1.2'))
+ASSIST_ROLL_FIRST_EY_FULL_M = float(
+    os.environ.get('ASSIST_ROLL_FIRST_EY_FULL_M', '2.8')
+)
+ASSIST_ROLL_FIRST_YAW_FRAC = float(
+    os.environ.get('ASSIST_ROLL_FIRST_YAW_FRAC', '0.28')
+)
+ASSIST_ROLL_FIRST_LEAN_FRAC = float(
+    os.environ.get('ASSIST_ROLL_FIRST_LEAN_FRAC', '0.95')
+)
 # Scale gate-tracking roll/yaw and thrust deltas only — does NOT change aims,
 # floors, punch/sink ranges, speed cap, or other hard-fought setpoints.
 # 114108 @ 1.40: coast_lift thr→0.278 lofted to 4.9 m + gate collision;
@@ -129,14 +253,13 @@ ASSIST_ROLL_SCALE = float(os.environ.get('ASSIST_ROLL_SCALE', '0.45'))
 ASSIST_LATERAL_AUTH = float(os.environ.get('ASSIST_LATERAL_AUTH', '1.20'))
 ASSIST_VERTICAL_AUTH = float(os.environ.get('ASSIST_VERTICAL_AUTH', '1.25'))
 # Aim gate slightly below center — camera tilts 20° up from body forward.
-# 105334: 0.22 held ~2.6 m slightly low of centre — nudge aim up a hair.
-ASSIST_NY_AIM = float(os.environ.get('ASSIST_NY_AIM', '0.20'))
-# Image nx aim (normalized). +nx → keep gate right in frame → path left.
-# Works with pose aim below; small trim for gate-1 right miss (105649).
-ASSIST_NX_AIM = float(os.environ.get('ASSIST_NX_AIM', '0.03'))
-# Body-right aim offset through the gate (m). Residual ey−aim drives roll/yaw
-# ∝ pose (angular size shrinks with range). +aim → path left of centre.
-ASSIST_POSE_AIM_Y_M = float(os.environ.get('ASSIST_POSE_AIM_Y_M', '0.15'))
+# 034220: 0.20 + seek/coast dig scraped bottom (climb 2.4→1.4, ny→−0.2).
+ASSIST_NY_AIM = float(os.environ.get('ASSIST_NY_AIM', '0.12'))
+# Image nx aim (normalized). 0 = fly the gate centre (033736: +0.03/+0.15 m
+# left-bias + coast roll chase hit the right pillar at contact_h=+0.37).
+ASSIST_NX_AIM = float(os.environ.get('ASSIST_NX_AIM', '0.0'))
+# Body-right aim offset through the gate (m). 0 = centre of the opening.
+ASSIST_POSE_AIM_Y_M = float(os.environ.get('ASSIST_POSE_AIM_Y_M', '0.0'))
 # Global forward speed cap (m/s) — brakes forward lean in chase/coast/seek.
 # Over cap → scale pitch down; well over → small reverse lean to scrub speed.
 ASSIST_SPEED_CAP_MPS = float(os.environ.get('ASSIST_SPEED_CAP_MPS', '4.0'))
@@ -146,9 +269,9 @@ ASSIST_NY_THRUST_GAIN = float(os.environ.get('ASSIST_NY_THRUST_GAIN', '0.050'))
 # 105106 approach-high + false dz=-2.8 climb lofted over gate 1.
 ASSIST_APPROACH_HIGH_M = float(os.environ.get('ASSIST_APPROACH_HIGH_M', '0.0'))
 # Approach tip sink (mild): 124213 top-rail / 124438 bottom-rail.
-ASSIST_APPROACH_NY_OK = float(os.environ.get('ASSIST_APPROACH_NY_OK', '0.14'))
+ASSIST_APPROACH_NY_OK = float(os.environ.get('ASSIST_APPROACH_NY_OK', '0.18'))
 ASSIST_APPROACH_TIP_SINK = float(
-    os.environ.get('ASSIST_APPROACH_TIP_SINK', '0.10')
+    os.environ.get('ASSIST_APPROACH_TIP_SINK', '0.08')
 )
 ASSIST_APPROACH_TIP_MIN_ALT_M = float(
     os.environ.get('ASSIST_APPROACH_TIP_MIN_ALT_M', '1.20')
@@ -167,13 +290,51 @@ ASSIST_CAM_TILT_SPEED_MPS = float(
 # Fly left → cam looks right → gate appears too left; add +bias to nx.
 # Grows with |roll| and lateral/forward speed (same speed scale as height bias).
 ASSIST_CAM_ROLL_BIAS = float(os.environ.get('ASSIST_CAM_ROLL_BIAS', '0.40'))
+# Persist online-learn gains across process restarts. Off by default —
+# set ASSIST_LEARN_PERSIST=1 only when you explicitly want disk warm-start.
+ASSIST_LEARN_PERSIST = os.environ.get(
+    'ASSIST_LEARN_PERSIST', '0'
+).strip() not in ('0', 'false', 'False', 'no', 'NO')
+ASSIST_LEARN_PATH = os.environ.get(
+    'ASSIST_LEARN_PATH',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'assist_learn.json'),
+)
+ASSIST_LEARN_SAVE_EVERY_N = int(os.environ.get('ASSIST_LEARN_SAVE_EVERY_N', '5'))
+# Online learner: fit ASSIST_CAM_ROLL_BIAS from pose vs image residuals while banking.
+ASSIST_CAM_ROLL_BIAS_LEARN = os.environ.get(
+    'ASSIST_CAM_ROLL_BIAS_LEARN', '0'
+).strip() not in ('0', 'false', 'False', 'no', 'NO')
+ASSIST_CAM_ROLL_BIAS_LEARN_ALPHA = float(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_ALPHA', '0.08')
+)
+# Apply learned k from the first samples; ready flag for diagnostics.
+ASSIST_CAM_ROLL_BIAS_LEARN_N = int(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_N', '12')
+)
+ASSIST_CAM_ROLL_BIAS_LEARN_MIN = float(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_MIN', '0.05')
+)
+ASSIST_CAM_ROLL_BIAS_LEARN_MAX = float(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_MAX', '1.20')
+)
+ASSIST_CAM_ROLL_BIAS_LEARN_ROLL_DEAD = float(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_ROLL_DEAD', '0.08')
+)
+ASSIST_CAM_ROLL_BIAS_LEARN_POSE_MAX = float(
+    os.environ.get('ASSIST_CAM_ROLL_BIAS_LEARN_POSE_MAX', '0.85')
+)
 ASSIST_LOST_TIMEOUT_S = float(os.environ.get('ASSIST_LOST_TIMEOUT_S', '0.8'))
 # Through-opening only; abort early when next gate is visible (was 2.5 s
 # blind with yaw=0 — lost gate-2 glimpse in 031742).
 ASSIST_COAST_S = float(os.environ.get('ASSIST_COAST_S', '0.8'))
+# Keep punching the committed slot until GATE_PASSED (or this cap).
+# 034542: 0.8 s coast ended → seek_chase on gate-2 nx≈+0.34 → edge hit;
+# race pass arrived ~3 s later.
+ASSIST_COMMIT_HOLD_S = float(os.environ.get('ASSIST_COMMIT_HOLD_S', '4.0'))
 ASSIST_SEEK_S = float(os.environ.get('ASSIST_SEEK_S', '14.0'))
-# Visual commit only when |nx| below this (092927: 0.35 let left-edge hits through).
-ASSIST_COMMIT_NX_MAX = float(os.environ.get('ASSIST_COMMIT_NX_MAX', '0.12'))
+# Visual commit only when |nx| below this (035647: +0.107 already off-centre
+# then coast over-banked right into the pillar).
+ASSIST_COMMIT_NX_MAX = float(os.environ.get('ASSIST_COMMIT_NX_MAX', '0.09'))
 # Yaw from PnP bearing atan2(ey,ex) (093229 image-nx under-yawed into left edge).
 ASSIST_KP_YAW = float(os.environ.get('ASSIST_KP_YAW', '1.4'))  # legacy alias
 # Proportional yaw — mild near centre; extreme |nx| boosts below.
@@ -204,9 +365,55 @@ ASSIST_SEEK_LIVE_YAW_KP = float(
 )
 # Pad lift used to hard-cap ±8.6°/s (131746 far-right uncorrected).
 ASSIST_PAD_YAW_MAX_DEG = float(os.environ.get('ASSIST_PAD_YAW_MAX_DEG', '45.0'))
-# Blend latched/live pose bearing into seek yaw when |nx| is meaningful.
+# Blend latched/live pose bearing into seek yaw (pose owns lateral metres).
 ASSIST_SEEK_YAW_POSE_WEIGHT = float(
-    os.environ.get('ASSIST_SEEK_YAW_POSE_WEIGHT', '0.45')
+    os.environ.get('ASSIST_SEEK_YAW_POSE_WEIGHT', '0.70')
+)
+# Lateral separation (body-right metres) scales yaw/roll both L and R.
+ASSIST_LAT_SEP_REF_M = float(os.environ.get('ASSIST_LAT_SEP_REF_M', '2.0'))
+ASSIST_LAT_SEP_DEAD_M = float(os.environ.get('ASSIST_LAT_SEP_DEAD_M', '0.35'))
+ASSIST_YAW_LAT_SEP_KP_MULT = float(
+    os.environ.get('ASSIST_YAW_LAT_SEP_KP_MULT', '2.8')
+)
+ASSIST_YAW_LAT_SEP_MAX_MULT = float(
+    os.environ.get('ASSIST_YAW_LAT_SEP_MAX_MULT', '1.9')
+)
+ASSIST_YAW_BANG_EY_M = float(os.environ.get('ASSIST_YAW_BANG_EY_M', '2.2'))
+ASSIST_ROLL_LAT_SEP_MULT = float(
+    os.environ.get('ASSIST_ROLL_LAT_SEP_MULT', '2.0')
+)
+# Lateral→yaw learner (imaginary gates farther left/right → harder yaw).
+ASSIST_LAT_YAW_LEARN = os.environ.get(
+    'ASSIST_LAT_YAW_LEARN', '0'
+).strip() not in ('0', 'false', 'False', 'no', 'NO')
+ASSIST_LAT_YAW_LEARN_ALPHA = float(
+    os.environ.get('ASSIST_LAT_YAW_LEARN_ALPHA', '0.14')
+)
+ASSIST_LAT_YAW_LEARN_N = int(os.environ.get('ASSIST_LAT_YAW_LEARN_N', '24'))
+ASSIST_LAT_YAW_MILD_MULT = float(
+    os.environ.get('ASSIST_LAT_YAW_MILD_MULT', '1.0')
+)
+ASSIST_LAT_YAW_HARD_MULT = float(
+    os.environ.get('ASSIST_LAT_YAW_HARD_MULT', '2.6')
+)
+ASSIST_LAT_YAW_MULT_MIN = float(
+    os.environ.get('ASSIST_LAT_YAW_MULT_MIN', '0.80')
+)
+ASSIST_LAT_YAW_MULT_MAX = float(
+    os.environ.get('ASSIST_LAT_YAW_MULT_MAX', '3.20')
+)
+ASSIST_LAT_YAW_TAU_S = float(os.environ.get('ASSIST_LAT_YAW_TAU_S', '0.55'))
+ASSIST_LAT_YAW_EY_KICK = float(os.environ.get('ASSIST_LAT_YAW_EY_KICK', '0.55'))
+ASSIST_LAT_YAW_PRETRAIN = os.environ.get(
+    'ASSIST_LAT_YAW_PRETRAIN', '0'
+).strip() not in ('0', 'false', 'False', 'no', 'NO')
+# Combined lateral+height envelope for through-gate punch.
+ASSIST_GATE_OPENING_M = float(os.environ.get('ASSIST_GATE_OPENING_M', '1.5'))
+ASSIST_HEIGHT_SEP_REF_M = float(
+    os.environ.get('ASSIST_HEIGHT_SEP_REF_M', '1.2')
+)
+ASSIST_GATE_PUNCH_RANGE_M = float(
+    os.environ.get('ASSIST_GATE_PUNCH_RANGE_M', '9.0')
 )
 # Nose-down while seeking to cancel 20° cam-up (level the view forward).
 # Must stay on after lock too — 110826 crawl-only ~5° left the cam looking up.
@@ -227,7 +434,7 @@ ASSIST_SEEK_NY_THRUST_GAIN = float(
 )
 # Caps scale with |ny err| in code; these are the |err|=1 endpoints.
 ASSIST_SEEK_NY_SINK_CAP = float(
-    os.environ.get('ASSIST_SEEK_NY_SINK_CAP', '0.035')
+    os.environ.get('ASSIST_SEEK_NY_SINK_CAP', '0.024')
 )
 ASSIST_SEEK_NY_CLIMB_CAP = float(
     os.environ.get('ASSIST_SEEK_NY_CLIMB_CAP', '0.022')
@@ -262,7 +469,7 @@ ASSIST_SEEK_POSE_SINK_SCALE = float(
 )
 # Seek sink gain vs approach (same ∝|dz| shape).
 ASSIST_SEEK_SINK_GAIN_SCALE = float(
-    os.environ.get('ASSIST_SEEK_SINK_GAIN_SCALE', '1.10')
+    os.environ.get('ASSIST_SEEK_SINK_GAIN_SCALE', '0.90')
 )
 # Post-pass alt freeze — off; sink is range-gated instead.
 ASSIST_SEEK_HOLD_S = float(os.environ.get('ASSIST_SEEK_HOLD_S', '0.0'))
@@ -346,6 +553,111 @@ ASSIST_POST_G1_NY = float(os.environ.get('ASSIST_POST_G1_NY', '0.05'))
 ASSIST_POST_G1_RANGE_M = float(os.environ.get('ASSIST_POST_G1_RANGE_M', '16.0'))
 # Right turn after g1 — bounded by angle budget + max time (133354 spun).
 ASSIST_POST_G1_YAW_DEG = float(os.environ.get('ASSIST_POST_G1_YAW_DEG', '40.0'))
+# Pilot remember-path: synthetic yaw keys around gate tags.
+PILOT_POST_G1_YAW_KEY = os.environ.get('PILOT_POST_G1_YAW_KEY', 'e')  # right
+PILOT_POST_G1_YAW_DEG = float(os.environ.get('PILOT_POST_G1_YAW_DEG', '16.0'))
+PILOT_POST_G1_YAW_RATE_DEG = float(
+    os.environ.get('PILOT_POST_G1_YAW_RATE_DEG', '35.0')
+)
+PILOT_POST_G1_YAW_LEAD_S = float(
+    os.environ.get('PILOT_POST_G1_YAW_LEAD_S', '0.45')
+)
+# Auto yaw-right after GATE 1 during live pilot. Off by default so manual
+# W/A/S/D is sticks-only (no surprise turn). Remember --capture still bakes
+# E via ensure_pilot_gate_yaws; set 1 to restore the live auto yaw.
+PILOT_LIVE_POST_G1_YAW = int(
+    float(os.environ.get('PILOT_LIVE_POST_G1_YAW', '0') or 0)
+)
+# Before GATE 2: yaw left to face gate 3.
+PILOT_POST_G2_YAW_KEY = os.environ.get('PILOT_POST_G2_YAW_KEY', 'q')  # left
+# Base turn onto gate 3, plus ~pitch-tilt compensation (nose ~14° up → path
+# drifts; need extra left yaw or we miss the gate on the right).
+PILOT_POST_G2_YAW_DEG = float(os.environ.get('PILOT_POST_G2_YAW_DEG', '120.0'))
+# Negative = start AFTER gate_pass tag. Tag is early (~6.78); real GATE 2
+# clears ~12.3s — delay so sharp Q begins only after the physical clear.
+PILOT_POST_G2_YAW_LEAD_S = float(
+    os.environ.get('PILOT_POST_G2_YAW_LEAD_S', '-6.07')
+)
+# Extra KEY Q after the main G2 yaw, roughly the forward lean angle.
+PILOT_G3_TILT_YAW_DEG = float(os.environ.get('PILOT_G3_TILT_YAW_DEG', '8.0'))
+# F sink (m/s): mild by default so GATE 1 dips stay gentle. After GATE 1
+# latches, F uses the faster gate-2 dive rate instead.
+PILOT_SINK_RATE = float(os.environ.get('PILOT_SINK_RATE', '2.5'))
+PILOT_G2_SINK_RATE = float(os.environ.get('PILOT_G2_SINK_RATE', '2.5'))
+# When trimming --keep-until-gate N, keep this many seconds of keys after the
+# gate_pass tag so post-gate F/Q are not cut off at the latch instant.
+# Gate-2 remember tag is early (~6.78); physical clear ~12.3. Keep enough
+# post-tag keys (finish-W) when trimming --keep-until-gate 2.
+PILOT_TRIM_AFTER_GATE_S = float(
+    os.environ.get('PILOT_TRIM_AFTER_GATE_S', '6.8')
+)
+# After keep-until gate latches (and post-gate yaw finishes), wait this long
+# before HUMAN handoff so the next-gate approach keys can play.
+PILOT_HANDOFF_AFTER_GATE_S = float(
+    os.environ.get('PILOT_HANDOFF_AFTER_GATE_S', '5.0')
+)
+# Hybrid remember: keys through GATE N, then ASSIST closed-loop for the next
+# gate(s). 0/None = disabled. Typical: 1 → assist aims G2 after G1 clears.
+PILOT_ASSIST_AFTER_GATE = int(
+    float(os.environ.get('PILOT_ASSIST_AFTER_GATE', '0') or 0)
+)
+# After ASSIST clears this gate, hand sticks back to HUMAN (0 = assist-after+1).
+PILOT_HUMAN_AFTER_GATE = int(
+    float(os.environ.get('PILOT_HUMAN_AFTER_GATE', '0') or 0)
+)
+# Short settle after the assist-after gate before enabling ASSIST.
+PILOT_ASSIST_AFTER_GATE_DELAY_S = float(
+    os.environ.get('PILOT_ASSIST_AFTER_GATE_DELAY_S', '0.35')
+)
+# Human teleop: boost collective by 1/cos(tilt) while leaned so hard W/pitch
+# does not drop altitude. 0 = flat HOVER (old feel; sinks on hard forward).
+PILOT_TILT_COMPENSATE = int(
+    float(os.environ.get('PILOT_TILT_COMPENSATE', '1') or 1)
+)
+
+# PlayStation / Xbox gamepad teleop (pygame). 1 = try to open a pad.
+PILOT_GAMEPAD = int(float(os.environ.get('PILOT_GAMEPAD', '1') or 1))
+# Easy-feel defaults: large deadzone, strong expo, heavy smoothing, reduced
+# stick authority unless R2/RT boost is held.
+PILOT_PAD_DEADZONE = float(os.environ.get('PILOT_PAD_DEADZONE', '0.16'))
+PILOT_PAD_EXPO = float(os.environ.get('PILOT_PAD_EXPO', '0.55'))
+PILOT_PAD_SMOOTH = float(os.environ.get('PILOT_PAD_SMOOTH', '0.28'))
+# Fraction of lean/yaw/climb when NOT holding boost (R2). 1.0 = always full.
+# Full stick authority to the lean/yaw caps (triggers already own vertical).
+PILOT_PAD_SOFT_GAIN = float(os.environ.get('PILOT_PAD_SOFT_GAIN', '1.0'))
+PILOT_PAD_SOFT_YAW = float(os.environ.get('PILOT_PAD_SOFT_YAW', '1.0'))
+# Full trigger climb/sink authority (triggers own vertical now).
+PILOT_PAD_SOFT_THRUST = float(os.environ.get('PILOT_PAD_SOFT_THRUST', '1.0'))
+# Right bumper: extra collective while held (on top of hover / rate climb).
+PILOT_PAD_THRUST_BUMP = float(os.environ.get('PILOT_PAD_THRUST_BUMP', '0.05'))
+# Stick axis indices if auto-detect is wrong (pygame order).
+# Default: left stick roll/pitch (0/1), right stick X yaw (2).
+PILOT_PAD_AXIS_ROLL = int(
+    float(os.environ.get('PILOT_PAD_AXIS_ROLL', '0') or 0)
+)
+PILOT_PAD_AXIS_PITCH = int(
+    float(os.environ.get('PILOT_PAD_AXIS_PITCH', '1') or 1)
+)
+PILOT_PAD_AXIS_YAW = int(float(os.environ.get('PILOT_PAD_AXIS_YAW', '2') or 2))
+# Soft keyboard defaults for pilot/manual (full keys still hit these caps).
+# Lean capped by MAX_LEAN_RAD. Climb/sink are rate setpoints (m/s).
+PILOT_LEAN_DEG = float(os.environ.get('PILOT_LEAN_DEG', '38.0'))
+# Forward/back pitch can be hotter than roll (W / left-stick Y).
+PILOT_PITCH_LEAN_DEG = float(os.environ.get('PILOT_PITCH_LEAN_DEG', '45.0'))
+PILOT_YAW_RATE_DEG = float(os.environ.get('PILOT_YAW_RATE_DEG', '85.0'))
+# Client slow-mo (pair with Cheat Engine / DxWnd at the SAME factor).
+# Toggle in pilot with O / D-pad ↓. Scale < 1 slows control rate + tape playhead.
+PILOT_SLOW_MO = int(float(os.environ.get('PILOT_SLOW_MO', '0') or 0))
+PILOT_SLOW_MO_SCALE = float(os.environ.get('PILOT_SLOW_MO_SCALE', '0.5'))
+
+PILOT_CLIMB_RATE = float(os.environ.get('PILOT_CLIMB_RATE', '1.8'))
+PILOT_CLIMB_AUTH = float(os.environ.get('PILOT_CLIMB_AUTH', '0.15'))
+# Extra collective cut for LT/F vs RT/R (must beat a hot hover).
+PILOT_SINK_AUTH = float(os.environ.get('PILOT_SINK_AUTH', '0.22'))
+# 0 = triggers/keys map straight to collective (default). 1 = close a
+# climb-rate loop on EKF vz — disabled because bad vz pegs +auth at
+# "hover" and LT cannot overcome the runaway climb (run 215823).
+PILOT_RATE_HOLD = int(float(os.environ.get('PILOT_RATE_HOLD', '0') or 0))
 ASSIST_POST_G1_YAW_EXTRA_PER_NX = float(
     os.environ.get('ASSIST_POST_G1_YAW_EXTRA_PER_NX', '15.0')
 )
@@ -400,8 +712,12 @@ ASSIST_SEEK_POSE_SINK_BOOST = float(
         os.environ.get('ASSIST_SEEK_POSE_SINK_SCALE', '1.0'),
     )
 )
-# Keep last box and soft-yaw through SEARCH blips (102331: 0.65s still short).
-ASSIST_SEEK_GHOST_S = float(os.environ.get('ASSIST_SEEK_GHOST_S', '1.20'))
+# Keep last box through SEARCH blips. Short — long ghost + edge nx spun
+# circles in 031737. Soft yaw only (no bang) while ghosting.
+ASSIST_SEEK_GHOST_S = float(os.environ.get('ASSIST_SEEK_GHOST_S', '0.55'))
+ASSIST_SEEK_GHOST_YAW_MAX_DEG = float(
+    os.environ.get('ASSIST_SEEK_GHOST_YAW_MAX_DEG', '28.0')
+)
 # Seeking chaseable: allow lower-in-frame / smaller next-gate boxes.
 ASSIST_SEEK_NY_MAX = float(os.environ.get('ASSIST_SEEK_NY_MAX', '0.92'))
 ASSIST_SEEK_MIN_AREA = float(os.environ.get('ASSIST_SEEK_MIN_AREA', '180.0'))
@@ -410,19 +726,19 @@ ASSIST_SEEK_CRAWL_DEG = float(os.environ.get('ASSIST_SEEK_CRAWL_DEG', '5.5'))
 # Post-pass: stable frames before full chase (was 12 — gate-2 flash too short).
 ASSIST_LOCK_FRAMES = int(os.environ.get('ASSIST_LOCK_FRAMES', '5'))
 ASSIST_LOCK_NX_JUMP = float(os.environ.get('ASSIST_LOCK_NX_JUMP', '0.18'))
-# Pose yaw only fills when image is near centre (095259 over-yawed from pose).
-ASSIST_YAW_POSE_WEIGHT = float(os.environ.get('ASSIST_YAW_POSE_WEIGHT', '0.25'))
+# Legacy pose blend weight (geometry path prefers ASSIST_SEEK_YAW_POSE_WEIGHT).
+ASSIST_YAW_POSE_WEIGHT = float(os.environ.get('ASSIST_YAW_POSE_WEIGHT', '0.55'))
 ASSIST_HFOV_DEG = float(os.environ.get('ASSIST_HFOV_DEG', '70.0'))
 # Hold yaw near zero inside this bearing error (rad).
 ASSIST_YAW_ALIGN_DEAD_RAD = float(
     os.environ.get('ASSIST_YAW_ALIGN_DEAD_RAD', '0.035')
 )
-# Was amplifying rightward corrections into overshoot — keep neutral.
+# Legacy aliases — lateral sep gain is now symmetric via ASSIST_*_LAT_SEP_*.
 ASSIST_YAW_LEFT_MISS_BOOST = float(
     os.environ.get('ASSIST_YAW_LEFT_MISS_BOOST', '1.0')
 )
 ASSIST_ROLL_LEFT_MISS_BOOST = float(
-    os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.6')
+    os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.0')
 )
 # Skip controller takeoff boost — assist clears the pad with soft lean only.
 if FLIGHT_MODE == 'assist' and 'TAKEOFF_DURATION_S' not in os.environ:
@@ -496,13 +812,12 @@ VISION_DISPLAY            = _env_bool('VISION_DISPLAY', True)
 PERCEPTION_ONLY           = _env_bool('PERCEPTION_ONLY', False)
 RESET_SIM_ON_START        = _env_bool('RESET_SIM_ON_START', False)
 SIM_RESET_SETTLE_S        = float(
-    os.environ.get('SIM_RESET_SETTLE_S', '1.5')
+    os.environ.get('SIM_RESET_SETTLE_S', '1.0')
 )
-# OLD-sim early-start DQ: arming/thrusting immediately after race start or
-# cmd-31000 pad reset tips the craft off the pad. Hold still this long before
-# every arm (main + crash re-arm). Tune scripts use the same default.
+# Total seconds from sim-reset / race start until arm. Sim countdown is ~3s;
+# 3.0 was −440ms, 3.45 was −50ms — 3.55 clears GO with a small margin.
 EARLY_START_HOLD_S        = float(
-    os.environ.get('EARLY_START_HOLD_S', '3.5')
+    os.environ.get('EARLY_START_HOLD_S', '3.55')
 )
 # After a floor crash (pos_d below spawn / Environment slam), send cmd 31000
 # and re-arm so the client can keep practicing without a manual restart.
