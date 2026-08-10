@@ -16,9 +16,11 @@ class TimeSync:
     @classmethod
     def create_timesync(cls, mavlink_connection, data):
         ts = cls(mavlink_connection, data)
+        # Daemon so a Ctrl+C or traceback cannot leave the console hung
+        # waiting on this thread at interpreter exit.
         ts.thread = threading.Thread(
             target=ts.timesync_loop,
-            daemon = False
+            daemon=True,
         )
         ts.is_running = True
         ts.thread.start()

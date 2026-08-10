@@ -1,11 +1,15 @@
 """YOLO gate corners -> PnP pose (the perception core of the VIO pipeline).
 
-A YOLOv8n-pose model (trained on 256 sim frames, box mAP50 0.925 / corner mAP50
-0.959) finds every gate in frame with its 4 OUTER corners in TL, TR, BL, BR
-order. The outer gate square is 2.7 m x 2.7 m (spec 3.7); with the pinhole
-intrinsics from spec 3.8 (fx=fy=320, cx=320, cy=180, no distortion) a single
-gate view is a textbook planar-square PnP problem: cv2.solvePnP(IPPE)
-returns the gate's pose in the camera-optical frame.
+The live pose model labels eight coplanar corners — the 2.7 m outer square and
+the 1.5 m flyable opening, each clockwise from top-left — and
+``solve_keypoints_pnp`` turns whatever subset is visible into a gate pose.
+Four good points are enough, so a gate half out of frame still solves. The
+legacy four-outer-corner path (``solve_corners_pnp``) remains for tools that
+still hand in a TL/TR/BL/BR quad.
+
+With the pinhole intrinsics from spec 3.8 (fx=fy=320, cx=320, cy=180, no
+distortion) a single gate view is a textbook planar PnP problem: IPPE (or
+SQPNP as a fallback) returns the gate's pose in the camera-optical frame.
 
 From that one solve we get, at up to 30 Hz:
   * range + bearing to the gate (far better than the HSV size-method estimate)
@@ -26,8 +30,8 @@ with camera-down (R[1,1] > 0) and whose +Z points into the scene (R[2,2] > 0).
 
 On Q2_CV the live path does NOT run a second YOLO inference: VisionRX reuses
 the keypoints already produced by YoloPoseGateDetector and calls
-``solve_corners_pnp`` directly. ``YoloGatePnP`` remains for offline tools and
-standalone use.
+``solve_keypoints_pnp`` via ``dual_gate_pnp``. ``YoloGatePnP`` remains for
+offline tools and standalone use.
 """
 from __future__ import annotations
 
@@ -54,6 +58,29 @@ OBJECT_POINTS = np.array([
     [-_HALF, +_HALF, 0.0],   # BL
     [+_HALF, +_HALF, 0.0],   # BR
 ], dtype=np.float64)
+
+# --- eight-keypoint model -------------------------------------------------
+# The pose model now labels both rings: the 2.7 m outer square and the 1.5 m
+# flyable opening. Index order follows the training set exactly — each ring
+# clockwise from top-left — so these are indexed by keypoint id, NOT reordered
+# geometrically the way the four-corner path has to be.
+GATE_INNER_M = 1.5
+_HALF_IN = GATE_INNER_M / 2.0
+KEYPOINT_OBJECT_POINTS = np.array([
+    [-_HALF,    -_HALF,    0.0],   # 0 outer TL
+    [+_HALF,    -_HALF,    0.0],   # 1 outer TR
+    [+_HALF,    +_HALF,    0.0],   # 2 outer BR
+    [-_HALF,    +_HALF,    0.0],   # 3 outer BL
+    [-_HALF_IN, -_HALF_IN, 0.0],   # 4 inner TL
+    [+_HALF_IN, -_HALF_IN, 0.0],   # 5 inner TR
+    [+_HALF_IN, +_HALF_IN, 0.0],   # 6 inner BR
+    [-_HALF_IN, +_HALF_IN, 0.0],   # 7 inner BL
+], dtype=np.float64)
+KEYPOINT_COUNT = len(KEYPOINT_OBJECT_POINTS)
+OUTER_RING_IDX = (0, 1, 2, 3)
+# Planar PnP needs four points; gates leave frame constantly, so a partial
+# ring is the normal case rather than the exception.
+MIN_KEYPOINTS_FOR_POSE = 4
 
 
 def corners_tl_tr_bl_br(points: Sequence[Sequence[float]]) -> np.ndarray:
@@ -107,10 +134,19 @@ class GatePnP:
     R_cg: Optional[np.ndarray] = None   # gate -> camera-optical rotation
     t_cg: Optional[np.ndarray] = None   # gate origin in camera-optical frame (m)
     reproj_err_px: float = float("inf")
+    # Keypoints that actually fed the solve. ``corners_px`` stays the four
+    # outer corners whatever the model produced, so every existing consumer
+    # keeps the shape it expects.
+    keypoints_px: Optional[np.ndarray] = None    # (K,2) by keypoint id
+    keypoint_ids: tuple = ()                     # ids used, in solve order
 
     @property
     def solved(self) -> bool:
         return self.R_cg is not None
+
+    @property
+    def points_used(self) -> int:
+        return len(self.keypoint_ids) if self.keypoint_ids else 4
 
     @property
     def range_m(self) -> float:
@@ -181,6 +217,88 @@ def draw_gate_frame_axes(
             )
 
 
+def solve_keypoints_pnp(
+    keypoints_px: Sequence[Sequence[float]],
+    keypoint_confidences: Optional[Sequence[float]] = None,
+    confidence: float = 1.0,
+    bbox: Optional[tuple] = None,
+    min_keypoint_confidence: float = 0.0,
+) -> Optional[GatePnP]:
+    """PnP-solve the eight-keypoint gate model from whatever is visible.
+
+    Points are indexed by keypoint id (0-3 outer ring, 4-7 inner ring, each
+    clockwise from top-left) and are NOT reordered — the model is trained to
+    hold that identity, which is what lets a partial ring still solve. Any
+    four good points are enough, so a gate half out of frame keeps producing
+    a pose instead of dropping out.
+
+    A (4,2) input is treated as the four outer corners and routed to
+    ``solve_corners_pnp`` so the long-standing four-corner path is untouched.
+    """
+    pts = np.asarray(keypoints_px, dtype=np.float64).reshape(-1, 2)
+    if pts.shape[0] == 4:
+        return solve_corners_pnp(pts, confidence=confidence, bbox=bbox)
+    if pts.shape[0] != KEYPOINT_COUNT:
+        return None
+
+    if keypoint_confidences is None:
+        conf = np.ones(KEYPOINT_COUNT, dtype=np.float64)
+    else:
+        conf = np.asarray(
+            keypoint_confidences, dtype=np.float64
+        ).reshape(-1)
+        if conf.shape[0] != KEYPOINT_COUNT:
+            return None
+    # An unseen corner comes back as (0,0) with no confidence; taking it at
+    # face value would drag the pose to a corner of the image.
+    usable = (
+        np.isfinite(pts).all(axis=1)
+        & np.isfinite(conf)
+        & (conf >= min_keypoint_confidence)
+        & ~np.all(pts == 0.0, axis=1)
+    )
+    ids = tuple(int(i) for i in np.nonzero(usable)[0])
+    if len(ids) < MIN_KEYPOINTS_FOR_POSE:
+        return None
+
+    img_pts = pts[list(ids)]
+    spread = max(np.ptp(img_pts[:, 0]), np.ptp(img_pts[:, 1]))
+    if spread < MIN_CORNER_SPREAD_PX:
+        return None
+    solution = _solve_planar(KEYPOINT_OBJECT_POINTS[list(ids)], img_pts)
+    if solution is None:
+        return None
+    R_cg, t_cg, err = solution
+
+    # Hand downstream the four outer corners it has always been given, taken
+    # from the fitted pose so the shape holds even when a corner was missing.
+    rvec, _ = cv2.Rodrigues(R_cg)
+    outer, _ = cv2.projectPoints(
+        KEYPOINT_OBJECT_POINTS[list(OUTER_RING_IDX)],
+        rvec,
+        t_cg.reshape(3, 1),
+        cm.K,
+        None,
+    )
+    outer = outer.reshape(-1, 2)
+    # OBJECT_POINTS order is TL, TR, BL, BR; the ring is TL, TR, BR, BL.
+    corners = np.stack([outer[0], outer[1], outer[3], outer[2]], axis=0)
+    if bbox is None:
+        x1, y1 = img_pts.min(axis=0)
+        x2, y2 = img_pts.max(axis=0)
+        bbox = (float(x1), float(y1), float(x2), float(y2))
+    return GatePnP(
+        corners_px=corners,
+        confidence=float(confidence),
+        bbox=tuple(bbox),
+        R_cg=R_cg,
+        t_cg=t_cg,
+        reproj_err_px=err,
+        keypoints_px=pts,
+        keypoint_ids=ids,
+    )
+
+
 def solve_corners_pnp(
     corners_px: Sequence[Sequence[float]],
     confidence: float = 1.0,
@@ -230,35 +348,50 @@ def _solve_gate(g: GatePnP) -> None:
     spread = max(np.ptp(c[:, 0]), np.ptp(c[:, 1]))
     if spread < MIN_CORNER_SPREAD_PX:
         return
-    img_pts = c.reshape(-1, 1, 2)
+    solution = _solve_planar(OBJECT_POINTS, c)
+    if solution is None:
+        return
+    g.R_cg, g.t_cg, g.reproj_err_px = solution
 
-    # Evaluate both IPPE planar solutions; keep the upright + through one.
-    candidates = []
-    try:
-        ok, rvecs, tvecs, _ = cv2.solvePnPGeneric(
-            OBJECT_POINTS.reshape(-1, 1, 3),
-            img_pts,
-            cm.K,
-            None,
-            flags=cv2.SOLVEPNP_IPPE,
-        )
-    except cv2.error:
-        ok = False
-        rvecs, tvecs = [], []
-    if not ok:
+
+def _solve_planar(obj_pts: np.ndarray, img_pts: np.ndarray):
+    """Planar PnP over matched object/image points, ambiguity resolved.
+
+    IPPE returns two mirrored solutions for a planar target. Keep only the one
+    that stands the gate upright and puts it in front of the camera, then the
+    lower reprojection error of whatever survives.
+    """
+    obj = np.ascontiguousarray(obj_pts.reshape(-1, 1, 3), dtype=np.float64)
+    img = np.ascontiguousarray(img_pts.reshape(-1, 1, 2), dtype=np.float64)
+
+    def _attempt(flag):
         try:
-            ok1, rvec, tvec = cv2.solvePnP(
-                OBJECT_POINTS.reshape(-1, 1, 3),
-                img_pts,
-                cm.K,
-                None,
-                flags=cv2.SOLVEPNP_IPPE,
+            ok, rvecs, tvecs, _ = cv2.solvePnPGeneric(
+                obj, img, cm.K, None, flags=flag
             )
         except cv2.error:
-            return
-        if not ok1:
-            return
-        rvecs, tvecs = [rvec], [tvec]
+            return []
+        if not ok:
+            return []
+        # IPPE fits a homography when given more than four points and hands
+        # back NaN on a near fronto-parallel gate, which is exactly the view
+        # on a straight approach.
+        return [
+            (rv, tv)
+            for rv, tv in zip(rvecs, tvecs)
+            if np.isfinite(rv).all() and np.isfinite(tv).all()
+        ]
+
+    pairs = _attempt(cv2.SOLVEPNP_IPPE)
+    if not pairs:
+        # SQPNP is stable on the degenerate views but returns a single
+        # solution, so it is a fallback rather than the default: IPPE's pair
+        # is what lets the upright test throw out the mirrored pose.
+        pairs = _attempt(cv2.SOLVEPNP_SQPNP)
+    if not pairs:
+        return None
+    rvecs = [rv for rv, _ in pairs]
+    tvecs = [tv for _, tv in pairs]
 
     best = None
     best_err = REPROJ_ERR_MAX_PX
@@ -269,19 +402,16 @@ def _solve_gate(g: GatePnP) -> None:
         RR, _ = cv2.Rodrigues(rv)
         if not _is_upright_through_solution(RR):
             continue
-        proj, _ = cv2.projectPoints(OBJECT_POINTS, rv, tv, cm.K, None)
+        proj, _ = cv2.projectPoints(obj, rv, tv, cm.K, None)
         err = float(
             np.linalg.norm(
-                proj.reshape(-1, 2) - img_pts.reshape(-1, 2),
-                axis=1,
+                proj.reshape(-1, 2) - img.reshape(-1, 2), axis=1
             ).mean()
         )
         if err < best_err:
             best_err = err
             best = (RR, tt, err)
-    if best is None:
-        return
-    g.R_cg, g.t_cg, g.reproj_err_px = best
+    return best
 
 
 class YoloGatePnP:
@@ -311,13 +441,30 @@ class YoloGatePnP:
         gates: List[GatePnP] = []
         if res.boxes is None or len(res.boxes) == 0:
             return gates
-        kps = res.keypoints.xy.cpu().numpy()          # (N, 4, 2)
+        kps = res.keypoints.xy.cpu().numpy()          # (N, 4|8, 2)
+        kconfs = (
+            res.keypoints.conf.cpu().numpy()
+            if res.keypoints.conf is not None
+            else None
+        )
         confs = res.boxes.conf.cpu().numpy()
         boxes = res.boxes.xyxy.cpu().numpy()
-        for corners, conf, box in zip(kps, confs, boxes):
-            g = GatePnP(corners_px=corners.astype(np.float64),
-                        confidence=float(conf), bbox=tuple(box.tolist()))
-            _solve_gate(g)
+        for idx, (corners, conf, box) in enumerate(zip(kps, confs, boxes)):
+            point_conf = None if kconfs is None else kconfs[idx]
+            g = solve_keypoints_pnp(
+                corners.astype(np.float64),
+                keypoint_confidences=point_conf,
+                confidence=float(conf),
+                bbox=tuple(box.tolist()),
+            )
+            if g is None:
+                # Keep an unsolved placeholder so callers still see the box.
+                g = GatePnP(
+                    corners_px=np.asarray(corners[:4], dtype=np.float64),
+                    confidence=float(conf),
+                    bbox=tuple(box.tolist()),
+                    keypoints_px=np.asarray(corners, dtype=np.float64),
+                )
             gates.append(g)
         # Primary target = the gate we are actually flying at: rank by
         # confidence x apparent size, NOT by range — ranking by range made a

@@ -28,6 +28,7 @@ from vision.dual_gate_pnp import (
     observe_two_closest_gates,
 )
 from vision.yolo_pnp import draw_gate_frame_axes
+from vision.yolo_pose_gate_detector import draw_pose_debug_overlay
 
 
 def save_gate_capture(
@@ -251,25 +252,12 @@ class VisionRX:
         self._last_state = None
         self._display_enabled = config.VISION_DISPLAY
         self._overlay_enabled = True
-        self._gate_capture_enabled = config.GATE_FRAME_CAPTURE
-        self._gate_capture_dir = Path(config.GATE_FRAME_CAPTURE_DIR)
-        if not self._gate_capture_dir.is_absolute():
-            self._gate_capture_dir = (
-                Path(__file__).resolve().parent / self._gate_capture_dir
-            )
-        self._gate_capture_session = str(time.time_ns())
-        self._last_gate_capture_t = -float('inf')
-        self._gate_capture_count = 0
-        if self._gate_capture_enabled:
-            self._gate_capture_dir.mkdir(parents=True, exist_ok=True)
-            print(
-                '[VISION] gate-frame capture enabled: '
-                f'{self._gate_capture_dir}',
-                flush=True,
-            )
+        self._init_gate_capture()
         if config.VISION_DEBUG:
             os.makedirs(config.VISION_DEBUG_DIR, exist_ok=True)
-        self.thread = threading.Thread(target=self._vision_loop, daemon=False)
+        # Daemon so a Ctrl+C or traceback cannot leave the console hung
+        # waiting on this thread at interpreter exit.
+        self.thread = threading.Thread(target=self._vision_loop, daemon=True)
         self.is_running = True
         self.thread.start()
 
@@ -781,9 +769,25 @@ class VisionRX:
         latest_complete_sim_time = -1
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # A frame is several UDP datagrams, and nothing drains this socket
+        # while process_frame runs. At the default buffer (~64 KB) that is
+        # about one frame of slack, so every frame arriving mid-detection
+        # loses chunks and is discarded incomplete -- the drone goes blind
+        # for reasons that never show up as an error.
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
+        except OSError:
+            pass
         sock.bind((config.VISION_UDP_IP, config.VISION_UDP_PORT))
         sock.settimeout(0.2)
-        print('[VISION] listening for camera frames...', flush=True)
+        rcvbuf = sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+        print(f'[VISION] listening for camera frames... '
+              f'(rcvbuf {rcvbuf / 1024:.0f} KiB)', flush=True)
+
+        stats_t = time.time()
+        stats = {'emitted': 0, 'processed': 0, 'process_s': 0.0,
+                 'detect_s': 0.0}
+        newest_seen = -1
 
         try:
             while self.is_running:
@@ -837,12 +841,21 @@ class VisionRX:
                             cv2.IMREAD_COLOR,
                         )
                         if image is not None:
+                            t_proc = time.perf_counter()
                             self.process_frame(
                                 frame_id,
                                 image,
                                 sim_time_ns=entry['sim_time_ns'],
                                 jpeg_bytes=jpeg,
                             )
+                            stats['process_s'] += time.perf_counter() - t_proc
+                            stats['processed'] += 1
+                            try:
+                                stats['detect_s'] += 0.001 * float(
+                                    self.data['vision_timings_ms']['total']
+                                )
+                            except (KeyError, TypeError, ValueError):
+                                pass
                             latest_complete_id = frame_id
                             latest_complete_sim_time = sim_time_ns
                     del frames[frame_id]
@@ -853,6 +866,33 @@ class VisionRX:
 
                 if len(frames) > 30:
                     del frames[min(frames)]
+
+                # frame_id is assigned by the simulator, so the high-water
+                # mark counts what was sent and the gap to `processed` is
+                # what we never looked at.
+                if frame_id > newest_seen:
+                    newest_seen = frame_id
+                now_t = time.time()
+                if now_t - stats_t >= config.VISION_STATS_INTERVAL_S:
+                    span = now_t - stats_t
+                    seen = newest_seen - stats['emitted'] if stats['emitted'] else 0
+                    done = stats['processed']
+                    busy = stats['process_s']
+                    if seen > 0:
+                        print(
+                            f'[VISION] {done / span:5.1f} fps processed of '
+                            f'{seen / span:5.1f} fps emitted '
+                            f'({100.0 * (1.0 - done / max(seen, 1)):3.0f}% dropped), '
+                            f'{1000.0 * busy / max(done, 1):5.1f} ms/frame '
+                            f'({1000.0 * stats["detect_s"] / max(done, 1):5.1f} '
+                            f'detect), {100.0 * busy / span:3.0f}% busy',
+                            flush=True,
+                        )
+                    stats_t = now_t
+                    stats['emitted'] = newest_seen
+                    stats['processed'] = 0
+                    stats['process_s'] = 0.0
+                    stats['detect_s'] = 0.0
         finally:
             sock.close()
             if self._display_enabled:
@@ -930,33 +970,93 @@ class VisionRX:
     def build_accepted_target_frame(
         shape: tuple[int, ...],
         gate_detection,
+        *,
+        pilot_lock: dict | None = None,
     ) -> np.ndarray:
         """Show only geometry accepted for steering, not rejected candidates."""
         target = np.zeros(shape, dtype=np.uint8)
-        if gate_detection is not None and gate_detection.found:
-            color = (
-                (0, 255, 255)
-                if gate_detection.predicted
-                else (0, 255, 0)
-            )
-            if gate_detection.corners is not None:
-                corners = np.round(
-                    gate_detection.corners
-                ).astype(np.int32).reshape(-1, 2)
-                if len(corners) >= 3:
-                    cv2.polylines(
-                        target, [corners], True, color, 3, cv2.LINE_AA
-                    )
+        # Pilot: always paint LOCK status on this panel (manual + auto).
+        # Without this, missing pilot_lock defaults look the same as LOCK green.
+        if isinstance(pilot_lock, dict):
+            locked = bool(pilot_lock.get('locked'))
+            mode = str(pilot_lock.get('mode') or 'manual')
+            if locked:
+                color = (0, 255, 0)
+                banner = (0, 140, 0)
+                label = f'LOCK  press T  [{mode}]'
             else:
-                x, y, width, height = gate_detection.bbox
-                cv2.rectangle(
-                    target,
-                    (x, y),
-                    (x + width, y + height),
-                    color,
-                    3,
-                )
+                color = (255, 0, 255)
+                banner = (180, 0, 180)
+                label = f'NO LOCK  [{mode}]'
+            h, w = target.shape[:2]
+            bar_h = max(28, h // 10)
+            cv2.rectangle(target, (0, 0), (w, bar_h), banner, -1)
+            cv2.putText(
+                target,
+                label,
+                (8, bar_h - 8),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        else:
+            color = (0, 255, 255) if (
+                gate_detection is not None
+                and getattr(gate_detection, 'predicted', False)
+            ) else (0, 255, 0)
+
+        if gate_detection is not None and gate_detection.found:
+            if isinstance(pilot_lock, dict) and not pilot_lock.get('locked'):
+                color = (255, 0, 255)
+            elif isinstance(pilot_lock, dict) and pilot_lock.get('locked'):
+                color = (0, 255, 0)
+            cx = int(round(float(gate_detection.center_x)))
+            cy = int(round(float(gate_detection.center_y)))
+            cv2.drawMarker(
+                target, (cx, cy), color, cv2.MARKER_CROSS, 22, 2
+            )
         return target
+
+    def _apply_pilot_lock_overlay(
+        self,
+        annotated: np.ndarray,
+        gate_detection,
+    ) -> None:
+        """Pilot LOCK banner: purple = tracking, green = LOCK ready."""
+        pilot = self.data.get('pilot_lock')
+        if not isinstance(pilot, dict):
+            return
+        locked = bool(pilot.get('locked'))
+        mode = str(pilot.get('mode') or 'manual')
+        # BGR: tracking = magenta/purple, LOCK = green.
+        if locked:
+            color = (0, 255, 0)
+            banner = (0, 140, 0)
+            label = f'LOCK  press T   [{mode}]'
+        else:
+            color = (255, 0, 255)
+            banner = (180, 0, 180)
+            label = f'NO LOCK   [{mode}]'
+        h, w = annotated.shape[:2]
+        bar_h = max(36, h // 12)
+        cv2.rectangle(annotated, (0, 0), (w, bar_h), banner, -1)
+        cv2.putText(
+            annotated,
+            label,
+            (12, bar_h - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        if gate_detection is not None and getattr(gate_detection, 'found', False):
+            cx = int(round(float(gate_detection.center_x)))
+            cy = int(round(float(gate_detection.center_y)))
+            cv2.circle(annotated, (cx, cy), 6, color, -1)
+            cv2.circle(annotated, (cx, cy), 10, (255, 255, 255), 2)
 
     def _show_display(
         self,
@@ -986,11 +1086,16 @@ class VisionRX:
         jpeg_bytes: bytes | None,
         now: float,
     ) -> None:
-        """Capture detector-confirmed gates, excluding tracker predictions."""
+        """Capture sparse raw frames; acro reference mode also keeps misses."""
+        capture_all = bool(self.data.get('vision_reference_capture_all'))
+        confirmed = bool(
+            measured is not None
+            and measured.found
+            and not measured.predicted
+        )
         if (
             not self._gate_capture_enabled
-            or not measured.found
-            or measured.predicted
+            or (not capture_all and not confirmed)
             or now - self._last_gate_capture_t
             < config.GATE_FRAME_CAPTURE_INTERVAL_S
         ):
@@ -1020,10 +1125,43 @@ class VisionRX:
             )
 
     # ------------------------------------------------------------------
+    def _init_gate_capture(self) -> None:
+        """Point frame capture at a fresh per-run subfolder."""
+        self._gate_capture_enabled = config.GATE_FRAME_CAPTURE
+        base = Path(config.GATE_FRAME_CAPTURE_DIR)
+        if not base.is_absolute():
+            base = Path(__file__).resolve().parent / base
+        # Stamped like the telemetry logs, so a frame set can be matched to the
+        # flight it came from. These all used to land in one directory, which
+        # reached 282k files.
+        self._gate_capture_session = time.strftime('%Y%m%d_%H%M%S')
+        self._gate_capture_dir = base / f'run_{self._gate_capture_session}'
+        self._last_gate_capture_t = -float('inf')
+        self._gate_capture_count = 0
+        self.data['gate_frame_capture'] = {
+            'enabled': bool(self._gate_capture_enabled),
+            'session': self._gate_capture_session,
+            'directory': str(self._gate_capture_dir.resolve()),
+            'interval_s': float(config.GATE_FRAME_CAPTURE_INTERVAL_S),
+            'confirmed_detections_only': not bool(
+                self.data.get('vision_reference_capture_all')
+            ),
+        }
+        if self._gate_capture_enabled:
+            self._gate_capture_dir.mkdir(parents=True, exist_ok=True)
+            interval = config.GATE_FRAME_CAPTURE_INTERVAL_S
+            rate = f'{1.0 / interval:.0f}/s' if interval > 0 else 'every hit'
+            print(
+                f'[VISION] gate-frame capture enabled ({rate}): '
+                f'{self._gate_capture_dir}',
+                flush=True,
+            )
+
+    # ------------------------------------------------------------------
     def _draw_dual_gate_overlay(
         self, annotated: np.ndarray, dual: dict
     ) -> None:
-        """Draw RGB pose axes on the two nearest solved gates (by range)."""
+        """Draw range labels + RGB axes; keypoints come from the pose overlay."""
         del dual  # ranges already drawn in the status line
         pose_debug = getattr(self.detector, 'last_pose_debug', None)
         candidates = list(getattr(pose_debug, 'candidates', None) or ())
@@ -1044,26 +1182,31 @@ class VisionRX:
         ):
             if gate is None:
                 continue
-            corners = getattr(gate, 'corners_px', None)
-            if corners is None:
+            # Prefer the measured keypoints (outer+inner); fall back to the
+            # four projected outer corners only for the range label anchor.
+            kpts = getattr(gate, 'keypoints_px', None)
+            if kpts is not None and len(kpts) > 0:
+                pts = np.asarray(kpts, dtype=np.float64).reshape(-1, 2)
+            else:
+                corners = getattr(gate, 'corners_px', None)
+                if corners is None:
+                    continue
+                pts = np.asarray(corners, dtype=np.float64).reshape(-1, 2)
+            usable = pts[np.isfinite(pts).all(axis=1)]
+            if len(usable) == 0:
                 continue
-            pts = np.round(np.asarray(corners)).astype(np.int32).reshape(-1, 2)
-            if len(pts) >= 3:
-                cv2.polylines(
-                    annotated, [pts], True, color, 2, cv2.LINE_AA
-                )
-                cx = int(np.mean(pts[:, 0]))
-                cy = int(np.mean(pts[:, 1]))
-                cv2.putText(
-                    annotated,
-                    f'{label} {gate.range_m:.1f}m',
-                    (cx - 28, cy - 12),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    color,
-                    2,
-                    cv2.LINE_AA,
-                )
+            cx = int(np.mean(usable[:, 0]))
+            cy = int(np.mean(usable[:, 1]))
+            cv2.putText(
+                annotated,
+                f'{label} {gate.range_m:.1f}m',
+                (cx - 28, cy - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
             # Same axis length on both — user needs to compare orientations.
             draw_gate_frame_axes(
                 annotated,
@@ -1118,6 +1261,9 @@ class VisionRX:
                 'gate1_body': None,
                 'gate2_body': None,
                 'gate1_through_body': None,
+                'gate1_down_body': None,
+                'gate1_normal_body': None,
+                'gate1_reproj_px': None,
                 'gate1_range_m': None,
                 'gate2_range_m': None,
                 'gate1_norm_x': None,
@@ -1144,6 +1290,13 @@ class VisionRX:
             'gate1_through_body': None
             if obs.gate1_through_body is None
             else obs.gate1_through_body.tolist(),
+            'gate1_down_body': None
+            if obs.gate1_down_body is None
+            else obs.gate1_down_body.tolist(),
+            'gate1_normal_body': None
+            if obs.gate1_normal_body is None
+            else obs.gate1_normal_body.tolist(),
+            'gate1_reproj_px': float(obs.gate1.reproj_err_px),
             'gate1_range_m': float(obs.gate1.range_m),
             'gate2_range_m': None
             if obs.gate2 is None
@@ -1180,6 +1333,37 @@ class VisionRX:
             hint=None,
             timestamp=monotonic_now,
         )
+        # Publish the raw pose candidates as observe-only geometry.  The
+        # detector's persistent selected identity is useful for ordinary
+        # course following, but during an acro flip it can reject the active
+        # gate just as that gate becomes the largest object in the frame.
+        # Replay can use this list for a short, explicitly bounded final
+        # centering correction without changing detector selection globally.
+        raw_candidates = []
+        pose_debug = getattr(self.detector, 'last_pose_debug', None)
+        for candidate in list(getattr(pose_debug, 'candidates', None) or ()):
+            box = getattr(candidate, 'box', None)
+            if box is None:
+                continue
+            try:
+                cx, cy = box.center
+                x1, y1, x2, y2 = box.bbox
+                raw_candidates.append({
+                    'center_px': (float(cx), float(cy)),
+                    'bbox_px': (
+                        float(x1), float(y1), float(x2), float(y2),
+                    ),
+                    'area_px': float(box.area),
+                    'confidence': float(box.confidence),
+                    'hsv_confirmed': bool(candidate.hsv_confirmed),
+                })
+            except (TypeError, ValueError, AttributeError):
+                continue
+        self.data['gate_candidates'] = {
+            'frame_id': frame_id,
+            'ts': timestamp_ns,
+            'items': raw_candidates,
+        }
         self._update_bearing_table(img, monotonic_now)
         self._capture_gate_frame(
             measured,
@@ -1248,17 +1432,25 @@ class VisionRX:
             )
             if self._overlay_enabled:
                 try:
-                    annotated = draw_detection(
-                        img,
-                        detection_for_overlay,
-                        debug=self.detector.last_debug,
-                        state=state,
-                        command=None,
-                        total_time_ms=total_ms,
-                        show_rejected_candidates=False,
-                        show_accepted_candidates=True,
-                        show_mask_insets=False,
+                    pose_debug = getattr(
+                        self.detector, 'last_pose_debug', None
                     )
+                    if pose_debug is not None:
+                        # Pose path: outer+inner keypoints only — no box /
+                        # contour outlines (those were drowning the rings).
+                        annotated = draw_pose_debug_overlay(img, pose_debug)
+                    else:
+                        annotated = draw_detection(
+                            img,
+                            detection_for_overlay,
+                            debug=self.detector.last_debug,
+                            state=state,
+                            command=None,
+                            total_time_ms=total_ms,
+                            show_rejected_candidates=False,
+                            show_accepted_candidates=True,
+                            show_mask_insets=False,
+                        )
                     g1r = dual.get('gate1_range_m')
                     g2r = dual.get('gate2_range_m')
                     if g1r is not None:
@@ -1280,6 +1472,14 @@ class VisionRX:
                     self._draw_dual_gate_overlay(annotated, dual)
                 except Exception:
                     annotated = img
+                # Lock banner must survive draw/overlay failures — needed in
+                # pilot manual so LOCK/NO LOCK is visible before pressing T.
+                try:
+                    self._apply_pilot_lock_overlay(
+                        annotated, detection_for_overlay
+                    )
+                except Exception:
+                    pass
             if should_save_debug:
                 path = os.path.join(
                     config.VISION_DEBUG_DIR,
@@ -1295,10 +1495,18 @@ class VisionRX:
                 accepted_targets = self.build_accepted_target_frame(
                     annotated.shape,
                     detection_for_overlay,
+                    pilot_lock=self.data.get('pilot_lock'),
                 )
+                pose_debug = getattr(
+                    self.detector, 'last_pose_debug', None
+                )
+                if pose_debug is not None:
+                    # Same keypoint-only view on the lock panel.
+                    accepted_targets = draw_pose_debug_overlay(
+                        accepted_targets, pose_debug
+                    )
                 self._show_display(
                     annotated.copy(),
                     cleaned,
                     accepted_targets,
                 )
-

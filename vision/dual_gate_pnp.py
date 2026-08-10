@@ -14,7 +14,7 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-from vision.yolo_pnp import GatePnP, solve_corners_pnp
+from vision.yolo_pnp import GatePnP, solve_corners_pnp, solve_keypoints_pnp
 
 # Reject detections that are too small in the image or absurdly close/far.
 # Pad gate-2 is ~22x20 px (≈440 area) and PnP range ~38–40 m — old
@@ -23,6 +23,10 @@ MIN_BBOX_AREA_PX = 250.0       # ~16x16; still rejects 5x6 junk
 MIN_CONFIDENCE = 0.40
 MAX_RANGE_M = 45.0             # match vision.yolo_pnp.MAX_RANGE_M
 MIN_RANGE_M = 0.8
+# Per-keypoint floor for the eight-keypoint model. Corners off the edge of
+# frame come back at ~0 confidence and are simply left out of the solve, which
+# is what lets a partly visible gate still produce a pose.
+MIN_KEYPOINT_CONFIDENCE = 0.25
 
 
 @dataclass
@@ -33,6 +37,8 @@ class DualGateObservation:
     gate2_body: Optional[np.ndarray]
     gate1_through_body: Optional[np.ndarray]
     timestamp: float
+    gate1_down_body: Optional[np.ndarray] = None
+    gate1_normal_body: Optional[np.ndarray] = None
 
 
 def _bbox_area(bbox) -> float:
@@ -59,6 +65,25 @@ def _through_body(gate: GatePnP) -> Optional[np.ndarray]:
     return z_body / n
 
 
+def _gate_axis_body(gate: GatePnP, col: int) -> Optional[np.ndarray]:
+    """A gate-frame axis expressed in body, full 3D (nothing flattened).
+
+    ``_through_body`` levels its result because it feeds a horizontal flight
+    direction. These stay unmodified: the gate's own DOWN axis is the absolute
+    horizon (gravity, when the gate hangs true) and its normal carries the
+    heading — both are attitude references, not flight directions.
+    """
+    import camera_model as cm
+
+    if not gate.solved:
+        return None
+    v = cm.cam_to_body(gate.R_cg[:, col])
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return None
+    return np.asarray(v, dtype=np.float64) / n
+
+
 def _solve_candidate(
     candidate: object,
     *,
@@ -74,10 +99,14 @@ def _solve_candidate(
     bbox = getattr(box, 'bbox', None)
     if _bbox_area(bbox) < MIN_BBOX_AREA_PX:
         return None
-    gate = solve_corners_pnp(
+    gate = solve_keypoints_pnp(
         keypoints,
+        keypoint_confidences=getattr(
+            candidate, 'keypoint_confidences', None
+        ),
         confidence=conf,
         bbox=bbox,
+        min_keypoint_confidence=MIN_KEYPOINT_CONFIDENCE,
     )
     if gate is None or not gate.solved:
         return None
@@ -136,6 +165,8 @@ def observe_two_closest_gates(
         gate2_body=None if g2 is None else g2.center_body(),
         gate1_through_body=_through_body(g1),
         timestamp=timestamp,
+        gate1_down_body=_gate_axis_body(g1, 1),
+        gate1_normal_body=_gate_axis_body(g1, 2),
     )
 
 

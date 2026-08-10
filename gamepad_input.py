@@ -83,7 +83,10 @@ def _dead(x: float, dz: float) -> float:
 
 def _smooth_into(filt: dict, key: str, raw: float, alpha: float) -> float:
     prev = filt.get(key, 0.0)
-    if abs(raw) < 1e-4 and abs(prev) < 0.02:
+    # Snap hard to zero whenever the raw axis is idle. A soft decay used to
+    # leave 0.01–0.05 of residual for several ticks after a trigger release,
+    # which was enough for pilot to arm and spool hover thrust unprompted.
+    if abs(raw) < 1e-4:
         filt[key] = 0.0
         return 0.0
     out = (1.0 - alpha) * prev + alpha * raw

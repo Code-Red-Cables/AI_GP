@@ -10,6 +10,7 @@ dead-reckoning look-at target.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Optional
@@ -28,7 +29,53 @@ class EKFEstimator:
         self._thread: Optional[threading.Thread] = None
         self._last_imu_ts = None
         self._last_pnp_ts = None
+        self._gate_horizon_fixes = 0
+        self._gate_yaw_fixes = 0
+        self._gate_att_rejects = 0
+        self._gate_att_skips = 0
         self._use_pnp = bool(getattr(config, 'EKF_USE_PNP', True))
+        self.ekf.accel_tilt_gain = float(
+            getattr(config, 'EKF_ACCEL_TILT_GAIN', 0.0)
+        )
+        self.ekf.accel_tilt_max_acc = float(
+            getattr(config, 'EKF_ACCEL_TILT_MAX_ACC', 1.5)
+        )
+        self.ekf.accel_tilt_max_rate = math.radians(
+            float(getattr(config, 'EKF_ACCEL_TILT_MAX_RATE_DEG', 25.0))
+        )
+        self.ekf.gate_horizon_gain = float(
+            getattr(config, 'EKF_GATE_HORIZON_GAIN', 0.0)
+        )
+        self.ekf.gate_horizon_max_step = math.radians(
+            float(getattr(config, 'EKF_GATE_HORIZON_MAX_STEP_DEG', 1.0))
+        )
+        self.ekf.gate_horizon_bias_gain = float(
+            getattr(config, 'EKF_GATE_HORIZON_BIAS_GAIN', 0.30)
+        )
+        self.ekf.gate_horizon_pitch_scale = float(
+            getattr(config, 'EKF_GATE_HORIZON_PITCH_SCALE', 0.25)
+        )
+        self.ekf.gate_bias_innov_max = math.radians(
+            float(getattr(config, 'EKF_GATE_BIAS_INNOV_MAX_DEG', 8.0))
+        )
+        self.ekf.gyro_bias_limit = math.radians(
+            float(getattr(config, 'EKF_GYRO_BIAS_LIMIT_DPS', 1.5))
+        )
+        self.ekf.gate_yaw_gain = float(
+            getattr(config, 'EKF_GATE_YAW_GAIN', 0.0)
+        )
+        self.ekf.gate_yaw_max_step = math.radians(
+            float(getattr(config, 'EKF_GATE_YAW_MAX_STEP_DEG', 1.0))
+        )
+        self.ekf.gate_yaw_bias_gain = float(
+            getattr(config, 'EKF_GATE_YAW_BIAS_GAIN', 0.20)
+        )
+        self._gate_att_max_range = float(
+            getattr(config, 'EKF_GATE_ATT_MAX_RANGE_M', 30.0)
+        )
+        self._gate_att_max_reproj = float(
+            getattr(config, 'EKF_GATE_ATT_MAX_REPROJ_PX', 6.0)
+        )
         if not self._use_pnp:
             print(
                 '[EKF] PnP corrections OFF — IMU dead reckoning only '
@@ -73,6 +120,74 @@ class EKFEstimator:
         else:
             self.data['position_ned'] = cleared
 
+    def realign_gravity_from_imu(self) -> bool:
+        """Snap EKF roll/pitch to current IMU accel (keep yaw). Quiet hover only."""
+        imu = self.data.get('highres_imu') or {}
+        if not imu:
+            return False
+        accel = np.array(
+            [
+                float(imu.get('xacc', 0.0)),
+                float(imu.get('yacc', 0.0)),
+                float(imu.get('zacc', 0.0)),
+            ],
+            dtype=np.float64,
+        )
+        return bool(self.ekf.realign_gravity(accel))
+
+    def zero_tilt(self) -> tuple[float, float, float]:
+        """Declare current attitude as level (roll/pitch=0, keep yaw).
+
+        Publishes attitude immediately so the next control tick sees it.
+        """
+        roll, pitch, yaw = self.ekf.zero_tilt()
+        attitude = {
+            'roll': roll,
+            'pitch': pitch,
+            'yaw': yaw,
+            'rollspeed': 0.0,
+            'pitchspeed': 0.0,
+            'yawspeed': 0.0,
+            'ts': time.time_ns(),
+            'source': 'ekf_zero_tilt',
+        }
+        lock = self.data.get('lock')
+        if lock is not None:
+            with lock:
+                prev = dict(self.data.get('ekf_state') or {})
+                prev.update({
+                    'roll': roll,
+                    'pitch': pitch,
+                    'yaw': yaw,
+                    'gyro_bias': self.ekf.state().gyro_bias.tolist(),
+                })
+                self.data['attitude'] = attitude
+                self.data['ekf_state'] = prev
+        else:
+            self.data['attitude'] = attitude
+        return roll, pitch, yaw
+
+    def _attitude_frame_usable(self, dual: dict) -> bool:
+        """Is this PnP frame good enough to take *attitude* from?
+
+        A stricter bar than position. Gate rotation degrades with range long
+        before the centre does, and a 'held' frame is last frame's pose
+        re-stamped — applying it again at 30 Hz would drag attitude toward a
+        stale horizon while the craft keeps rotating.
+        """
+        if dual.get('held'):
+            self._gate_att_skips += 1
+            return False
+        rng = dual.get('gate1_range_m')
+        if rng is None or float(rng) > self._gate_att_max_range:
+            self._gate_att_skips += 1
+            return False
+        reproj = dual.get('gate1_reproj_px')
+        if reproj is not None and float(reproj) > self._gate_att_max_reproj:
+            self._gate_att_skips += 1
+            return False
+        return True
+
     def _loop(self) -> None:
         # Target up to 500 Hz wait; actual rate follows IMU sample arrival.
         period = 1.0 / 500.0
@@ -90,7 +205,12 @@ class EKFEstimator:
         ts = imu.get('ts')
         if ts is None:
             return
-        # Convert ns → seconds for filter timebase when needed.
+        # Wall-clock arrival time. (Sim ``time_usec`` often does not advance
+        # on this link — switching to it froze EKF at 0° and the pilot
+        # somersaulted under max rate, 141128. Re-timing arrivals into CE
+        # slow-mo seconds fails the same way: under CE the IMU stream is
+        # already wall-referenced, so scaling dt halved reported lean —
+        # ekf/des 0.49 with rate pinned at 100°/s, 143405.)
         if ts > 1e12:
             t_s = ts * 1e-9
         else:
@@ -139,6 +259,28 @@ class EKFEstimator:
                         else np.asarray(g2, dtype=np.float64),
                         t_s,
                     )
+                    # Absolute attitude from the gate itself — the one
+                    # reference that does not integrate, so "level" stops
+                    # walking over a lap (141532: +4° → −23°). Far gates are
+                    # only a few dozen pixels wide, where corner noise and
+                    # IPPE's planar ambiguity make the *rotation* unreliable
+                    # long before the centre is, so take attitude from near
+                    # gates only.
+                    if self._attitude_frame_usable(dual):
+                        down = dual.get('gate1_down_body')
+                        normal = dual.get('gate1_normal_body')
+                        if down is not None:
+                            if self.ekf.correct_gate_horizon(
+                                np.asarray(down, dtype=np.float64)
+                            ):
+                                self._gate_horizon_fixes += 1
+                            else:
+                                self._gate_att_rejects += 1
+                        if normal is not None:
+                            if self.ekf.correct_gate_yaw(
+                                np.asarray(normal, dtype=np.float64)
+                            ):
+                                self._gate_yaw_fixes += 1
 
         st = self.ekf.state()
         roll, pitch, yaw = st.roll_pitch_yaw
@@ -176,6 +318,16 @@ class EKFEstimator:
             'roll': roll,
             'pitch': pitch,
             'yaw': yaw,
+            # Vision attitude aid — without these the only way to tell the aid
+            # is doing nothing is to notice the drift it was meant to remove.
+            'gate_horizon_fixes': self._gate_horizon_fixes,
+            'gate_yaw_fixes': self._gate_yaw_fixes,
+            'gate_att_rejects': self._gate_att_rejects,
+            'gate_att_skips': self._gate_att_skips,
+            'horizon_innov_roll': float(self.ekf.last_horizon_innov[0]),
+            'horizon_innov_pitch': float(self.ekf.last_horizon_innov[1]),
+            'yaw_innov': float(self.ekf.last_yaw_innov),
+            'gyro_bias': st.gyro_bias.tolist(),
         }
         if lock is not None:
             with lock:

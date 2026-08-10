@@ -1,4 +1,4 @@
-"""Train the four-keypoint gate pose model locally without a hosted API."""
+"""Train the eight-keypoint gate pose model locally without a hosted API."""
 
 from __future__ import annotations
 
@@ -12,18 +12,22 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = (
-    REPOSITORY_ROOT / "datasets" / "AI_GP.v1i.yolov8" / "data.yaml"
+    REPOSITORY_ROOT / "datasets" / "AIGP_8keypoints.v1i.yolov8" / "data.yaml"
 )
-EXPECTED_KEYPOINT_SHAPE = [4, 3]
-EXPECTED_FLIP_INDEX = [1, 0, 3, 2]
+# Outer ring then inner ring, each clockwise from top-left.
+KEYPOINT_COUNT = 8
+EXPECTED_KEYPOINT_SHAPE = [KEYPOINT_COUNT, 3]
+# Mirroring swaps TL<->TR and BR<->BL inside each clockwise ring.
+EXPECTED_FLIP_INDEX = [1, 0, 3, 2, 5, 4, 7, 6]
+LABEL_FIELD_COUNT = 5 + KEYPOINT_COUNT * 3
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Train one-class YOLO26 pose weights for the four gate-opening "
-            "corners: top-left, top-right, bottom-left, bottom-right."
+            "Train one-class YOLO26 pose weights for the eight gate corners: "
+            "outer then inner ring, each clockwise from top-left."
         )
     )
     parser.add_argument("--data", default=str(DEFAULT_DATASET))
@@ -53,10 +57,11 @@ def _validate_pose_label(label_path: Path) -> None:
         if not line.strip():
             continue
         fields = line.split()
-        if len(fields) != 17:
+        if len(fields) != LABEL_FIELD_COUNT:
             raise ValueError(
                 f"{label_path}:{line_number} has {len(fields)} values; "
-                "expected class + box + four (x, y, visibility) keypoints"
+                f"expected class + box + {KEYPOINT_COUNT} "
+                "(x, y, visibility) keypoints"
             )
         values = [float(field) for field in fields]
         if int(values[0]) != 0 or values[0] != 0:
@@ -67,10 +72,15 @@ def _validate_pose_label(label_path: Path) -> None:
             raise ValueError(
                 f"{label_path}:{line_number} has a box outside [0, 1]"
             )
-        for keypoint in range(4):
+        for keypoint in range(KEYPOINT_COUNT):
             offset = 5 + keypoint * 3
             x, y, visibility = values[offset: offset + 3]
-            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            # An unlabelled corner is written as 0 0 0, so only points that
+            # claim to exist need to sit inside the frame. Roughly a fifth of
+            # this set is unlabelled, since gates leave the frame constantly.
+            if visibility != 0.0 and not (
+                0.0 <= x <= 1.0 and 0.0 <= y <= 1.0
+            ):
                 raise ValueError(
                     f"{label_path}:{line_number} keypoint {keypoint} "
                     "is outside [0, 1]"
@@ -93,12 +103,13 @@ def validate_pose_dataset(data_yaml: Path) -> dict[str, tuple[int, int]]:
     payload = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
     if list(payload.get("kpt_shape", [])) != EXPECTED_KEYPOINT_SHAPE:
         raise ValueError(
-            "data.yaml must declare kpt_shape: [4, 3] for four gate corners"
+            "data.yaml must declare kpt_shape: [8, 3] for eight gate corners"
         )
     if list(payload.get("flip_idx", [])) != EXPECTED_FLIP_INDEX:
         raise ValueError(
             "data.yaml has an unsafe horizontal keypoint mapping. Set "
-            "flip_idx: [1, 0, 3, 2] so TL/TR and BL/BR swap correctly."
+            "flip_idx: [1, 0, 3, 2, 5, 4, 7, 6] so each ring swaps "
+            "TL/TR and BR/BL under a left-right flip."
         )
     names = payload.get("names", [])
     if isinstance(names, dict):
@@ -183,7 +194,10 @@ def main(argv=None):
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(best_weights, output)
-    print(f"Installed four-corner pose weights: {output}", flush=True)
+    print(
+        f"Installed {KEYPOINT_COUNT}-keypoint pose weights: {output}",
+        flush=True,
+    )
     return 0
 
 

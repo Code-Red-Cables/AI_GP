@@ -29,13 +29,15 @@ directly observable on VQ2.
 
 ## Capture
 
-Fly the course by hand in the stabilised teleop and press **M** at each point
-you want on the path:
+Fly the course by hand (manual or pilot) with `--capture`. Pose is sampled at
+`SPLINE_CAPTURE_HZ` (default 5 Hz); **M** also marks; `GATE_PASSED` tags
+`active_gate` / `event=gate_pass` automatically:
 
 ```powershell
 # with PnP corrections off, for a deterministic frame
 $env:EKF_USE_PNP="0"
-.\winvenv\Scripts\python.exe tools\tune_flight.py manual --capture
+.\winvenv\Scripts\python.exe tools\tune_flight.py pilot --capture
+# or: tools\tune_flight.py manual --capture
 ```
 
 Keys are the usual hold-to-fly set — `W/S` pitch, `A/D` roll, `Q/E` yaw,
@@ -44,17 +46,27 @@ Keys are the usual hold-to-fly set — `W/S` pitch, `A/D` roll, `Q/E` yaw,
 [`MANUAL_INSTRUCTIONS.md`](MANUAL_INSTRUCTIONS.md). Waypoints are written on exit to
 `SPLINE_CAPTURE_PATH` (default `captured_waypoints.json`).
 
-Mark generously through corners — the spline is centripetal Catmull-Rom
-through the marks, so corner shape follows from how densely you mark them.
-Two waypoints is the minimum.
+Two waypoints is the minimum. Prefer continuous capture over sparse M-marks
+so `--keep-until-gate` has an approach segment before each gate.
 
-## Replay
+## Replay (full course)
 
 ```powershell
 $env:EKF_USE_PNP="0"          # must match the capture
 $env:FLIGHT_MODE="spline"
 .\winvenv\Scripts\python.exe main.py
 ```
+
+## Hybrid: keep until gate N, then pilot
+
+```powershell
+$env:EKF_USE_PNP="0"
+.\winvenv\Scripts\python.exe tools\tune_flight.py pilot `
+  --replay captured_waypoints.json --keep-until-gate 1
+```
+
+Replays the trimmed spline through gate N, then hands sticks back (T/H work).
+Raise N to extend the remembered segment. See `MANUAL_INSTRUCTIONS.md`.
 
 ## Repeatability test — the one that matters
 

@@ -31,6 +31,10 @@ def _wrap_angle(a: float) -> float:
     return math.atan2(math.sin(a), math.cos(a))
 
 
+def _clamp(v: float, limit: float) -> float:
+    return max(-limit, min(limit, float(v)))
+
+
 def quat_normalize(q: np.ndarray) -> np.ndarray:
     n = float(np.linalg.norm(q))
     if n < 1e-12:
@@ -188,6 +192,19 @@ class DroneEKF:
         gyro_noise: float = 0.02,
         bias_noise: float = 1e-4,
         pnp_pos_noise: float = 0.45,
+        accel_tilt_gain: float = 0.0,
+        accel_tilt_max_acc: float = 1.5,
+        accel_tilt_max_rate: float = math.radians(25.0),
+        gate_horizon_gain: float = 0.0,
+        gate_horizon_max_step: float = math.radians(1.0),
+        gate_horizon_bias_gain: float = 0.30,
+        gate_horizon_pitch_scale: float = 0.25,
+        gate_yaw_gain: float = 0.0,
+        gate_yaw_max_step: float = math.radians(1.0),
+        gate_yaw_bias_gain: float = 0.20,
+        gate_yaw_anchor_n: int = 15,
+        gate_bias_innov_max: float = math.radians(8.0),
+        gyro_bias_limit: float = math.radians(1.5),
     ):
         self.x = np.zeros(self.N, dtype=np.float64)
         self.x[self.IDX_Q] = 1.0  # identity quaternion
@@ -201,12 +218,33 @@ class DroneEKF:
         self.gyro_noise = gyro_noise
         self.bias_noise = bias_noise
         self.pnp_pos_noise = pnp_pos_noise
+        self.accel_tilt_gain = accel_tilt_gain
+        self.accel_tilt_max_acc = accel_tilt_max_acc
+        self.accel_tilt_max_rate = accel_tilt_max_rate
+        self.gate_horizon_gain = gate_horizon_gain
+        self.gate_horizon_max_step = gate_horizon_max_step
+        self.gate_horizon_bias_gain = gate_horizon_bias_gain
+        self.gate_horizon_pitch_scale = gate_horizon_pitch_scale
+        self.gate_yaw_gain = gate_yaw_gain
+        self.gate_yaw_max_step = gate_yaw_max_step
+        self.gate_yaw_bias_gain = gate_yaw_bias_gain
+        self.gate_yaw_anchor_n = gate_yaw_anchor_n
+        self.gate_bias_innov_max = gate_bias_innov_max
+        self.gyro_bias_limit = gyro_bias_limit
+        self.last_horizon_innov = (0.0, 0.0)
+        self.last_yaw_innov = 0.0
+        self._last_horizon_t: Optional[float] = None
+        self._last_yaw_t: Optional[float] = None
         self._last_t: Optional[float] = None
         self._gravity_aligned: bool = False
         self._gate1_ned: Optional[np.ndarray] = None
         self._gate2_ned: Optional[np.ndarray] = None
         self._gate2_fresh = False
         self._last_gate2_update = 0.0
+        self._yaw_anchor: Optional[float] = None
+        self._yaw_anchor_pos: Optional[np.ndarray] = None
+        self._yaw_anchor_acc = np.zeros(2, dtype=np.float64)
+        self._yaw_anchor_n = 0
 
     def reset(self, timestamp: float = 0.0) -> None:
         self.__init__(
@@ -214,8 +252,233 @@ class DroneEKF:
             gyro_noise=self.gyro_noise,
             bias_noise=self.bias_noise,
             pnp_pos_noise=self.pnp_pos_noise,
+            accel_tilt_gain=self.accel_tilt_gain,
+            accel_tilt_max_acc=self.accel_tilt_max_acc,
+            accel_tilt_max_rate=self.accel_tilt_max_rate,
+            gate_horizon_gain=self.gate_horizon_gain,
+            gate_horizon_max_step=self.gate_horizon_max_step,
+            gate_horizon_bias_gain=self.gate_horizon_bias_gain,
+            gate_horizon_pitch_scale=self.gate_horizon_pitch_scale,
+            gate_yaw_gain=self.gate_yaw_gain,
+            gate_yaw_max_step=self.gate_yaw_max_step,
+            gate_yaw_bias_gain=self.gate_yaw_bias_gain,
+            gate_yaw_anchor_n=self.gate_yaw_anchor_n,
+            gate_bias_innov_max=self.gate_bias_innov_max,
+            gyro_bias_limit=self.gyro_bias_limit,
         )
         self._last_t = timestamp
+
+    def realign_gravity(self, accel_m_s2: np.ndarray) -> bool:
+        """Snap roll/pitch to accelerometer tilt; keep yaw.
+
+        Use only when nearly level and quiet — continuous accel blending under
+        thrust falsely reads body-level while leaned. Returns True if applied.
+        """
+        accel = np.asarray(accel_m_s2, dtype=np.float64).reshape(3)
+        amag = float(np.linalg.norm(accel))
+        if abs(amag - G) > 0.25 * G:
+            return False
+        roll_a, pitch_a = accel_to_roll_pitch(accel)
+        # Refuse large "corrections" — likely still maneuvering / bad sample.
+        if abs(roll_a) > math.radians(35.0) or abs(pitch_a) > math.radians(35.0):
+            return False
+        _roll, _pitch, yaw = quat_to_rpy(self.x[self.IDX_Q : self.IDX_Q + 4])
+        self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(
+            roll_a, pitch_a, yaw
+        )
+        self._gravity_aligned = True
+        return True
+
+    def zero_tilt(self) -> tuple[float, float, float]:
+        """Declare current pose as level: set roll/pitch to 0, keep yaw.
+
+        For pure stick flying when the EKF has drifted and there is no vision
+        attitude aid. Clear roll/pitch gyro bias so the filter does not
+        immediately re-tilt. Returns ``(roll, pitch, yaw)`` after the snap
+        (roll/pitch are 0).
+        """
+        _roll, _pitch, yaw = quat_to_rpy(self.x[self.IDX_Q : self.IDX_Q + 4])
+        self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(0.0, 0.0, yaw)
+        # Roll / pitch gyro bias only — leave yaw bias alone.
+        self.x[self.IDX_BG] = 0.0
+        self.x[self.IDX_BG + 1] = 0.0
+        self._gravity_aligned = True
+        return 0.0, 0.0, float(yaw)
+
+    def correct_gate_horizon(self, gate_down_body: np.ndarray) -> bool:
+        """Absolute roll/pitch from an upright gate's own vertical axis.
+
+        A gate that hangs true makes its DOWN axis the gravity direction, so
+        PnP hands back a horizon that cannot drift and — unlike the
+        accelerometer — does not care that the craft is accelerating. This is
+        the only bounded attitude reference available mid-race.
+
+        Structured as a Mahony filter: a proportional pull on attitude plus an
+        integral term into gyro bias. The bias term is what actually matters —
+        it removes the *cause* of the drift, so attitude keeps holding through
+        the 0.6–2.5 s stretches with no gate in view (152912).
+
+        Outliers are screened on solve geometry and reprojection error, never
+        on how far the measurement sits from the filter's own belief: a drifted
+        filter would then reject exactly the evidence that it has drifted.
+        Instead every accepted frame is applied with a clamped step, so a rare
+        bad pose can only nudge, while a persistent error still gets corrected.
+        """
+        if self.gate_horizon_gain <= 0.0:
+            return False
+        d = np.asarray(gate_down_body, dtype=np.float64).reshape(3)
+        if not np.all(np.isfinite(d)):
+            return False
+        n = float(np.linalg.norm(d))
+        if n < 1e-6:
+            return False
+        d = d / n
+        # Edge-on / degenerate solve: the gate's vertical axis should still
+        # point mostly downward in body. Near-horizontal means a bad pose.
+        if float(d[2]) < 0.35:
+            return False
+        # d is world-down seen in body, i.e. the third ROW of the body→NED
+        # rotation. Inverting quat_to_rpy's own definition of that row keeps
+        # this in exactly the filter's euler convention — routing it through
+        # accel_to_roll_pitch instead flips roll, because that helper takes
+        # specific force (up-positive), not the gravity direction.
+        pitch_g = -math.asin(float(np.clip(d[0], -1.0, 1.0)))
+        roll_g = math.atan2(float(d[1]), float(d[2]))
+        roll, pitch, yaw = quat_to_rpy(self.x[self.IDX_Q : self.IDX_Q + 4])
+        d_roll = _wrap_angle(roll_g - roll)
+        d_pitch = _wrap_angle(pitch_g - pitch)
+        self.last_horizon_innov = (d_roll, d_pitch)
+
+        # Roll and pitch are NOT equally trustworthy here, and treating them
+        # as if they were is what let the pitch channel poison the estimate.
+        # A near-frontal planar square barely constrains its own out-of-plane
+        # tilt, so corner jitter lands almost entirely in pitch: at 15 m, 1 px
+        # of corner error is 0.9 deg of roll but 7.6 deg of pitch. Weight the
+        # fragile channel down rather than believing it.
+        step = float(self.gate_horizon_max_step)
+        w = float(self.gate_horizon_gain)
+        w_pitch = w * float(self.gate_horizon_pitch_scale)
+        self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(
+            roll + _clamp(w * d_roll, step),
+            pitch + _clamp(w_pitch * d_pitch, step),
+            yaw,
+        )
+
+        # Integral term: teach the filter its gyro bias. omega = gyro - bg, so
+        # a persistent under-read of roll means bg[0] is too big.
+        #
+        # Anti-windup is not optional here. The integral is only meaningful
+        # once the proportional term has pulled the innovation small — a large
+        # innovation means the attitude is simply wrong, or the pose is bad,
+        # and integrating it drives the bias to its rail. Runs 155234/155700
+        # both pinned bg at 8 deg/s that way, which is a rotation rate no real
+        # gyro bias reaches, and the filter then flew on that fiction.
+        t_now = self._last_t
+        if self.gate_horizon_bias_gain > 0.0 and t_now is not None:
+            settled = (
+                max(abs(d_roll), abs(d_pitch)) <= self.gate_bias_innov_max
+            )
+            if self._last_horizon_t is not None and settled:
+                dt = float(t_now - self._last_horizon_t)
+                if 0.0 < dt <= 1.0:
+                    ki = float(self.gate_horizon_bias_gain) * dt
+                    lim = float(self.gyro_bias_limit)
+                    self.x[self.IDX_BG + 0] = _clamp(
+                        self.x[self.IDX_BG + 0] - ki * d_roll, lim
+                    )
+                    self.x[self.IDX_BG + 1] = _clamp(
+                        self.x[self.IDX_BG + 1]
+                        - ki * float(self.gate_horizon_pitch_scale) * d_pitch,
+                        lim,
+                    )
+            self._last_horizon_t = t_now
+
+        self._gravity_aligned = True
+        return True
+
+    def correct_gate_yaw(self, gate_normal_body: np.ndarray) -> bool:
+        """Absolute yaw from the gate plane, anchored per gate.
+
+        The gate's through-axis gives heading *relative* to that gate. The
+        first solid sighting anchors what the gate's world heading is; later
+        sightings then pin yaw against that anchor instead of letting it
+        integrate away. Re-anchors when the tracked gate changes.
+        """
+        if self.gate_yaw_gain <= 0.0:
+            return False
+        v = np.asarray(gate_normal_body, dtype=np.float64).reshape(3)
+        if not np.all(np.isfinite(v)):
+            return False
+        n = float(np.linalg.norm(v))
+        if n < 1e-6:
+            return False
+        v = v / n
+        if float(v[0]) < 0.0:
+            v = -v  # normal may point either way through the gate
+        _roll, _pitch, yaw = quat_to_rpy(self.x[self.IDX_Q : self.IDX_Q + 4])
+        # Rotate into NED with the full attitude rather than yaw alone, so
+        # roll/pitch do not leak into the heading.
+        v_ned = quat_to_rot(self.x[self.IDX_Q : self.IDX_Q + 4]) @ v
+        # Gate seen edge-on / normal near vertical: no usable heading.
+        if math.hypot(float(v_ned[0]), float(v_ned[1])) < 0.30:
+            return False
+        heading_now = math.atan2(float(v_ned[1]), float(v_ned[0]))
+
+        gate_pos = self._gate1_ned
+        moved = (
+            gate_pos is None
+            or self._yaw_anchor_pos is None
+            or float(np.linalg.norm(gate_pos - self._yaw_anchor_pos)) > 4.0
+        )
+        if moved:
+            self._yaw_anchor_pos = (
+                None if gate_pos is None else np.asarray(gate_pos).copy()
+            )
+            self._yaw_anchor = None
+            self._yaw_anchor_acc = np.zeros(2, dtype=np.float64)
+            self._yaw_anchor_n = 0
+
+        if self._yaw_anchor_n < self.gate_yaw_anchor_n:
+            # Average the opening sightings so one bad pose cannot define the
+            # reference, then freeze. An EMA anchor is no good here: it simply
+            # walks along with the drift it is supposed to be catching.
+            self._yaw_anchor_acc += np.array(
+                [math.cos(heading_now), math.sin(heading_now)]
+            )
+            self._yaw_anchor_n += 1
+            if self._yaw_anchor_n >= self.gate_yaw_anchor_n:
+                self._yaw_anchor = math.atan2(
+                    float(self._yaw_anchor_acc[1]),
+                    float(self._yaw_anchor_acc[0]),
+                )
+            return False
+
+        innov = _wrap_angle(float(self._yaw_anchor) - heading_now)
+        self.last_yaw_innov = innov
+        self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(
+            _roll,
+            _pitch,
+            _wrap_angle(
+                yaw
+                + _clamp(
+                    float(self.gate_yaw_gain) * innov,
+                    float(self.gate_yaw_max_step),
+                )
+            ),
+        )
+        t_now = self._last_t
+        if self.gate_yaw_bias_gain > 0.0 and t_now is not None:
+            settled = abs(innov) <= self.gate_bias_innov_max
+            if self._last_yaw_t is not None and settled:
+                dt = float(t_now - self._last_yaw_t)
+                if 0.0 < dt <= 1.0:
+                    self.x[self.IDX_BG + 2] = _clamp(
+                        self.x[self.IDX_BG + 2]
+                        - float(self.gate_yaw_bias_gain) * dt * innov,
+                        float(self.gyro_bias_limit),
+                    )
+            self._last_yaw_t = t_now
+        return True
 
     def state(self) -> EKFState:
         return EKFState(
@@ -247,7 +510,11 @@ class DroneEKF:
             self._last_t = timestamp
             return self.state()
         dt = float(timestamp - self._last_t)
-        if dt <= 0.0 or dt > 0.05:
+        if dt <= 0.0:
+            return self.state()
+        # CE / slow packet gaps: do not drop the sample (old 50 ms skip left
+        # attitude frozen → shallow pilot lean). Cap one step; sub-step rest.
+        if dt > 0.25:
             self._last_t = timestamp
             return self.state()
         self._last_t = timestamp
@@ -271,36 +538,56 @@ class DroneEKF:
                     roll_a, pitch_a, yaw
                 )
                 self._gravity_aligned = True
-            # No continuous accel blend: when omega≈0 under a held lean the
-            # soft pull fought gyro and dragged the estimate toward level
-            # while truth held the step (step_pitch_20260728_174353).
+            elif self.accel_tilt_gain > 0.0:
+                # Off by default — see EKF_ACCEL_TILT_GAIN. A wrong attitude
+                # estimate fakes the same |acc_ned| as a real lean, so this
+                # gate self-locks past ~8° of error and cannot be loosened
+                # without re-breaking the held step. Kept for experiments;
+                # correct_gate_horizon is the aid that actually bounds drift.
+                R_now = quat_to_rot(self.x[self.IDX_Q : self.IDX_Q + 4])
+                acc_ned = R_now @ acc_body + G_NED
+                coasting = (
+                    float(np.linalg.norm(acc_ned)) <= self.accel_tilt_max_acc
+                )
+                quiet = float(np.linalg.norm(omega)) <= self.accel_tilt_max_rate
+                if coasting and quiet:
+                    w = min(1.0, float(self.accel_tilt_gain) * dt)
+                    self.x[self.IDX_Q : self.IDX_Q + 4] = quat_from_rpy(
+                        roll + w * _wrap_angle(roll_a - roll),
+                        pitch + w * _wrap_angle(pitch_a - pitch),
+                        yaw,
+                    )
 
-        q = quat_normalize(self.x[self.IDX_Q : self.IDX_Q + 4])
-        R = quat_to_rot(q)
-        acc_ned = R @ acc_body + G_NED
+        remaining = dt
+        while remaining > 1e-9:
+            step = min(remaining, 0.05)
+            remaining -= step
+            q = quat_normalize(self.x[self.IDX_Q : self.IDX_Q + 4])
+            R = quat_to_rot(q)
+            acc_ned = R @ acc_body + G_NED
 
-        self.x[self.IDX_P : self.IDX_P + 3] += (
-            self.x[self.IDX_V : self.IDX_V + 3] * dt
-            + 0.5 * acc_ned * dt * dt
-        )
-        self.x[self.IDX_V : self.IDX_V + 3] += acc_ned * dt
-        dq = quat_from_gyro(omega, dt)
-        self.x[self.IDX_Q : self.IDX_Q + 4] = quat_normalize(
-            quat_multiply(q, dq)
-        )
+            self.x[self.IDX_P : self.IDX_P + 3] += (
+                self.x[self.IDX_V : self.IDX_V + 3] * step
+                + 0.5 * acc_ned * step * step
+            )
+            self.x[self.IDX_V : self.IDX_V + 3] += acc_ned * step
+            dq = quat_from_gyro(omega, step)
+            self.x[self.IDX_Q : self.IDX_Q + 4] = quat_normalize(
+                quat_multiply(q, dq)
+            )
 
-        # Covariance: diagonal process noise (practical racing EKF).
-        q_pos = (0.5 * self.accel_noise * dt * dt) ** 2
-        q_vel = (self.accel_noise * dt) ** 2
-        q_att = (self.gyro_noise * dt) ** 2
-        q_bias = (self.bias_noise * dt) ** 2
-        for i in range(3):
-            self.P[self.IDX_P + i, self.IDX_P + i] += q_pos
-            self.P[self.IDX_V + i, self.IDX_V + i] += q_vel
-            self.P[self.IDX_BA + i, self.IDX_BA + i] += q_bias
-            self.P[self.IDX_BG + i, self.IDX_BG + i] += q_bias
-        for i in range(4):
-            self.P[self.IDX_Q + i, self.IDX_Q + i] += q_att
+            # Covariance: diagonal process noise (practical racing EKF).
+            q_pos = (0.5 * self.accel_noise * step * step) ** 2
+            q_vel = (self.accel_noise * step) ** 2
+            q_att = (self.gyro_noise * step) ** 2
+            q_bias = (self.bias_noise * step) ** 2
+            for i in range(3):
+                self.P[self.IDX_P + i, self.IDX_P + i] += q_pos
+                self.P[self.IDX_V + i, self.IDX_V + i] += q_vel
+                self.P[self.IDX_BA + i, self.IDX_BA + i] += q_bias
+                self.P[self.IDX_BG + i, self.IDX_BG + i] += q_bias
+            for i in range(4):
+                self.P[self.IDX_Q + i, self.IDX_Q + i] += q_att
 
         # Mark Gate-2 belief as stale once it ages (still used for look-at).
         # Never promote stale→fresh here; only PnP corrections set fresh=True.

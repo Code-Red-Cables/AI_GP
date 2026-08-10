@@ -37,13 +37,20 @@ class Waypoint:
     """
 
     def __init__(self, n, e, d, yaw_deg=0.0, *, arrive_radius=None,
-                 yaw_tol_deg=None, dwell_s=None, name=""):
+                 yaw_tol_deg=None, dwell_s=None, name="",
+                 active_gate=None, event=None, t=None):
         self.pos = (float(n), float(e), float(d))
         self.yaw = math.radians(float(yaw_deg)) if yaw_deg is not None else None
         self.arrive_radius = arrive_radius
         self.yaw_tol = math.radians(yaw_tol_deg) if yaw_tol_deg is not None else None
         self.dwell_s = dwell_s
         self.name = name or ""
+        # Optional remember-path tags (from capture / GATE_PASSED).
+        self.active_gate = (
+            int(active_gate) if active_gate is not None else None
+        )
+        self.event = event
+        self.t = float(t) if t is not None else None
 
     @property
     def yaw_deg(self):
@@ -63,10 +70,15 @@ class Mission:
     completes. ``loop=True``: wrap back to the first waypoint and fly it again.
     """
 
-    def __init__(self, waypoints, loop=False, name="mission"):
+    def __init__(self, waypoints, loop=False, name="mission", *,
+                 ekf_use_pnp=None, keep_until_gate=None):
         self.waypoints = list(waypoints)
         self.loop = bool(loop)
         self.name = name
+        self.ekf_use_pnp = ekf_use_pnp
+        self.keep_until_gate = (
+            int(keep_until_gate) if keep_until_gate is not None else None
+        )
 
     def __len__(self):
         return len(self.waypoints)
@@ -121,9 +133,10 @@ def load_mission(path):
 
     Schema (see :func:`save_mission`)::
 
-        {"name": "...", "loop": false,
+        {"name": "...", "loop": false, "ekf_use_pnp"?, "keep_until_gate"?,
          "waypoints": [{"n":, "e":, "d":, "yaw_deg":,
-                        "arrive_radius"?, "yaw_tol_deg"?, "dwell_s"?, "name"?}, ...]}
+                        "arrive_radius"?, "yaw_tol_deg"?, "dwell_s"?, "name"?,
+                        "active_gate"?, "event"?, "t"?}, ...]}
 
     ``yaw_deg`` may be ``null`` to HOLD the current heading at that waypoint (no turn);
     omitting it defaults to 0 (face North).
@@ -143,13 +156,22 @@ def load_mission(path):
                 arrive_radius=w.get("arrive_radius"),
                 yaw_tol_deg=w.get("yaw_tol_deg"),
                 dwell_s=w.get("dwell_s"),
-                name=w.get("name", "")))
+                name=w.get("name", ""),
+                active_gate=w.get("active_gate"),
+                event=w.get("event"),
+                t=w.get("t"),
+            ))
         except (KeyError, TypeError, ValueError):
             continue
     if not wps:
         return None
-    return Mission(wps, loop=bool(raw.get("loop", False)),
-                   name=raw.get("name", "mission"))
+    return Mission(
+        wps,
+        loop=bool(raw.get("loop", False)),
+        name=raw.get("name", "mission"),
+        ekf_use_pnp=raw.get("ekf_use_pnp"),
+        keep_until_gate=raw.get("keep_until_gate"),
+    )
 
 
 def save_mission(mission, path):
@@ -157,14 +179,100 @@ def save_mission(mission, path):
     data = {
         "name": mission.name,
         "loop": mission.loop,
-        "waypoints": [
-            {"n": w.pos[0], "e": w.pos[1], "d": w.pos[2],
-             "yaw_deg": round(w.yaw_deg, 3) if w.yaw is not None else None,
-             "name": w.name}
-            for w in mission.waypoints
-        ],
+        "waypoints": [],
     }
+    if getattr(mission, "ekf_use_pnp", None) is not None:
+        data["ekf_use_pnp"] = int(mission.ekf_use_pnp)
+    if getattr(mission, "keep_until_gate", None) is not None:
+        data["keep_until_gate"] = int(mission.keep_until_gate)
+    for w in mission.waypoints:
+        row = {
+            "n": w.pos[0],
+            "e": w.pos[1],
+            "d": w.pos[2],
+            "yaw_deg": round(w.yaw_deg, 3) if w.yaw is not None else None,
+            "name": w.name,
+        }
+        if w.active_gate is not None:
+            row["active_gate"] = int(w.active_gate)
+        if w.event:
+            row["event"] = w.event
+        if w.t is not None:
+            row["t"] = round(float(w.t), 3)
+        data["waypoints"].append(row)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
+
+
+def _gate_index_from_name(name: str):
+    """Parse gate number from names like gate1 / gate_1 / g1."""
+    if not name:
+        return None
+    import re
+    m = re.search(r"(?:gate|g)_?(\d+)$", str(name).strip(), re.I)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def keep_until_gate(mission, gate: int) -> Mission:
+    """Return a prefix mission through the named / tagged gate.
+
+    Keeps waypoints up to and including the first match for ``gate``:
+      1. ``event==gate_pass`` and ``active_gate==gate``, else
+      2. ``active_gate==gate``, else
+      3. name like ``gate{N}`` / ``gate_N``.
+
+    Raises ``ValueError`` if that gate cannot be found (need a richer capture).
+    """
+    g = int(gate)
+    if g < 1:
+        raise ValueError("keep_until_gate requires gate >= 1")
+    if mission is None or len(mission) < 2:
+        raise ValueError("mission needs at least 2 waypoints")
+
+    cut = None
+    for i, w in enumerate(mission.waypoints):
+        if (
+            str(getattr(w, "event", "") or "") == "gate_pass"
+            and w.active_gate == g
+        ):
+            cut = i
+            break
+    if cut is None:
+        for i, w in enumerate(mission.waypoints):
+            if w.active_gate == g:
+                cut = i
+                break
+    if cut is None:
+        for i, w in enumerate(mission.waypoints):
+            if _gate_index_from_name(w.name) == g:
+                cut = i
+                break
+    if cut is None:
+        raise ValueError(
+            f"no gate {g} marker in mission {mission.name!r} "
+            f"({len(mission)} wps). Re-capture with GATE_PASSED tags "
+            f"or name waypoints gate1, gate2, ..."
+        )
+
+    kept = list(mission.waypoints[: cut + 1])
+    if len(kept) < 2:
+        # Sparse gate-pass-only captures: synthesize a pad start so the
+        # spline has an approach segment before the first gate mark.
+        w0 = kept[0]
+        start = Waypoint(
+            0.0, 0.0, w0.pos[2],
+            w0.yaw_deg if w0.yaw is not None else 0.0,
+            name="start",
+        )
+        kept = [start, w0]
+    return Mission(
+        kept,
+        loop=False,
+        name=f"{mission.name}_until_g{g}",
+        ekf_use_pnp=getattr(mission, "ekf_use_pnp", None),
+        keep_until_gate=g,
+    )

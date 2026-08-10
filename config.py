@@ -50,7 +50,7 @@ LATERAL_LEAN_SIGN = float(
 )
 # Hard attitude clamp in controller (pilot lean must stay ≤ this).
 MAX_LEAN_RAD    = math.radians(
-    float(os.environ.get('MAX_LEAN_DEG', '48.0'))
+    float(os.environ.get('MAX_LEAN_DEG', '62.0'))
 )
 KP_ATT          = 1.8       # demo: 0.6 normalized gain * 3.0 max rate
 KD_ATT          = 0.09      # demo: 0.03 normalized damping * 3.0 max rate
@@ -78,7 +78,13 @@ FORWARD_PITCH_SIGN = float(os.environ.get('FORWARD_PITCH_SIGN', '1.0'))
 MAX_RATE_RAD_S  = 1.05      # demo rate_cap 0.35 * 3.0 max rate
 MAX_THRUST      = 0.90
 MIN_THRUST      = 0.05
-CONTROL_HZ      = 100
+# VADR-TS-001 4.4 requires a command rate *below* 100 Hz, so 100 -- the rate
+# every recorded result was flown at -- sits exactly on the boundary and is not
+# strictly compliant. 99 is, and at a 1% difference in loop period it cannot
+# plausibly change the flight the way an untested 90 might; the simulator went
+# away before anything could be re-flown, so the smallest compliant step is the
+# only one worth taking.
+CONTROL_HZ      = int(os.environ.get('CONTROL_HZ', '99'))
 TELEMETRY_TIMEOUT_S = 1.25
 SENSOR_FUTURE_TOLERANCE_S = 0.05
 CONTROL_MIN_DT_S = 1.0 / 500.0
@@ -116,10 +122,11 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # ---- Flight mode for main.py ----
 # assist  = image-chase on the manual attitude+hover plant (default).
 # kalman  = dual-gate PnP body-path / EKF geometric planner.
+# bc      = behavior-cloned MLP over human laps (see bc_planner.py; unflown).
 FLIGHT_MODE = os.environ.get('FLIGHT_MODE', 'assist').strip().lower()
-if FLIGHT_MODE not in {'assist', 'kalman', 'spline'}:
+if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'bc'}:
     raise ValueError(
-        'FLIGHT_MODE must be "assist", "kalman" or "spline"'
+        'FLIGHT_MODE must be "assist", "kalman", "spline" or "bc"'
     )
 
 # ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
@@ -190,8 +197,27 @@ ASSIST_ROLL_EXTREME_BOOST = float(
     os.environ.get('ASSIST_ROLL_EXTREME_BOOST', '0.28')
 )
 # Coast punch: soft centre-seeking bank when |nx| grows (not full chase).
+#
+# Restored to the 0.50 that coast_center_roll() itself defaults to, after
+# measuring what the 2026-07-30 runs that actually scored gate 1 commanded
+# (042441/044140/044830/044304/042525/041807/043504/045233/045645, coast-phase
+# rows binned by |nx|, |desired_roll| in degrees):
+#
+#   |nx|        flown median   flown p90   frac 0.30   frac 0.50
+#   0.05-0.10        0.0          1.7         0.0         0.0
+#   0.10-0.15        1.0          2.5         0.9         1.5
+#   0.15-0.25        1.9          7.0         2.2         3.7
+#   0.25+            5.6          7.7         3.5         5.9
+#
+# 0.30 could only produce 3.5 deg where those runs banked 5.6 -- a 37% authority
+# deficit precisely when the gate is far off centre and the drone has to recover
+# -- and total error against the flown medians is 4.55 deg at 0.30 against 2.84
+# at 0.50, with every 0.50 value still inside the flown median..p90 envelope.
+# The deadband stays at 0.10 because that matches the flown 0.0 deg median below
+# |nx| 0.10. Unflown: the simulator was unavailable, so this is a restoration
+# toward measured behaviour rather than new tuning. Override to revert.
 ASSIST_COAST_ROLL_NX = float(os.environ.get('ASSIST_COAST_ROLL_NX', '0.10'))
-ASSIST_COAST_ROLL_FRAC = float(os.environ.get('ASSIST_COAST_ROLL_FRAC', '0.30'))
+ASSIST_COAST_ROLL_FRAC = float(os.environ.get('ASSIST_COAST_ROLL_FRAC', '0.50'))
 # Forward speed in roll plan: faster → harder bank (less time to close ey).
 ASSIST_ROLL_SPEED_REF_MPS = float(
     os.environ.get('ASSIST_ROLL_SPEED_REF_MPS', '3.5')
@@ -209,8 +235,16 @@ ASSIST_ROLL_ALIGN_COS_MIN = float(
 ASSIST_ROLL_ALIGN_YAW_COS = float(
     os.environ.get('ASSIST_ROLL_ALIGN_YAW_COS', '0.70')
 )
+# Both squaring yaws default off. They close a loop on the PnP through-axis,
+# but gate_normal_* does not swing when the drone yaws -- 203406 held it at
+# (0.94, 0.13) through a 0 -> -41.6 deg turn -- so the bearing error never
+# shrinks and the nose winds off ~40 deg with the gate sitting dead centre
+# (norm_x 0.005) at 10 m, carrying the drone 6 m wide of gate 1. Disabling
+# both took a 1.0x batch from 0/8 gates and a collision every run to 2/6
+# through gate 1 with four clean runs. yaw_keep_in_frame still yaws when the
+# gate nears the frame edge, which is the only yaw the approach needs.
 ASSIST_YAW_ALIGN_MAX_DEG = float(
-    os.environ.get('ASSIST_YAW_ALIGN_MAX_DEG', '28.0')
+    os.environ.get('ASSIST_YAW_ALIGN_MAX_DEG', '0.0')
 )
 ASSIST_YAW_ALIGN_KP = float(os.environ.get('ASSIST_YAW_ALIGN_KP', '1.4'))
 # On the gate perpendicular / approach line → yaw to face gate centre + through.
@@ -220,7 +254,7 @@ ASSIST_CENTERLINE_YAW_DEAD_RAD = float(
     os.environ.get('ASSIST_CENTERLINE_YAW_DEAD_RAD', '0.04')
 )
 ASSIST_CENTERLINE_YAW_KP = float(
-    os.environ.get('ASSIST_CENTERLINE_YAW_KP', '2.0')
+    os.environ.get('ASSIST_CENTERLINE_YAW_KP', '0.0')
 )
 ASSIST_CENTERLINE_YAW_MAX_DEG = float(
     os.environ.get('ASSIST_CENTERLINE_YAW_MAX_DEG', '45.0')
@@ -332,6 +366,13 @@ ASSIST_COAST_S = float(os.environ.get('ASSIST_COAST_S', '0.8'))
 # race pass arrived ~3 s later.
 ASSIST_COMMIT_HOLD_S = float(os.environ.get('ASSIST_COMMIT_HOLD_S', '4.0'))
 ASSIST_SEEK_S = float(os.environ.get('ASSIST_SEEK_S', '14.0'))
+# Every duration above is read off a wall clock, which is correct at the 1.0x
+# the drone actually races at. Cheat Engine's 0.2x exists only to make the
+# course flyable by hand, and it silently compresses all of them 5x in sim
+# terms -- the 4.0 s commit hold becomes 0.8 s of simulated flight. Enable
+# this to retime them against the simulator so a slowed session behaves like
+# a full-speed one; it is a no-op at 1.0x, where the two clocks agree.
+ASSIST_SIM_CLOCK = _env_bool('ASSIST_SIM_CLOCK', False)
 # Visual commit only when |nx| below this (035647: +0.107 already off-centre
 # then coast over-banked right into the pillar).
 ASSIST_COMMIT_NX_MAX = float(os.environ.get('ASSIST_COMMIT_NX_MAX', '0.09'))
@@ -617,11 +658,18 @@ PILOT_TILT_COMPENSATE = int(
 
 # PlayStation / Xbox gamepad teleop (pygame). 1 = try to open a pad.
 PILOT_GAMEPAD = int(float(os.environ.get('PILOT_GAMEPAD', '1') or 1))
-# Easy-feel defaults: large deadzone, strong expo, heavy smoothing, reduced
-# stick authority unless R2/RT boost is held.
-PILOT_PAD_DEADZONE = float(os.environ.get('PILOT_PAD_DEADZONE', '0.16'))
-PILOT_PAD_EXPO = float(os.environ.get('PILOT_PAD_EXPO', '0.55'))
-PILOT_PAD_SMOOTH = float(os.environ.get('PILOT_PAD_SMOOTH', '0.28'))
+# Stick feel. Higher SMOOTH = snappier (1.0 = no filter). Lower EXPO =
+# more linear near center (faster reverse through zero).
+PILOT_PAD_DEADZONE = float(os.environ.get('PILOT_PAD_DEADZONE', '0.12'))
+PILOT_PAD_EXPO = float(os.environ.get('PILOT_PAD_EXPO', '0.22'))
+PILOT_PAD_SMOOTH = float(os.environ.get('PILOT_PAD_SMOOTH', '0.85'))
+# Fraction of full stick/trigger authority required before pilot arms. The old
+# 1e-4 gate let decaying pad filters and resting trigger noise spool motors
+# with "no input", which is an early-start DQ the moment hover thrust lifts
+# the craft. 0.12 ≈ a deliberate nudge; keyboard full-presses still pass.
+PILOT_ENGAGE_FRAC = float(os.environ.get('PILOT_ENGAGE_FRAC', '0.12'))
+# Consecutive control ticks that must clear PILOT_ENGAGE_FRAC before arm.
+PILOT_ENGAGE_TICKS = int(float(os.environ.get('PILOT_ENGAGE_TICKS', '3') or 3))
 # Fraction of lean/yaw/climb when NOT holding boost (R2). 1.0 = always full.
 # Full stick authority to the lean/yaw caps (triggers already own vertical).
 PILOT_PAD_SOFT_GAIN = float(os.environ.get('PILOT_PAD_SOFT_GAIN', '1.0'))
@@ -629,7 +677,7 @@ PILOT_PAD_SOFT_YAW = float(os.environ.get('PILOT_PAD_SOFT_YAW', '1.0'))
 # Full trigger climb/sink authority (triggers own vertical now).
 PILOT_PAD_SOFT_THRUST = float(os.environ.get('PILOT_PAD_SOFT_THRUST', '1.0'))
 # Right bumper: extra collective while held (on top of hover / rate climb).
-PILOT_PAD_THRUST_BUMP = float(os.environ.get('PILOT_PAD_THRUST_BUMP', '0.05'))
+PILOT_PAD_THRUST_BUMP = float(os.environ.get('PILOT_PAD_THRUST_BUMP', '0.07'))
 # Stick axis indices if auto-detect is wrong (pygame order).
 # Default: left stick roll/pitch (0/1), right stick X yaw (2).
 PILOT_PAD_AXIS_ROLL = int(
@@ -641,19 +689,63 @@ PILOT_PAD_AXIS_PITCH = int(
 PILOT_PAD_AXIS_YAW = int(float(os.environ.get('PILOT_PAD_AXIS_YAW', '2') or 2))
 # Soft keyboard defaults for pilot/manual (full keys still hit these caps).
 # Lean capped by MAX_LEAN_RAD. Climb/sink are rate setpoints (m/s).
-PILOT_LEAN_DEG = float(os.environ.get('PILOT_LEAN_DEG', '38.0'))
+PILOT_LEAN_DEG = float(os.environ.get('PILOT_LEAN_DEG', '52.0'))
 # Forward/back pitch can be hotter than roll (W / left-stick Y).
-PILOT_PITCH_LEAN_DEG = float(os.environ.get('PILOT_PITCH_LEAN_DEG', '45.0'))
-PILOT_YAW_RATE_DEG = float(os.environ.get('PILOT_YAW_RATE_DEG', '85.0'))
+PILOT_PITCH_LEAN_DEG = float(os.environ.get('PILOT_PITCH_LEAN_DEG', '60.0'))
+PILOT_YAW_RATE_DEG = float(os.environ.get('PILOT_YAW_RATE_DEG', '130.0'))
+# Pilot attitude rate ceiling (°/s). Separate from KALMAN_MAX_RATE so assist
+# stays tame; 0.9 rad/s (~52°/s) made left↔right reverse feel sluggish.
+PILOT_MAX_RATE_DEG = float(os.environ.get('PILOT_MAX_RATE_DEG', '160.0'))
+# Acro (rate mode): sticks command body rates. No angle self-level, no lean
+# cap — center stick = 0 rate (attitude stays where you left it).
+ACRO_ROLL_RATE_DEG = float(os.environ.get('ACRO_ROLL_RATE_DEG', '180.0'))
+ACRO_PITCH_RATE_DEG = float(os.environ.get('ACRO_PITCH_RATE_DEG', '180.0'))
+ACRO_YAW_RATE_DEG = float(os.environ.get('ACRO_YAW_RATE_DEG', '160.0'))
+# Acro trigger/R-F collective offsets (hotter than PILOT_*_AUTH).
+ACRO_CLIMB_AUTH = float(os.environ.get('ACRO_CLIMB_AUTH', '0.55'))
+ACRO_SINK_AUTH = float(os.environ.get('ACRO_SINK_AUTH', '0.55'))
+# Acro thrust clamp — wider than fly/pilot so full RT can actually punch.
+ACRO_THRUST_MIN = float(os.environ.get('ACRO_THRUST_MIN', '0.05'))
+ACRO_THRUST_MAX = float(os.environ.get('ACRO_THRUST_MAX', '0.70'))
+# Pad feel in acro only (mid-stick softer than full deflection).
+ACRO_PAD_SOFT_GAIN = float(os.environ.get('ACRO_PAD_SOFT_GAIN', '0.55'))
+ACRO_PAD_SOFT_YAW = float(os.environ.get('ACRO_PAD_SOFT_YAW', '0.45'))
+ACRO_PAD_EXPO = float(os.environ.get('ACRO_PAD_EXPO', '0.45'))
+ACRO_PAD_SMOOTH = float(os.environ.get('ACRO_PAD_SMOOTH', '0.55'))
 # Client slow-mo (pair with Cheat Engine / DxWnd at the SAME factor).
 # Toggle in pilot with O / D-pad ↓. Scale < 1 slows control rate + tape playhead.
 PILOT_SLOW_MO = int(float(os.environ.get('PILOT_SLOW_MO', '0') or 0))
-PILOT_SLOW_MO_SCALE = float(os.environ.get('PILOT_SLOW_MO_SCALE', '0.5'))
+PILOT_SLOW_MO_SCALE = float(os.environ.get('PILOT_SLOW_MO_SCALE', '0.77'))
+# Neutral-stick AHRS blend (roll gyro sign now matches EKF). Lets "level"
+# track gravity mid-race without a full hover pause. Disagreement / tumble
+# gates in read_pilot_attitude fall back to EKF. Set 0 to disable.
+PILOT_LEVEL_AHRS = int(float(os.environ.get('PILOT_LEVEL_AHRS', '1') or 0))
+PILOT_LEVEL_AHRS_BLEND_DEG = float(
+    os.environ.get('PILOT_LEVEL_AHRS_BLEND_DEG', '12.0')
+)
+# EKF↔AHRS disagreement grows as the EKF drifts, so a flat "they differ, keep
+# EKF" gate muted the correction exactly when it mattered (eligible on 11.6%
+# of 141532). Past DRIFT_DEG, if the accelerometer can vouch for AHRS, widen
+# the blend window instead of backing off. MAX_DISAGREE stays a hard bail.
+PILOT_LEVEL_AHRS_DRIFT_DEG = float(
+    os.environ.get('PILOT_LEVEL_AHRS_DRIFT_DEG', '8.0')
+)
+PILOT_LEVEL_AHRS_DRIFT_WIDEN = float(
+    os.environ.get('PILOT_LEVEL_AHRS_DRIFT_WIDEN', '2.5')
+)
+PILOT_LEVEL_AHRS_YAW_GATE_DEG = float(
+    os.environ.get('PILOT_LEVEL_AHRS_YAW_GATE_DEG', '35.0')
+)
+PILOT_LEVEL_AHRS_MAX_DISAGREE_DEG = float(
+    os.environ.get('PILOT_LEVEL_AHRS_MAX_DISAGREE_DEG', '60.0')
+)
+# Brief near-level window → snap EKF roll/pitch to accel (keep yaw).
+PILOT_LEVEL_REALIGN_S = float(os.environ.get('PILOT_LEVEL_REALIGN_S', '0.20'))
 
-PILOT_CLIMB_RATE = float(os.environ.get('PILOT_CLIMB_RATE', '1.8'))
-PILOT_CLIMB_AUTH = float(os.environ.get('PILOT_CLIMB_AUTH', '0.15'))
+PILOT_CLIMB_RATE = float(os.environ.get('PILOT_CLIMB_RATE', '2.8'))
+PILOT_CLIMB_AUTH = float(os.environ.get('PILOT_CLIMB_AUTH', '0.24'))
 # Extra collective cut for LT/F vs RT/R (must beat a hot hover).
-PILOT_SINK_AUTH = float(os.environ.get('PILOT_SINK_AUTH', '0.22'))
+PILOT_SINK_AUTH = float(os.environ.get('PILOT_SINK_AUTH', '0.30'))
 # 0 = triggers/keys map straight to collective (default). 1 = close a
 # climb-rate loop on EKF vz — disabled because bad vz pegs +auth at
 # "hover" and LT cannot overcome the runaway climb (run 215823).
@@ -741,7 +833,7 @@ ASSIST_ROLL_LEFT_MISS_BOOST = float(
     os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.0')
 )
 # Skip controller takeoff boost — assist clears the pad with soft lean only.
-if FLIGHT_MODE == 'assist' and 'TAKEOFF_DURATION_S' not in os.environ:
+if FLIGHT_MODE in ('assist', 'bc') and 'TAKEOFF_DURATION_S' not in os.environ:
     TAKEOFF_DURATION_S = 0.0
 # LEAN_THRUST_BOOST default is 0 (geometric gate1 height owns altitude in assist).
 
@@ -814,10 +906,11 @@ RESET_SIM_ON_START        = _env_bool('RESET_SIM_ON_START', False)
 SIM_RESET_SETTLE_S        = float(
     os.environ.get('SIM_RESET_SETTLE_S', '1.0')
 )
-# Total seconds from sim-reset / race start until arm. Sim countdown is ~3s;
-# 3.0 was −440ms, 3.45 was −50ms — 3.55 clears GO with a small margin.
+# Total seconds from sim-reset until arm (single aligned wait — do not stack
+# settle + hold). Sim countdown is ~3s; 3.0 was −440ms early-start DQ, 3.45
+# was −50ms. 3.40 keeps a thin margin without a post-GO dead stick feel.
 EARLY_START_HOLD_S        = float(
-    os.environ.get('EARLY_START_HOLD_S', '3.55')
+    os.environ.get('EARLY_START_HOLD_S', '3.40')
 )
 # After a floor crash (pos_d below spawn / Environment slam), send cmd 31000
 # and re-arm so the client can keep practicing without a manual restart.
@@ -833,6 +926,86 @@ CRASH_USE_SIM_ODOMETRY    = _env_bool('CRASH_USE_SIM_ODOMETRY', True)
 # When False, EKF only integrates IMU (dead reckoning) — no dual-gate PnP
 # corrections. Use on VQ1 to baseline IMU drift vs truth without vision.
 EKF_USE_PNP               = _env_bool('EKF_USE_PNP', True)
+# ---- Bounded attitude references (stop roll/pitch/yaw integrating away) ----
+# Gyro integration has no absolute reference, so "level" walks a few tenths of
+# a degree per second (141532 drifted +4° → −23° over 50 s). Two aids bound it.
+#
+# 1. Accelerometer tilt while coasting. OFF by default: "leaned under thrust"
+#    and "level but the estimate is wrong" produce a byte-identical
+#    accelerometer signal (both |acc_ned| = g·sin θ), so no gate built on
+#    accel alone can separate them. Loose enough to fix a 12° drift is loose
+#    enough to drag a held 30° lean flat again — which is exactly what
+#    step_pitch_20260728_174353 did. Needs an independent velocity or
+#    attitude reference, i.e. aid 2. Left wired for experiments.
+EKF_ACCEL_TILT_GAIN       = float(os.environ.get('EKF_ACCEL_TILT_GAIN', '0.0'))
+EKF_ACCEL_TILT_MAX_ACC    = float(
+    os.environ.get('EKF_ACCEL_TILT_MAX_ACC', '1.5')
+)
+EKF_ACCEL_TILT_MAX_RATE_DEG = float(
+    os.environ.get('EKF_ACCEL_TILT_MAX_RATE_DEG', '25.0')
+)
+# 2. The gate itself. An upright gate's vertical axis IS gravity, and PnP
+#    recovers it exactly at any tilt — unlike accel it is immune to
+#    acceleration. Gates are not perfectly vertical, so pull slowly and drop
+#    large disagreements. Set the gains to 0 to disable either aid.
+#    Runs as a Mahony filter: proportional pull on attitude (_GAIN) plus an
+#    integral term into gyro bias (_BIAS_GAIN). The bias term is the one that
+#    matters — it removes the cause, so attitude still holds through the
+#    0.6–2.5 s stretches with no gate in view (152912 had a near gate only
+#    64% of the time). _MAX_STEP_DEG clamps any single correction so one bad
+#    pose can nudge but never yank.
+#    DEFAULT OFF. Measured on run 155234 the live gate horizon arrives at only
+#    ~2 Hz with ~19° spread and a ~12° pitch offset, and at that quality the
+#    aid is worth exactly nothing: mean attitude error 26.7° with it versus
+#    26.8° without, while its bias integral railed and made real flights worse.
+#    It is not the idea that fails, it is the input — the same filter reaches
+#    3.7° at 5 Hz / 10° spread and 1.5° at 15 Hz / 5°. Turn it back on once
+#    vision clears roughly 5 Hz and 10°; `gh_fixes` and `gh_innov_*` in the
+#    telemetry CSV are how you check.
+EKF_GATE_HORIZON_GAIN     = float(
+    os.environ.get('EKF_GATE_HORIZON_GAIN', '0.0')
+)
+EKF_GATE_HORIZON_MAX_STEP_DEG = float(
+    os.environ.get('EKF_GATE_HORIZON_MAX_STEP_DEG', '1.0')
+)
+EKF_GATE_HORIZON_BIAS_GAIN = float(
+    os.environ.get('EKF_GATE_HORIZON_BIAS_GAIN', '0.30')
+)
+# Roll and pitch from a planar square are NOT equally trustworthy. A gate seen
+# near head-on barely constrains its own out-of-plane tilt, so corner jitter
+# lands almost entirely in pitch — measured at 15 m, 1 px of corner error is
+# 0.9° of roll but 7.6° of pitch. Live runs bear that out: gate roll matched
+# the accelerometer to +0.6° median while pitch sat ~12° off with ~19° spread.
+EKF_GATE_HORIZON_PITCH_SCALE = float(
+    os.environ.get('EKF_GATE_HORIZON_PITCH_SCALE', '0.25')
+)
+# Anti-windup. The bias integral is only meaningful once the proportional term
+# has pulled the innovation small; integrating a large one just drives bias to
+# the rail (155234/155700 both pinned it at the old 8°/s limit and then flew on
+# that fiction). Nothing real exceeds ~1.5°/s.
+EKF_GATE_BIAS_INNOV_MAX_DEG = float(
+    os.environ.get('EKF_GATE_BIAS_INNOV_MAX_DEG', '8.0')
+)
+EKF_GYRO_BIAS_LIMIT_DPS   = float(
+    os.environ.get('EKF_GYRO_BIAS_LIMIT_DPS', '1.5')
+)
+EKF_GATE_YAW_GAIN         = float(os.environ.get('EKF_GATE_YAW_GAIN', '0.0'))
+EKF_GATE_YAW_MAX_STEP_DEG = float(
+    os.environ.get('EKF_GATE_YAW_MAX_STEP_DEG', '1.0')
+)
+EKF_GATE_YAW_BIAS_GAIN    = float(
+    os.environ.get('EKF_GATE_YAW_BIAS_GAIN', '0.20')
+)
+# Outliers are screened on solve quality, never on distance from the filter's
+# own belief — a drifted filter would reject the evidence that it drifted.
+# Gate rotation degrades with range long before its centre does, so attitude
+# (not position) is taken from near, well-reprojecting, non-held frames only.
+EKF_GATE_ATT_MAX_RANGE_M  = float(
+    os.environ.get('EKF_GATE_ATT_MAX_RANGE_M', '30.0')
+)
+EKF_GATE_ATT_MAX_REPROJ_PX = float(
+    os.environ.get('EKF_GATE_ATT_MAX_REPROJ_PX', '6.0')
+)
 # Zero preserves the normal race client, which runs until Ctrl+C. A positive
 # value is useful for bounded simulator test attempts and exits through the
 # regular cleanup/disarm path.
@@ -840,6 +1013,9 @@ RUN_MAX_SECONDS           = float(
     os.environ.get('RUN_MAX_SECONDS', '0')
 )
 VISION_DEBUG_DIR          = os.environ.get('VISION_DEBUG_DIR', '_vision_debug')
+VISION_STATS_INTERVAL_S   = float(
+    os.environ.get('VISION_STATS_INTERVAL_S', '5.0')
+)
 VISION_DEBUG_INTERVAL_S   = float(
     os.environ.get('VISION_DEBUG_INTERVAL_S', '5.0')
 )
@@ -847,10 +1023,11 @@ GATE_FRAME_CAPTURE        = _env_bool('GATE_FRAME_CAPTURE', True)
 GATE_FRAME_CAPTURE_DIR    = os.environ.get(
     'GATE_FRAME_CAPTURE_DIR', 'frames'
 )
-# Zero saves every real detector hit. Increase this only if a lower capture
-# rate is desired, for example 0.2 for at most five images per second.
+# Minimum spacing between saved frames. Zero saves every real detector hit,
+# which is what filled the old flat frames/ directory with 282k images; 1/3 s
+# caps it at three per second, which is plenty for building a label set.
 GATE_FRAME_CAPTURE_INTERVAL_S = float(
-    os.environ.get('GATE_FRAME_CAPTURE_INTERVAL_S', '0.0')
+    os.environ.get('GATE_FRAME_CAPTURE_INTERVAL_S', '0.3333')
 )
 
 # ``auto`` prefers the four-keypoint pose model, then the YOLO-box/HSV hybrid,

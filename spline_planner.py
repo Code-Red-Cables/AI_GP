@@ -42,7 +42,7 @@ import numpy as np
 
 import config
 from control.pid import PIDConfig, PIDController
-from mission import load_mission
+from mission import Mission, load_mission
 from planning.spline_path import (
     BACK_WINDOW,
     FWD_WINDOW,
@@ -69,15 +69,19 @@ class SplinePlanner:
 
     name = 'spline_derived'
 
-    def __init__(self, mission_path: str | None = None):
-        path = mission_path or config.SPLINE_MISSION_PATH
-        # load_mission returns None for a missing or unreadable file.
-        self.mission = load_mission(path)
-        if self.mission is None:
-            raise ValueError(
-                f'no usable mission at {path!r}. Capture one first: '
-                'tools/tune_flight.py manual --capture'
-            )
+    def __init__(self, mission_path: str | Mission | None = None):
+        if isinstance(mission_path, Mission):
+            self.mission = mission_path
+            path = getattr(mission_path, 'name', 'mission') or 'mission'
+        else:
+            path = mission_path or config.SPLINE_MISSION_PATH
+            # load_mission returns None for a missing or unreadable file.
+            self.mission = load_mission(path)
+            if self.mission is None:
+                raise ValueError(
+                    f'no usable mission at {path!r}. Capture one first: '
+                    'tools/tune_flight.py pilot --capture'
+                )
         positions = np.array(
             [w.pos for w in self.mission.waypoints], dtype=np.float64
         )
@@ -236,7 +240,35 @@ class SplinePlanner:
         if dist < 1e-6:
             return self._hover(shared_data, 'degenerate_carrot')
         unit = to_carrot / dist
-        vel_cmd = unit * target_speed          # desired NED velocity
+
+        # ---- yaw first: face along the PATH tangent (not carrot-from-pos,
+        # which oscillates when you are off to the side). ----
+        tangent = (
+            self._point_at_s(s_proj + config.SPLINE_YAW_LOOKAHEAD_M)
+            - self._point_at_s(s_proj)
+        )
+        if float(np.hypot(tangent[0], tangent[1])) > 0.25:
+            yaw_want = math.atan2(tangent[1], tangent[0])
+        else:
+            # Degenerate short segment — fall back to carrot bearing.
+            yaw_want = math.atan2(to_carrot[1], to_carrot[0])
+        yaw_err = _wrap(yaw_want - yaw)
+        yaw_rate = float(np.clip(
+            config.SPLINE_KP_YAW * yaw_err,
+            -config.YAW_RATE_MAX_RAD_S, config.YAW_RATE_MAX_RAD_S,
+        ))
+
+        # Nose-first only. Large heading error → turn in place (no pitch/roll),
+        # otherwise a carrot behind the nose commands reverse tip ("backward").
+        align_lim = math.radians(
+            float(getattr(config, 'SPLINE_YAW_ALIGN_DEG', 35.0))
+        )
+        align = float(np.clip(
+            1.0 - abs(yaw_err) / max(align_lim, 1e-3),
+            0.0, 1.0,
+        ))
+        speed_cmd = target_speed * align
+        vel_cmd = unit * speed_cmd
 
         # ---- horizontal: NED velocity error -> desired lean ----
         vel_entry = shared_data.get('ekf_state') or {}
@@ -252,27 +284,20 @@ class SplinePlanner:
         des_pitch = float(np.clip(
             config.SPLINE_KP_VEL_LEAN * err_fwd * config.FORWARD_PITCH_SIGN,
             -self._max_lean, self._max_lean,
-        ))
+        )) * align
         des_roll = float(np.clip(
             config.SPLINE_KP_VEL_LEAN * err_right * config.LATERAL_LEAN_SIGN,
             -self._max_lean, self._max_lean,
-        ))
-        roll_rate = float(self._roll_pid.update(des_roll - roll, dt))
-        pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
-
-        # ---- yaw: point along the path tangent ----
-        tangent = self._point_at_s(
-            s_proj + config.SPLINE_YAW_LOOKAHEAD_M
-        ) - pos
-        if float(np.hypot(tangent[0], tangent[1])) > 0.25:
-            yaw_want = math.atan2(tangent[1], tangent[0])
+        )) * align
+        if align < 1e-3:
+            # Hard turn-in-place: level while yaw catches up.
+            des_pitch = 0.0
+            des_roll = 0.0
+            roll_rate = float(self._roll_pid.update(0.0 - roll, dt))
+            pitch_rate = float(self._pitch_pid.update(0.0 - pitch, dt))
         else:
-            yaw_want = yaw
-        yaw_err = _wrap(yaw_want - yaw)
-        yaw_rate = float(np.clip(
-            config.SPLINE_KP_YAW * yaw_err,
-            -config.YAW_RATE_MAX_RAD_S, config.YAW_RATE_MAX_RAD_S,
-        ))
+            roll_rate = float(self._roll_pid.update(des_roll - roll, dt))
+            pitch_rate = float(self._pitch_pid.update(des_pitch - pitch, dt))
 
         # ---- vertical: rate loop on the path's descent rate ----
         vd_cmd = float(vel_cmd[2])             # NED down-positive
@@ -283,17 +308,18 @@ class SplinePlanner:
         thrust = float(np.clip(thrust, config.MIN_THRUST, config.MAX_THRUST))
 
         shared_data['spline'] = {
-            'phase': 'track',
+            'phase': 'yaw_align' if align < 1e-3 else 'track',
             's': s_proj,
             's_end': self._s_end,
             'progress': s_proj / max(self._s_end, 1e-9),
             'idx': idx,
             'cross_track_m': cross_track,
-            'target_speed_mps': target_speed,
+            'target_speed_mps': speed_cmd,
             'lookahead_m': lookahead,
             'des_pitch': des_pitch,
             'des_roll': des_roll,
             'yaw_err_rad': yaw_err,
+            'yaw_align': align,
             'vd_cmd': vd_cmd,
             'vz_meas': vz_meas,
             'thrust': thrust,

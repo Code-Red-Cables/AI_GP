@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -82,6 +83,40 @@ class PracticeStoreTests(unittest.TestCase):
     def test_format_list_empty(self):
         text = ps.format_list()
         self.assertIn('No practice checkpoints', text)
+
+    def test_save_run_partial_vs_complete(self):
+        partial = self._rec_with_gates({1: 2.0, 2: 4.0, 6: 11.0})
+        msg = ps.save_run(partial, reason='reset', source='test')
+        self.assertIsNotNone(msg)
+        self.assertIn('PARTIAL', msg or '')
+        self.assertTrue(any(ps.runs_partial_dir().glob('partial_*.json')))
+        self.assertFalse(any(ps.runs_complete_dir().glob('complete_*.json')))
+
+        # Complete = cleared course last gate (17), not merely race_finish_ns.
+        times = {g: float(g) * 2.0 for g in range(1, 18)}
+        complete = self._rec_with_gates(times)
+        msg2 = ps.save_run(complete, reason='quit', source='test')
+        self.assertIsNotNone(msg2)
+        self.assertIn('COMPLETE', msg2 or '')
+        saved = list(ps.runs_complete_dir().glob('complete_*.json'))
+        self.assertEqual(len(saved), 1)
+        tape = json.loads(saved[0].read_text(encoding='utf-8'))
+        self.assertEqual(tape['run']['kind'], 'complete')
+        self.assertEqual(tape['run']['max_gate'], 17)
+
+        idx = ps.load_runs_index()
+        self.assertEqual(len(idx['runs']), 2)
+        self.assertEqual(idx['runs'][0]['kind'], 'partial')
+        self.assertEqual(idx['runs'][1]['kind'], 'complete')
+
+        text = ps.format_list()
+        self.assertIn('1 complete', text)
+        self.assertIn('1 partial', text)
+
+    def test_save_run_skips_empty(self):
+        rec = AttitudeTapeRecorder(name='empty')
+        rec.start(0.0)
+        self.assertIsNone(ps.save_run(rec, reason='quit'))
 
 
 if __name__ == '__main__':

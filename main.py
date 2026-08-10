@@ -219,8 +219,12 @@ def _wait_pad_vision(shared_data, timeout_s: float = 45.0) -> bool:
     """Block until vision sees gate 1 (pad facing the course).
 
     Assist mode accepts a YOLO box; kalman mode wants dual-gate PnP.
+
+    bc is grouped with assist because the cloned policy is trained on the 2D
+    detection only -- it never reads a PnP pose, so waiting for one would hang
+    the arm on a fix it does not need.
     """
-    want_pnp = config.FLIGHT_MODE != 'assist'
+    want_pnp = config.FLIGHT_MODE not in ('assist', 'bc')
     deadline = time.monotonic() + max(1.0, float(timeout_s))
     need = 'DUAL_PNP (gate1_body)' if want_pnp else 'YOLO gate or DUAL_PNP'
     print(

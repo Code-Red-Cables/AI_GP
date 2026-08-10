@@ -80,11 +80,27 @@ class Logger:
         vio  = d.get('vio_stats')        or {}
         race = d.get('race_status')     or {}
         vis  = d.get('vision')          or {}
+        dual = d.get('dual_gate_pnp')   or {}
+        vision_nav = d.get('navigation') or {}
         tel  = d.get('teleop_cmd')      or {}
         tgt  = d.get('planner_target')  or {}
-        gate_body = vis.get('gate_body') or (None, None, None)
-        gate_normal = vis.get('normal_body') or (None, None, None)
+        ekf  = d.get('ekf_state')       or {}
+        gyro_bias = ekf.get('gyro_bias') or (None, None, None)
+        gate_body = (
+            vis.get('gate_body') or dual.get('gate1_body')
+            or (None, None, None)
+        )
+        gate_normal = (
+            vis.get('normal_body') or dual.get('gate1_normal_body')
+            or (None, None, None)
+        )
         gate_ned = vis.get('gate_ned') or (None, None, None)
+        gate_range = vis.get('range_m')
+        if gate_range is None:
+            gate_range = dual.get('gate1_range_m')
+        gate_reproj = vis.get('pnp_reprojection_error')
+        if gate_reproj is None:
+            gate_reproj = dual.get('gate1_reproj_px')
 
         row = {
             # time
@@ -143,8 +159,19 @@ class Logger:
             'gate_area':      self._f(gate['area_px'],      0) if gate else 'nan',
             'gate_method':    gate.get('method', 'none') if gate else 'none',
             'gate_predicted': str(int(bool(gate and gate.get('predicted')))),
-            'gate_range':     self._f(vis.get('range_m')),
-            'gate_pose_method': vis.get('method', 'none'),
+            'gate_frame_id':  str(gate.get('frame_id', 'nan')) if gate else 'nan',
+            'gate_ts_ns':     str(gate.get('ts', 'nan')) if gate else 'nan',
+            'gate_norm_x':    self._f(dual.get('gate1_norm_x')),
+            'gate_norm_y':    self._f(dual.get('gate1_norm_y')),
+            'gate_range':     self._f(gate_range),
+            'gate_pose_method': (
+                vis.get('method', 'dual_pnp' if dual else 'none')
+            ),
+            'gate_pnp_held':  str(int(bool(dual.get('held')))),
+            'gate_pnp_n':     str(int(dual.get('n_solved') or 0)),
+            'vision_sim_time_ns': str(
+                vision_nav.get('sim_time_ns', 'nan')
+            ),
             'gate_body_x':    self._f(gate_body[0]),
             'gate_body_y':    self._f(gate_body[1]),
             'gate_body_z':    self._f(gate_body[2]),
@@ -154,9 +181,7 @@ class Logger:
             'gate_ned_n':     self._f(gate_ned[0]),
             'gate_ned_e':     self._f(gate_ned[1]),
             'gate_ned_d':     self._f(gate_ned[2]),
-            'gate_pnp_error': self._f(
-                vis.get('pnp_reprojection_error')
-            ),
+            'gate_pnp_error': self._f(gate_reproj),
             # OpenCV body-frame navigator output
             'nav_state':      nav.get('state', 'none'),
             'nav_fwd':        self._f(nav.get('forward_mps')),
@@ -180,7 +205,26 @@ class Logger:
             'att_source':     att.get('source', 'sim'),
             'vio_fixes':      str(vio.get('fixes', 0)),
             'vio_fix_rejects': str(vio.get('fixes_rejected', 0)),
+            # vision attitude aid (gate horizon / yaw anchor)
+            'gh_fixes':       str(ekf.get('gate_horizon_fixes', 0)),
+            'gh_rejects':     str(ekf.get('gate_att_rejects', 0)),
+            'gh_skips':       str(ekf.get('gate_att_skips', 0)),
+            'gy_fixes':       str(ekf.get('gate_yaw_fixes', 0)),
+            'gh_innov_r':     self._f(ekf.get('horizon_innov_roll')),
+            'gh_innov_p':     self._f(ekf.get('horizon_innov_pitch')),
+            'gy_innov':       self._f(ekf.get('yaw_innov')),
+            'bias_gx':        self._f(gyro_bias[0]),
+            'bias_gy':        self._f(gyro_bias[1]),
+            'bias_gz':        self._f(gyro_bias[2]),
             'active_gate':    race.get('active_gate', 'nan'),
+            'sim_boot_ms':    race.get('sim_boot_ms', 'nan'),
+            'race_start_ms':  race.get('race_start_ms', 'nan'),
+            'race_finish_ns': race.get('race_finish_ns', 'nan'),
+            'last_gate_time_ns': race.get('last_gate_time', 'nan'),
+            'race_rx_perf_s': self._f(
+                race.get('received_perf_counter_s'), 9
+            ),
+            'race_rx_wall_ns': race.get('received_wall_time_ns', 'nan'),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
             # assist / kalman path snapshot

@@ -44,6 +44,24 @@ def _practice_dir() -> Path:
 
 PRACTICE_DIR = _practice_dir()
 INDEX_PATH = PRACTICE_DIR / 'index.json'
+# Round-1 course ends at gate 17 (same as tools/best_run.COURSE_LAST_GATE).
+COURSE_LAST_GATE = 17
+
+
+def runs_dir() -> Path:
+    return PRACTICE_DIR / 'runs'
+
+
+def runs_partial_dir() -> Path:
+    return runs_dir() / 'partial'
+
+
+def runs_complete_dir() -> Path:
+    return runs_dir() / 'complete'
+
+
+def runs_index_path() -> Path:
+    return runs_dir() / 'index.json'
 
 
 def _ensure_dir() -> Path:
@@ -51,8 +69,155 @@ def _ensure_dir() -> Path:
     return PRACTICE_DIR
 
 
+def _ensure_runs_dirs() -> tuple[Path, Path]:
+    partial = runs_partial_dir()
+    complete = runs_complete_dir()
+    partial.mkdir(parents=True, exist_ok=True)
+    complete.mkdir(parents=True, exist_ok=True)
+    return partial, complete
+
+
 def through_path(gate: int) -> Path:
     return _ensure_dir() / f'through_gate_{int(gate)}.json'
+
+
+def classify_run(
+    tape: dict[str, Any],
+    *,
+    last_gate: int = COURSE_LAST_GATE,
+) -> str:
+    """Return ``complete`` if the tape cleared the course last gate, else ``partial``.
+
+    ``race_finish_ns`` alone is not enough — early-start DQ also sets it.
+    """
+    gmax = None
+    for gp in tape.get('gate_passes') or []:
+        try:
+            g = int(gp.get('gate', -1))
+        except (TypeError, ValueError):
+            continue
+        if gmax is None or g > gmax:
+            gmax = g
+    if gmax is not None and gmax >= int(last_gate):
+        return 'complete'
+    return 'partial'
+
+
+def load_runs_index() -> dict[str, Any]:
+    path = runs_index_path()
+    if not path.exists():
+        return {'runs': []}
+    try:
+        raw = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {'runs': []}
+    if not isinstance(raw, dict):
+        return {'runs': []}
+    raw.setdefault('runs', [])
+    return raw
+
+
+def save_runs_index(index: dict[str, Any]) -> None:
+    _ensure_runs_dirs()
+    path = runs_index_path()
+    tmp = str(path) + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(index, f, indent=2)
+    os.replace(tmp, path)
+
+
+def save_run(
+    recorder_or_tape: AttitudeTapeRecorder | dict[str, Any],
+    *,
+    reason: str = 'end',
+    source: str = 'live',
+    collision: bool = False,
+    race_finish_ns: int | float | None = None,
+    last_gate: int = COURSE_LAST_GATE,
+    min_samples: int = 5,
+) -> Optional[str]:
+    """Archive a full attempt tape under ``practice/runs/{partial,complete}/``.
+
+    Always saves when there are enough samples (not only new bests). Returns a
+    short status string, or None when nothing was written.
+    """
+    if isinstance(recorder_or_tape, AttitudeTapeRecorder):
+        tape = recorder_or_tape.to_tape()
+    else:
+        tape = dict(recorder_or_tape)
+    samples = tape.get('samples') or []
+    if len(samples) < int(min_samples):
+        return None
+
+    kind = classify_run(tape, last_gate=last_gate)
+    gmax = None
+    t_max = None
+    for gp in tape.get('gate_passes') or []:
+        try:
+            g = int(gp.get('gate', -1))
+            t = float(gp['t'])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if gmax is None or g > gmax:
+            gmax = g
+            t_max = t
+
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    dur = float(tape.get('duration_s') or (samples[-1]['t'] if samples else 0.0))
+    g_tag = f'g{gmax}' if gmax is not None else 'g0'
+    t_tag = f'{(t_max if t_max is not None else dur):.3f}s'
+    name = f'{kind}_{stamp}_{g_tag}_{t_tag}'
+    partial_dir, complete_dir = _ensure_runs_dirs()
+    out_dir = complete_dir if kind == 'complete' else partial_dir
+    path = out_dir / f'{name}.json'
+
+    out = dict(tape)
+    out['name'] = name
+    out['run'] = {
+        'kind': kind,
+        'max_gate': gmax,
+        'time_to_max_gate_s': (
+            round(float(t_max), 4) if t_max is not None else None
+        ),
+        'duration_s': round(dur, 4),
+        'reason': str(reason),
+        'source': source,
+        'saved_at': stamp,
+        'collision': bool(collision),
+        'race_finish_ns': (
+            int(race_finish_ns)
+            if race_finish_ns is not None and int(race_finish_ns) > 0
+            else 0
+        ),
+        'course_last_gate': int(last_gate),
+        'n_samples': len(samples),
+    }
+    save_attitude_tape(path, out)
+
+    index = load_runs_index()
+    runs = index.setdefault('runs', [])
+    runs.append({
+        'kind': kind,
+        'max_gate': gmax,
+        'time_to_max_gate_s': out['run']['time_to_max_gate_s'],
+        'duration_s': out['run']['duration_s'],
+        'path': str(path),
+        'reason': str(reason),
+        'source': source,
+        'saved_at': stamp,
+        'collision': bool(collision),
+        'n_samples': len(samples),
+    })
+    # Keep the on-disk index from growing without bound.
+    if len(runs) > 500:
+        index['runs'] = runs[-500:]
+    save_runs_index(index)
+
+    g_txt = f'GATE {gmax}' if gmax is not None else 'no gate'
+    t_txt = f'{t_max:.3f}s' if t_max is not None else f'{dur:.3f}s'
+    return (
+        f'{kind.upper()} run saved ({g_txt} @ {t_txt}, {reason}) -> {path}'
+    )
 
 
 def load_index() -> dict[str, Any]:
@@ -309,29 +474,30 @@ def load_through_gate(gate: int) -> Optional[dict[str, Any]]:
 def format_list() -> str:
     index = load_index()
     gates = index.get('gates') or {}
+    lines: list[str] = []
     if not gates:
-        return (
-            'No practice checkpoints yet.\n'
-            'Fly pilot with the pad — faster through-gate attitude tapes '
-            'auto-save under practice/.\n'
-            'Then:  python tools/tune_flight.py pilot --practice-from-gate N'
-        )
-    lines = [
-        'Practice checkpoints (best attitude tape to clear each gate):',
-        '',
-        f'{"Gate":>6}  {"time":>8}  {"split":>8}  samples  path',
-    ]
-    for key in sorted(gates, key=lambda k: int(k)):
-        meta = gates[key]
-        t = meta.get('time_s')
-        sp = meta.get('split_from_prev_s')
-        t_s = f'{float(t):.3f}s' if t is not None else '—'
-        sp_s = f'{float(sp):.3f}s' if sp is not None else '—'
-        n = meta.get('n_samples', '—')
+        lines.append('No practice checkpoints yet.')
         lines.append(
-            f'  g{int(key):<4}  {t_s:>8}  {sp_s:>8}  {n!s:>7}  '
-            f'{meta.get("path", "")}'
+            'Fly pilot with the pad — faster through-gate attitude tapes '
+            'auto-save under practice/.'
         )
+    else:
+        lines.extend([
+            'Practice checkpoints (best attitude tape to clear each gate):',
+            '',
+            f'{"Gate":>6}  {"time":>8}  {"split":>8}  samples  path',
+        ])
+        for key in sorted(gates, key=lambda k: int(k)):
+            meta = gates[key]
+            t = meta.get('time_s')
+            sp = meta.get('split_from_prev_s')
+            t_s = f'{float(t):.3f}s' if t is not None else '—'
+            sp_s = f'{float(sp):.3f}s' if sp is not None else '—'
+            n = meta.get('n_samples', '—')
+            lines.append(
+                f'  g{int(key):<4}  {t_s:>8}  {sp_s:>8}  {n!s:>7}  '
+                f'{meta.get("path", "")}'
+            )
     lines.append('')
     lines.append(
         'Replay attitude through gate N, then you fly N+1+:'
@@ -343,4 +509,25 @@ def format_list() -> str:
         '  Uses the longest saved tape (trimmed to N) so from-4 and '
         'from-5 share the same early stick inputs.'
     )
+    lines.append('')
+    runs = (load_runs_index().get('runs') or [])
+    n_partial = sum(1 for r in runs if r.get('kind') == 'partial')
+    n_complete = sum(1 for r in runs if r.get('kind') == 'complete')
+    lines.append(
+        f'Every-run archives: {n_complete} complete, {n_partial} partial '
+        f'(under practice/runs/).'
+    )
+    recent = runs[-8:]
+    if recent:
+        lines.append('Recent attempts:')
+        for meta in recent:
+            kind = str(meta.get('kind') or '?')
+            g = meta.get('max_gate')
+            t = meta.get('time_to_max_gate_s')
+            g_s = f'g{g}' if g is not None else 'g0'
+            t_s = f'{float(t):.3f}s' if t is not None else '—'
+            lines.append(
+                f'  {kind:<8}  {g_s:<4}  {t_s:>8}  '
+                f'{meta.get("saved_at", "")}  {meta.get("path", "")}'
+            )
     return '\n'.join(lines)

@@ -124,6 +124,55 @@ above 15° is the same class of bug.
 is meaningless if the feedback signal has the wrong sign, and no gain can
 compensate for it.
 
+### Attitude drift over a long run
+
+A clean attitude error at t=5 s says nothing about t=50 s. Integrated gyro has
+no absolute reference, so neutral slides: 141532 walked +4° → −23° across one
+run. Check the error at the **end** of a full-length run, not just after arm.
+
+The accelerometer cannot bound it. On a quadrotor, "leaned + accelerating" and
+"level + wrong estimate" put out the same `|acc_ned| = g·sin θ`, so any gate
+loose enough to fix a 12° drift also drags a held 30° lean flat
+(`step_pitch_20260728_174353`). `EKF_ACCEL_TILT_GAIN` ships at 0 for that
+reason — do not raise it without an independent velocity reference.
+
+What does bound it is the gate: an upright gate's vertical axis is gravity,
+recovered by PnP and immune to acceleration. It runs as a Mahony filter —
+`EKF_GATE_HORIZON_GAIN` (0.10) pulls attitude, `EKF_GATE_HORIZON_BIAS_GAIN`
+(0.30) integrates into gyro bias, with the same pair for yaw against a
+per-gate heading anchor.
+
+**The bias term is the one that matters.** A near gate is in view only ~64% of
+the time (152912, gaps up to 2.5 s), so pulling attitude while you can see a
+gate just lets it drift back when you cannot. Learning the bias removes the
+cause. On that measured duty cycle at 0.5°/s bias the worst excursion is
+1.29° with the proportional term alone and 0.07° with the bias term.
+
+Two traps worth not re-walking:
+
+- **Never gate a correction on how far it sits from the current estimate.**
+  The first version rejected disagreements over 30°, which made a drifted
+  filter reject the evidence that it had drifted — 23% of 152912's frames were
+  past that. Screen on solve quality instead (`EKF_GATE_ATT_MAX_RANGE_M`,
+  `EKF_GATE_ATT_MAX_REPROJ_PX`, geometry) and clamp the step
+  (`EKF_GATE_*_MAX_STEP_DEG`) so a rare bad pose can only nudge.
+- **`held` PnP frames are last frame's pose re-stamped.** Fine for position,
+  wrong for attitude — re-applying at 30 Hz drags the horizon toward a stale
+  value while the craft keeps rotating. They are skipped.
+
+If drift persists, read `gh_fixes` / `gh_skips` / `bias_gx` in the telemetry
+CSV (or `gh… b…` on the HUD) before touching a gain — on 152912 the aid was
+invisible because nothing reported whether it had fired at all. `gh_fixes`
+stuck at 0 usually means `EKF_USE_PNP=0` left over from a spline capture.
+
+`test_gate_attitude_aid.py` drives the whole convention chain (world pose →
+camera → pixels → solvePnP → body → EKF euler); run it after touching
+`camera_model`, the gate object model, or the euler helpers.
+
+Gates are not all perfectly vertical, so the horizon inherits a leaning gate's
+lean while you look at it. That offset does not poison the learned bias: once
+attitude settles on the tilt the innovation returns to zero.
+
 ## Phase 2 — Trim HOVER_THRUST · OLD sim
 
 The OLD sim gives exact altitude, so this verdict is measured, not inferred.
@@ -293,9 +342,10 @@ python tools/tune_flight.py yaw-align --seconds 12 \
 
 The harness yaws open-loop briefly to create an offset, then closes the loop.
 Pass if `|nx|` halves within ~4 s or finishes below ~0.15. If nx grows after
-close, **flip `RATE_SIGN_YAW`** (Phase 4.7 found `+1.0` recentres; `-1.0`
-drove the gate off-frame). Raise `kp-yaw` if recovery is slow; lower it if
-yaw oscillates. Phase 5 still re-checks under forward lean.
+close, **flip `RATE_SIGN_YAW`** if a right-side gate (`+nx`) yaws the wrong
+way (default `+1.0`). Circling after lock is ghost bang, not this sign.
+Raise `kp-yaw` if recovery is slow; lower it if yaw oscillates. Phase 5 still
+re-checks under forward lean.
 
 ## Phase 4.8 — Max-lean authority · OLD sim
 
@@ -400,3 +450,58 @@ Phase 2 settles it in twelve seconds.
 - `--feedback truth` is a diagnostic. Never ship gains found with it.
 - The gyro sign check needs deliberate motion; a stationary run tells you
   nothing about sign conventions.
+
+---
+
+## FROZEN — pilot key timeline through GATE 2 (2026-07-30)
+
+**Rule: every run must clear GATE 2. A G2 miss means we mistakenly adjusted
+pre-G2 — stop, restore the freeze file, fix the mistake. Never nudge on a
+G2 miss.** Autotune may only append after `t=6.78`. Source of truth:
+
+- `captured_controls_g2_locked.json`
+- backup: `captured_controls_g2_locked.freeze_20260730.json`
+
+| t (s) | action |
+|------:|--------|
+| 0.00 | W down (takeoff push) |
+| 2.05–2.45 | F pulse |
+| 2.42 | W up |
+| 3.00–3.20 | F pulse |
+| 3.08–3.54 | E yaw (~16°) into G1 (`lead_s=0.45`) |
+| 3.16 | W down |
+| **3.53** | **GATE 1** |
+| 3.60 | W up |
+| 3.75–4.55 | W hold (~0.80s) |
+| 4.20–5.40 | D right roll |
+| 4.70–5.55 | W hold (~0.85s) |
+| 5.70–6.50 | W hold (~0.80s) into mouth |
+| 5.95–6.45 | late D |
+| 6.25 | F down (sink into G2) |
+| **6.78** | **GATE 2** |
+
+Feel notes (locked): long W holds (not pulses); ~1.7s total D; pre-G1 is the
+original solid takeoff — never rewrite it. Finish-W 6.83→12.45 is part of the
+freeze (early gate2 tag is 6.78; physical clear ~12.3). Replay holds keys until
+the real GATE_PASSED — does not hand off when the early tag ends.
+
+### Liked post-G2 recipe (run `20260730_185103`)
+
+Sharp left after real GATE 2 clear — do not auto-nudge away from this:
+
+- snapshot: `captured_controls_liked_185103.json`
+- Q **120°** starting at **t=12.85** (after physical G2)
+- tilt follow **10°**, light A window
+- state flag: `freeze_post_g2=true` in `logs/autotune_g3_state.json`
+
+### Hybrid keys→ASSIST (recommended for reliable G2)
+
+Same freeze file, but stop open-loop keys at GATE 1 and let ASSIST tip G2:
+
+```powershell
+.\winvenv\Scripts\python.exe tools\tune_flight.py pilot `
+  --replay captured_controls_g2_locked.json `
+  --keep-until-gate 1 --assist-after-gate 1
+```
+
+REPLAY → ASSIST after real GATE 1; ASSIST → HUMAN after real GATE 2 (fly G3+, **K**).

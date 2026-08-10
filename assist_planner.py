@@ -28,6 +28,7 @@ import numpy as np
 import camera_model as cm
 import config
 from control.pid import PIDConfig, PIDController
+from sim_clock import SimClock, sim_boot_s
 
 
 def _f(value, default=None):
@@ -104,18 +105,102 @@ def pose_bearing_yaw_rad(body, aim_y_m: float | None = None) -> float | None:
     aim_y_m shifts the target in body-y so lateral nudge stays ∝ pose
     (atan2((ey−aim)/ex) shrinks with range — not a fixed image offset).
     """
-    if body is None:
+    geom = gate_lateral_geometry(body, nx=None, range_m=None, aim_y_m=aim_y_m)
+    if geom is None:
         return None
-    try:
-        ex = float(body[0])
-        ey = float(body[1])
-    except (TypeError, ValueError, IndexError):
-        return None
-    if not (math.isfinite(ex) and math.isfinite(ey)):
-        return None
+    return float(geom[2])
+
+
+def gate_lateral_geometry(
+    body,
+    nx=None,
+    range_m=None,
+    aim_y_m: float | None = None,
+) -> tuple[float, float, float] | None:
+    """Body-forward/right metres + bearing to the gate aim.
+
+    Prefers PnP body (ex, ey). If missing, derives ey from image nx × range
+    via the camera HFOV so yaw/roll still scale with real lateral separation.
+    Returns (ex_m, ey_m, bearing_rad) with +ey / +bearing = gate right of nose.
+    """
     if aim_y_m is None:
         aim_y_m = pose_aim_y_m()
-    return float(math.atan2(ey - float(aim_y_m), max(ex, 0.4)))
+    aim = float(aim_y_m)
+    ex = ey = None
+    if body is not None:
+        try:
+            bx = float(body[0])
+            by = float(body[1])
+        except (TypeError, ValueError, IndexError):
+            bx = by = float('nan')
+        if math.isfinite(bx) and math.isfinite(by) and bx > 0.2:
+            ex, ey = bx, by
+    if ex is None and nx is not None and range_m is not None:
+        try:
+            nx_f = float(nx)
+            rng = float(range_m)
+        except (TypeError, ValueError):
+            nx_f = rng = float('nan')
+        if math.isfinite(nx_f) and math.isfinite(rng) and rng > 0.5:
+            half_fov = math.radians(
+                0.5 * float(getattr(config, 'ASSIST_HFOV_DEG', 70.0))
+            )
+            bearing_img = float(np.clip(nx_f, -1.5, 1.5)) * half_fov
+            ex = max(0.4, rng * math.cos(bearing_img))
+            ey = rng * math.sin(bearing_img)
+    if ex is None or ey is None:
+        return None
+    bearing = float(math.atan2(ey - aim, max(ex, 0.4)))
+    return float(ex), float(ey), bearing
+
+
+def _lat_sep_t(ey_m: float) -> float:
+    """Smooth 0..1 strength from |ey| metres (both left and right)."""
+    ref = float(getattr(config, 'ASSIST_LAT_SEP_REF_M', 2.0))
+    t = float(np.clip(abs(float(ey_m)) / max(ref, 0.2), 0.0, 1.0))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def lateral_sep_gain(ey_m: float) -> tuple[float, float]:
+    """(|ey| metres) → (kp_mult, max_mult). Farther laterally → harder L/R turn."""
+    t = _lat_sep_t(ey_m)
+    kp_hi = float(getattr(config, 'ASSIST_YAW_LAT_SEP_KP_MULT', 2.8))
+    max_hi = float(getattr(config, 'ASSIST_YAW_LAT_SEP_MAX_MULT', 1.9))
+    return 1.0 + (kp_hi - 1.0) * t, 1.0 + (max_hi - 1.0) * t
+
+
+def roll_first_authority(
+    nx: float | None,
+    ey_m: float | None = None,
+) -> tuple[float, float]:
+    """Far sideways gate → (roll_first_t, yaw_scale).
+
+    ``t`` 0..1: how hard to prefer bank over yaw.
+    ``yaw_scale`` drops toward ASSIST_ROLL_FIRST_YAW_FRAC as t→1.
+    """
+    nx0 = float(getattr(config, 'ASSIST_ROLL_FIRST_NX', 0.18))
+    nx1 = float(getattr(config, 'ASSIST_ROLL_FIRST_NX_FULL', 0.38))
+    ey0 = float(getattr(config, 'ASSIST_ROLL_FIRST_EY_M', 1.2))
+    ey1 = float(getattr(config, 'ASSIST_ROLL_FIRST_EY_FULL_M', 2.8))
+    t = 0.0
+    if nx is not None and math.isfinite(float(nx)):
+        span = max(1e-3, nx1 - nx0)
+        u = float(np.clip((abs(float(nx)) - nx0) / span, 0.0, 1.0))
+        t = max(t, u * u * (3.0 - 2.0 * u))
+    if ey_m is not None and math.isfinite(float(ey_m)):
+        span = max(1e-3, ey1 - ey0)
+        u = float(np.clip((abs(float(ey_m)) - ey0) / span, 0.0, 1.0))
+        t = max(t, u * u * (3.0 - 2.0 * u))
+    yaw_floor = float(getattr(config, 'ASSIST_ROLL_FIRST_YAW_FRAC', 0.28))
+    yaw_scale = 1.0 - (1.0 - yaw_floor) * float(t)
+    return float(t), float(yaw_scale)
+
+
+def lateral_roll_sep_boost(ey_m: float) -> float:
+    """Symmetric roll gain from lateral separation metres."""
+    t = _lat_sep_t(ey_m)
+    hi = float(getattr(config, 'ASSIST_ROLL_LAT_SEP_MULT', 2.0))
+    return 1.0 + (hi - 1.0) * t
 
 
 def forward_speed_mps(shared_data, yaw: float, pitch: float, max_lean: float) -> float:
@@ -153,6 +238,7 @@ def cam_bank_lateral_bias_nx(
     lat_speed_mps: float,
     fwd_speed_mps: float,
     max_lean: float,
+    gain: float | None = None,
 ) -> float:
     """nx units to ADD to measured image nx (cancel bank/strafe cam coupling).
 
@@ -160,29 +246,16 @@ def cam_bank_lateral_bias_nx(
     far left in the frame (nx too negative). Add a positive bias so yaw/roll
     do not chase the false left. Symmetric for fly-right. Bias grows with
     |bank| and speed (same idea as cam_tilt_height_bias_m).
+
+    ``gain`` overrides ASSIST_CAM_ROLL_BIAS (used by the bank-bias learner).
     """
-    gain = float(getattr(config, 'ASSIST_CAM_ROLL_BIAS', 0.40))
-    if gain <= 0.0:
-        return 0.0
-    lean = max(1e-3, abs(float(max_lean)))
-    v_ref = max(0.5, float(getattr(config, 'ASSIST_CAM_TILT_SPEED_MPS', 6.0)))
-    bank = float(roll)
-    lat_v = float(lat_speed_mps)
-    # +rightward flight from bank and/or lateral velocity.
-    rightward = float(
-        np.clip(bank / lean, -1.5, 1.5)
-        + np.clip(lat_v / v_ref, -1.5, 1.5)
+    from vision.cam_bank_bias_learner import cam_bank_bias_from_gain
+
+    if gain is None:
+        gain = float(getattr(config, 'ASSIST_CAM_ROLL_BIAS', 0.40))
+    return cam_bank_bias_from_gain(
+        float(gain), roll, lat_speed_mps, fwd_speed_mps, max_lean
     )
-    if abs(rightward) < 0.05:
-        return 0.0
-    speed_mag = max(abs(lat_v), 0.45 * abs(float(fwd_speed_mps)))
-    speed_scale = float(np.clip(speed_mag / v_ref, 0.0, 1.5))
-    bank_scale = float(np.clip(abs(bank) / lean, 0.0, 1.5))
-    tilt_scale = float(np.clip(1.0 + max(speed_scale, bank_scale), 1.0, 2.5))
-    # Fly right → gate looks too right → subtract from nx (negative bias).
-    unit = float(np.clip(0.5 * rightward, -1.2, 1.2))
-    bias = -gain * tilt_scale * unit
-    return float(np.clip(bias, -0.55, 0.55))
 
 
 def cam_tilt_height_bias_m(
@@ -268,6 +341,10 @@ class AssistImagePlanner:
             ),
         )
         max_rate = float(config.KALMAN_MAX_RATE_RAD_S)
+        self._clock = SimClock() if getattr(
+            config, 'ASSIST_SIM_CLOCK', False
+        ) else None
+        self._now = 0.0
         self._max_yaw = max_yaw
         self._max_lean = math.radians(
             float(getattr(config, 'ASSIST_LEAN_DEG', config.KALMAN_MAX_LEAN_DEG))
@@ -325,6 +402,19 @@ class AssistImagePlanner:
         self._airborne_t = None
         self._last_area_px = None
         self._body_f = None
+        # Online bank→nx cam bias learner (pose vs image residuals).
+        from vision.cam_bank_bias_learner import BankBiasLearner
+        from vision.lateral_yaw_learner import LateralYawLearner
+        self._bank_bias_learner = BankBiasLearner()
+        # Imaginary-gate curriculum: farther left/right → harder yaw.
+        self._lat_yaw_learner = LateralYawLearner()
+        self._learn_save_ticks = 0
+        warmed = self._load_assist_learn()
+        if not warmed and bool(getattr(config, 'ASSIST_LAT_YAW_PRETRAIN', True)):
+            self._lat_yaw_learner.train_curriculum(rounds=3)
+        self._last_lat_yaw_kp_mult = 1.0
+        self._last_gate_pass = None
+        self._last_phase = 'hover'
         # Post-pass: lock next gate/pose before yawing (094827 haywire).
         self._gate_lock = True
         self._lock_count = 0
@@ -348,17 +438,28 @@ class AssistImagePlanner:
         self._course_mem_yaw_budget = 0.0
         self._next_course_mem = False
         self._des_pitch_f = None
+        self._last_des_roll = 0.0
+        self._last_roll_first_t = 0.0
+        self._last_roll_plan = None
+        self._last_through_body = None
+        self._last_centerline_align = False
         # Approach snapshot of next-next (survives dual dropout in the slot).
         self._snap_next_nx = None
         self._snap_next_ny = None
         self._snap_next_rng = None
         self._snap_next_body = None
         self._snap_next_t = None
+        # Visual-commit hold: finish current gate before chasing next.
+        self._slot_hold = False
+        self._slot_hold_t = None
 
     def reset_episode(self):
         self._yaw_pid.reset()
         self._roll_pid.reset()
         self._pitch_pid.reset()
+        if self._clock is not None:
+            self._clock.reset()
+        self._now = 0.0
         self._last_yaw_cmd = 0.0
         self._last_t = None
         self._nx_f = 0.0
@@ -381,6 +482,23 @@ class AssistImagePlanner:
         self._airborne_t = None
         self._last_area_px = None
         self._body_f = None
+        # Keep warm gains across episode reset when persistence is on
+        # (disk + in-RAM). Cold reset only when ASSIST_LEARN_PERSIST=0.
+        if not bool(getattr(config, 'ASSIST_LEARN_PERSIST', True)):
+            if getattr(self, '_bank_bias_learner', None) is not None:
+                self._bank_bias_learner.reset()
+            if getattr(self, '_lat_yaw_learner', None) is not None:
+                self._lat_yaw_learner.reset()
+                if bool(getattr(config, 'ASSIST_LAT_YAW_PRETRAIN', True)):
+                    self._lat_yaw_learner.train_curriculum(rounds=3)
+        self._last_lat_yaw_kp_mult = 1.0
+        self._last_gate_pass = None
+        self._last_phase = 'hover'
+        self._last_des_roll = 0.0
+        self._last_roll_first_t = 0.0
+        self._last_roll_plan = None
+        self._last_through_body = None
+        self._last_centerline_align = False
         self._gate_lock = True
         self._lock_count = 0
         self._lock_nx = None
@@ -405,6 +523,67 @@ class AssistImagePlanner:
         self._course_mem_yaw_budget = 0.0
         self._next_course_mem = False
         self._des_pitch_f = None
+        self._slot_hold = False
+        self._slot_hold_t = None
+
+    def _load_assist_learn(self) -> bool:
+        """Warm-start learners from disk. Returns True if a file was applied."""
+        if not bool(getattr(config, 'ASSIST_LEARN_PERSIST', True)):
+            return False
+        try:
+            from vision.assist_learn_store import (
+                apply_to_learners,
+                load_assist_learn,
+            )
+            data = load_assist_learn()
+            if not apply_to_learners(
+                data, self._bank_bias_learner, self._lat_yaw_learner
+            ):
+                return False
+            print(
+                '[ASSIST] loaded warm learn '
+                f'bank_k={self._bank_bias_learner.gain:.3f} '
+                f'n={self._bank_bias_learner.sample_count} '
+                f'yaw_mild={self._lat_yaw_learner.mild_mult:.2f} '
+                f'hard={self._lat_yaw_learner.hard_mult:.2f}',
+                flush=True,
+            )
+            return True
+        except Exception as exc:
+            print(f'[ASSIST] learn load skipped: {exc}', flush=True)
+            return False
+
+    def _maybe_save_assist_learn(self, *, force: bool = False) -> None:
+        """Persist warm gains so the next process starts warm."""
+        if not bool(getattr(config, 'ASSIST_LEARN_PERSIST', True)):
+            return
+        every = max(1, int(getattr(config, 'ASSIST_LEARN_SAVE_EVERY_N', 5)))
+        self._learn_save_ticks = int(
+            getattr(self, '_learn_save_ticks', 0)
+        ) + 1
+        if (not force) and (self._learn_save_ticks % every) != 0:
+            return
+        try:
+            from vision.assist_learn_store import (
+                save_assist_learn,
+                snapshot_from_learners,
+            )
+            # Anchor baselines to current warm values for episode reset.
+            self._bank_bias_learner.promote_baseline()
+            self._lat_yaw_learner.promote_baseline()
+            ok = save_assist_learn(
+                snapshot_from_learners(
+                    self._bank_bias_learner, self._lat_yaw_learner
+                )
+            )
+            if ok and force:
+                print(
+                    '[ASSIST] saved warm learn '
+                    f'bank_k={self._bank_bias_learner.gain:.3f}',
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f'[ASSIST] learn save skipped: {exc}', flush=True)
 
     def _reset_gate_lock(self) -> None:
         self._gate_lock = False
@@ -802,7 +981,7 @@ class AssistImagePlanner:
             self._lock_nx = nx_f
         if self._lock_count >= need:
             self._gate_lock = True
-            self._lock_ok_t = time.monotonic()
+            self._lock_ok_t = self._now
             self._last_yaw_cmd = 0.0
             print(
                 f'[ASSIST] gate lock ok nx={nx_f:+.3f} frames={self._lock_count}',
@@ -1032,128 +1211,404 @@ class AssistImagePlanner:
         max_hi = float(getattr(config, 'ASSIST_YAW_EXTREME_MAX_MULT', 1.7))
         return 1.0 + (kp_hi - 1.0) * t, 1.0 + (max_hi - 1.0) * t
 
-    def _seek_glimpse_yaw(
-        self, nx: float, dt: float, *, live: bool = False, body=None
-    ) -> float:
-        """Seek left/right yaw toward the next gate (image nx + optional pose).
+    def _lateral_ey_m(self, nx_cmd: float, body, range_m) -> float:
+        """Body-right metres to gate aim (+ = gate right of nose)."""
+        ex, ey, _ = self._lateral_ex_ey(nx_cmd, body, range_m)
+        return float(ey)
 
-        Same role as seek sink/climb: correct off-center gates before chase.
-        Far |nx| yaws harder (extreme boost).
-        """
-        half_fov = math.radians(
-            0.5 * float(getattr(config, 'ASSIST_HFOV_DEG', 70.0))
+    def _lateral_ex_ey(
+        self, nx_cmd: float, body, range_m
+    ) -> tuple[float, float, object]:
+        """(ex, ey_aim, through_body) for roll planning."""
+        pose_aim_y = pose_aim_y_m()
+        through = None
+        if body is not None:
+            try:
+                ex = float(body[0])
+                ey = float(body[1])
+            except (TypeError, ValueError, IndexError):
+                ex = ey = float('nan')
+            if math.isfinite(ex) and math.isfinite(ey) and ex > 0.2:
+                return ex, float(ey - pose_aim_y), through
+        geom = gate_lateral_geometry(None, nx=nx_cmd, range_m=range_m)
+        if geom is not None:
+            return float(geom[0]), float(geom[1] - pose_aim_y), through
+        return 1.0, 0.0, through
+
+    def _gate_through_body(self, shared_data) -> object:
+        dual = shared_data.get('dual_gate_pnp') or {}
+        th = dual.get('gate1_through_body')
+        if th is None or len(th) < 2:
+            return None
+        try:
+            return [float(th[0]), float(th[1]), float(th[2]) if len(th) > 2 else 0.0]
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    def _des_roll_from_lateral(
+        self,
+        nx_cmd: float,
+        body,
+        range_m,
+        *,
+        seek: bool = False,
+        through_body=None,
+        speed_mps: float | None = None,
+    ) -> float:
+        """Lateral lean toward the gate. Prefer roll-pulse plan (metres → n rolls)."""
+        ex, ey, _ = self._lateral_ex_ey(nx_cmd, body, range_m)
+        v_fwd = (
+            speed_mps
+            if speed_mps is not None
+            else getattr(self, '_last_v_fwd', None)
         )
-        yaw_img = float(nx) * half_fov
-        yaw_pose = pose_bearing_yaw_rad(body)
-        if yaw_pose is not None and abs(float(nx)) >= 0.03:
-            w = float(getattr(config, 'ASSIST_SEEK_YAW_POSE_WEIGHT', 0.45))
-            if yaw_img * float(yaw_pose) < 0.0:
-                # Image wins on sign conflict (pose can be stale latch).
-                w = 0.15
-            yaw_err = w * float(yaw_pose) + (1.0 - w) * yaw_img
-        else:
-            yaw_err = yaw_img
-        dead = float(getattr(config, 'ASSIST_YAW_ALIGN_DEAD_RAD', 0.035)) * 0.6
-        if abs(yaw_err) < dead and abs(float(nx)) < 0.025:
-            yaw_rate = 0.15 * self._last_yaw_cmd
-            self._last_yaw_cmd = yaw_rate
-            return yaw_rate
-        if live:
-            kp = float(getattr(config, 'ASSIST_SEEK_LIVE_YAW_KP', 1.90))
-            max_yaw = math.radians(
-                float(getattr(config, 'ASSIST_SEEK_LIVE_YAW_MAX_DEG', 42.0))
+        if bool(getattr(config, 'ASSIST_LATERAL_BY_ROLL', True)):
+            from vision.roll_lateral_planner import plan_rolls_for_ey
+            plan = plan_rolls_for_ey(
+                ey,
+                self._max_lean,
+                ex_m=ex,
+                through_body=through_body,
+                nx=float(nx_cmd) if nx_cmd is not None else None,
+                speed_mps=v_fwd,
             )
-        else:
-            kp = float(getattr(config, 'ASSIST_SEEK_YAW_KP', 1.25))
-            max_yaw = math.radians(
-                float(getattr(config, 'ASSIST_SEEK_YAW_MAX_DEG', 28.0))
+            self._last_roll_plan = plan
+            if plan.lean_frac <= 1e-6 or abs(plan.des_roll_sign_body) < 1e-6:
+                return 0.0
+            des = (
+                -self._lat_sign
+                * float(plan.des_roll_sign_body)
+                * float(plan.lean_frac)
+                * self._max_lean
             )
-        kp_m, max_m = self._nx_extreme_yaw_boost(nx)
-        kp *= kp_m
-        max_yaw = min(float(self._max_yaw), max_yaw * max_m)
-        # Far L/R: bang-bang saturate (132028 proportional only ~20°/s on
-        # nx=+0.51 while left ghosts stole the turn).
-        bang_nx = float(getattr(config, 'ASSIST_YAW_BANG_NX', 0.28))
-        if abs(float(nx)) >= bang_nx:
-            sign = 1.0 if float(yaw_err) >= 0.0 else -1.0
-            if abs(float(yaw_err)) < 1e-6:
-                sign = 1.0 if float(nx) >= 0.0 else -1.0
-            yaw_rate = sign * max_yaw
-        else:
-            yaw_rate = float(np.clip(kp * yaw_err, -max_yaw, max_yaw))
-        # Faster slew when far off-centre so the boost is usable in-flight.
-        base_slew = 220.0 if live else 180.0
-        max_step = math.radians(base_slew * max(1.0, 0.55 + 0.45 * kp_m)) * max(
-            1e-3, float(dt)
+            return float(np.clip(des, -self._max_lean, self._max_lean))
+
+        lean_scale = float(
+            getattr(
+                config,
+                'KALMAN_BODY_Y_LEAN_SCALE',
+                getattr(config, 'ASSIST_ROLL_SCALE', 0.45),
+            )
         )
-        yaw_rate = float(
+        if seek:
+            lean_scale *= float(getattr(config, 'ASSIST_SEEK_ROLL_FRAC', 0.75))
+        lat_err = float(nx_cmd)
+        if abs(ey) > 0.05 and range_m is not None and float(range_m) > 0.5:
+            lat_err = float(
+                np.clip(ey / max(1.0, float(range_m)), -1.2, 1.2)
+            )
+        lat_err *= lateral_roll_sep_boost(ey)
+        close_boost = 1.0 + 1.6 * min(abs(float(lat_err)) / 0.20, 1.8)
+        # Legacy path: also scale with forward speed.
+        from vision.roll_lateral_planner import speed_lean_boost
+        close_boost *= speed_lean_boost(
+            v_fwd,
+            float(ex) if ex is not None else 8.0,
+            0.8,
+        )
+        des = float(
+            -self._lat_sign
+            * lean_scale
+            * close_boost
+            * float(lat_err)
+            * self._max_lean
+        )
+        return float(np.clip(des, -self._max_lean, self._max_lean))
+
+    def _apply_lateral_roll_mode(
+        self,
+        des_roll: float,
+        yaw_rate: float,
+        nx_cmd: float | None,
+        body,
+        range_m,
+        *,
+        phase: str,
+        speed_mps: float | None = None,
+    ) -> tuple[float, float]:
+        """Roll owns L/R metres; yaw only keeps the gate in frame."""
+        if phase not in (
+            'chase', 'coast', 'seek_chase', 'seek_yaw',
+        ):
+            self._last_roll_first_t = 0.0
+            self._last_roll_plan = None
+            return float(des_roll), float(yaw_rate)
+
+        v_fwd = (
+            speed_mps
+            if speed_mps is not None
+            else getattr(self, '_last_v_fwd', None)
+        )
+        # Coast / punch: soft centre bank if gate drifts L/R (035017: roll=0
+        # while nx −0.06→−0.21 clipped right edge). Not full chase.
+        if phase == 'coast':
+            from vision.roll_lateral_planner import (
+                coast_center_roll,
+                yaw_keep_in_frame,
+            )
+            self._last_centerline_align = False
+            self._last_roll_first_t = 0.0
+            self._last_roll_plan = None
+            nx_f = 0.0 if nx_cmd is None else float(nx_cmd)
+            des_roll = coast_center_roll(
+                nx_f,
+                self._max_lean,
+                self._lat_sign,
+                speed_mps=v_fwd,
+                range_m=range_m,
+            )
+            if (
+                bool(getattr(config, 'ASSIST_LATERAL_BY_ROLL', True))
+                and not getattr(self, '_course_mem', False)
+            ):
+                yaw_rate = yaw_keep_in_frame(nx_f)
+                self._last_yaw_cmd = float(yaw_rate)
+            return float(des_roll), float(yaw_rate)
+
+        if bool(getattr(config, 'ASSIST_LATERAL_BY_ROLL', True)):
+            from vision.roll_lateral_planner import (
+                yaw_align_centerline,
+                yaw_keep_in_frame,
+                yaw_square_to_gate,
+            )
+            nx_f = 0.0 if nx_cmd is None else float(nx_cmd)
+            through = getattr(self, '_last_through_body', None)
+
+            des_roll = self._des_roll_from_lateral(
+                nx_f,
+                body,
+                range_m,
+                seek=phase.startswith('seek'),
+                through_body=through,
+                speed_mps=v_fwd,
+            )
+            plan = self._last_roll_plan
+            self._last_roll_first_t = float(
+                min(1.0, getattr(plan, 'n_rolls', 0.0) / 3.0)
+                if plan is not None
+                else 0.0
+            )
+            if getattr(self, '_course_mem', False):
+                # Keep one-shot g1→g2 heading yaw; still bank for ey.
+                self._last_centerline_align = False
+                return float(des_roll), float(yaw_rate)
+            yaw_frame = yaw_keep_in_frame(nx_f)
+            ex_p = float(getattr(plan, 'ex_m', 1.0)) if plan else 1.0
+            ey_p = float(getattr(plan, 'ey_m', 0.0)) if plan else 0.0
+            yaw_cl, on_cl = yaw_align_centerline(
+                ex_p, ey_p, through, nx=nx_f
+            )
+            self._last_centerline_align = bool(on_cl)
+            yaw_sq = 0.0
+            if plan is not None and not on_cl:
+                yaw_sq = yaw_square_to_gate(
+                    float(plan.bearing_rad),
+                    float(plan.align_cos),
+                    nx=nx_f,
+                )
+            # Priority: keep in frame → square on centerline → skew fix.
+            if abs(yaw_frame) > 1e-6:
+                yaw_rate = float(yaw_frame)
+            elif on_cl:
+                yaw_rate = float(yaw_cl)
+            else:
+                yaw_rate = float(yaw_sq)
+            self._last_yaw_cmd = float(yaw_rate)
+            return float(des_roll), float(yaw_rate)
+
+        # Legacy roll-first blend.
+        ey = None
+        if body is not None:
+            try:
+                ey = float(body[1]) - pose_aim_y_m()
+            except (TypeError, ValueError, IndexError):
+                ey = None
+        t_rf, yaw_sc = roll_first_authority(nx_cmd, ey)
+        self._last_roll_first_t = float(t_rf)
+        if t_rf <= 1e-3:
+            return float(des_roll), float(yaw_rate)
+        lean_frac = float(
+            getattr(config, 'ASSIST_ROLL_FIRST_LEAN_FRAC', 0.95)
+        )
+        if nx_cmd is not None and abs(float(nx_cmd)) > 1e-6:
+            side = 1.0 if float(nx_cmd) >= 0.0 else -1.0
+        elif ey is not None and abs(float(ey)) > 1e-6:
+            side = 1.0 if float(ey) >= 0.0 else -1.0
+        else:
+            side = 1.0 if float(des_roll) * (-self._lat_sign) >= 0.0 else -1.0
+        hard = -self._lat_sign * side * lean_frac * self._max_lean
+        des_roll = float(
             np.clip(
-                yaw_rate,
-                self._last_yaw_cmd - max_step,
-                self._last_yaw_cmd + max_step,
+                (1.0 - t_rf) * float(des_roll) + t_rf * hard,
+                -self._max_lean,
+                self._max_lean,
             )
         )
-        self._last_yaw_cmd = yaw_rate
-        return yaw_rate
+        if not getattr(self, '_course_mem', False):
+            yaw_rate = float(yaw_rate) * float(yaw_sc)
+            self._last_yaw_cmd = yaw_rate
+        return des_roll, yaw_rate
+
+    def _seek_glimpse_yaw(
+        self,
+        nx: float,
+        dt: float,
+        *,
+        live: bool = False,
+        body=None,
+        range_m=None,
+    ) -> float:
+        """Seek L/R yaw from gate lateral geometry (pose ey, else nx×range).
+
+        Farther |ey| metres → harder yaw both left and right.
+        """
+        return self._yaw_from_lateral_geometry(
+            nx,
+            body,
+            dt,
+            range_m=range_m,
+            live=live,
+            soft_start=False,
+        )
 
     def _yaw_from_pose_and_image(
         self, nx: float, body, dt: float, range_m=None, soft_start: bool = False
     ) -> float:
-        """Image-led yaw — mild near centre, hard when far L/R in frame.
+        """Chase yaw from drone↔gate lateral separation (symmetric L/R)."""
+        return self._yaw_from_lateral_geometry(
+            nx,
+            body,
+            dt,
+            range_m=range_m,
+            live=True,
+            soft_start=soft_start,
+        )
 
-        Pose only fills in when the gate is near image-centre.
-        """
+    def _yaw_from_lateral_geometry(
+        self,
+        nx: float,
+        body,
+        dt: float,
+        *,
+        range_m=None,
+        live: bool = True,
+        soft_start: bool = False,
+    ) -> float:
+        """Yaw rate ∝ atan2(ey, ex); gain scales with |ey| metres (both sides)."""
         half_fov = math.radians(
             0.5 * float(getattr(config, 'ASSIST_HFOV_DEG', 70.0))
         )
         yaw_img = float(nx) * half_fov
-        yaw_pose = pose_bearing_yaw_rad(body)
-        # Image owns yaw once visibly off-centre; pose only fills near centre.
-        if yaw_pose is not None and abs(float(nx)) < 0.06:
-            w = float(getattr(config, 'ASSIST_YAW_POSE_WEIGHT', 0.25))
-            if range_m is not None and float(range_m) < 12.0:
-                w = min(w, 0.15)
-            if yaw_img * float(yaw_pose) < 0.0:
-                w = 0.0
-            w = float(np.clip(w, 0.0, 1.0))
-            yaw_err = w * float(yaw_pose) + (1.0 - w) * yaw_img
+        geom = gate_lateral_geometry(body, nx=nx, range_m=range_m)
+        if geom is not None:
+            _ex, ey_m, yaw_err = geom
+            # Blend image only when pose/body missing sign fight is mild.
+            yaw_pose = pose_bearing_yaw_rad(body)
+            if yaw_pose is not None and body is not None:
+                w = float(getattr(config, 'ASSIST_SEEK_YAW_POSE_WEIGHT', 0.70))
+                if yaw_img * float(yaw_pose) < 0.0 and abs(float(nx)) > 0.08:
+                    # Stale pose vs live box: image owns the turn direction.
+                    w = 0.0
+                    yaw_err = yaw_img
+                    # Still scale authority from |ey| magnitude.
+                    ey_m = abs(float(geom[1])) * (
+                        1.0 if float(nx) >= 0.0 else -1.0
+                    )
+                else:
+                    yaw_err = w * float(yaw_pose) + (1.0 - w) * yaw_img
+                    ey_m = float(geom[1])
+            else:
+                # Image×range geometry — already in yaw_err / ey_m.
+                pass
         else:
+            ey_m = 0.0
             yaw_err = yaw_img
 
-        mag = abs(float(yaw_err))
         dead = float(getattr(config, 'ASSIST_YAW_ALIGN_DEAD_RAD', 0.035))
-        # Tiny image offset alone → hold; pose fill can still command a nudge.
-        if mag < dead:
-            yaw_rate = 0.20 * self._last_yaw_cmd
-            self._last_yaw_cmd = yaw_rate
-            return yaw_rate
-        if abs(float(nx)) < 0.05 and (
-            yaw_pose is None or abs(float(yaw_pose)) < dead
-        ):
-            yaw_rate = 0.20 * self._last_yaw_cmd
+        # Keep correcting while laterally separated even if bearing is small.
+        sep_dead_m = float(getattr(config, 'ASSIST_LAT_SEP_DEAD_M', 0.35))
+        if abs(float(yaw_err)) < dead * 0.6 and abs(float(ey_m)) < sep_dead_m:
+            yaw_rate = 0.15 * self._last_yaw_cmd
             self._last_yaw_cmd = yaw_rate
             return yaw_rate
 
-        kp = float(getattr(config, 'ASSIST_KP_YAW_FINE', 1.35))
-        coarse = float(getattr(config, 'ASSIST_YAW_COARSE_RAD', 0.16))
-        if mag >= coarse:
-            kp = float(getattr(config, 'ASSIST_KP_YAW_COARSE', 2.0))
-        kp_m, _max_m = self._nx_extreme_yaw_boost(nx)
+        if live:
+            kp = float(getattr(config, 'ASSIST_SEEK_LIVE_YAW_KP', 2.40))
+            max_yaw = math.radians(
+                float(getattr(config, 'ASSIST_SEEK_LIVE_YAW_MAX_DEG', 70.0))
+            )
+        else:
+            kp = float(getattr(config, 'ASSIST_SEEK_YAW_KP', 1.80))
+            max_yaw = math.radians(
+                float(getattr(config, 'ASSIST_SEEK_YAW_MAX_DEG', 55.0))
+            )
+        # Coarse bearing still bumps base kp.
+        if abs(float(yaw_err)) >= float(
+            getattr(config, 'ASSIST_YAW_COARSE_RAD', 0.12)
+        ):
+            kp = max(kp, float(getattr(config, 'ASSIST_KP_YAW_COARSE', 2.6)))
+
+        kp_nx, max_nx = self._nx_extreme_yaw_boost(nx)
+        # Imaginary-gate learner: |ey| metres left/right → yaw strength.
+        if (
+            range_m is not None
+            and abs(float(ey_m)) > 0.2
+            and str(getattr(self, '_last_phase', ''))
+            not in ('coast', 'lost', 'search', 'hover', 'pad_lift')
+        ):
+            obs = self._lat_yaw_learner.observe_imaginary(
+                float(range_m), float(ey_m), base_kp=kp
+            )
+            if getattr(obs, 'accepted', False):
+                self._maybe_save_assist_learn()
+        kp_lat, max_lat = self._lat_yaw_learner.lateral_gain(ey_m)
+        self._last_lat_yaw_kp_mult = float(kp_lat)
+        # Keep legacy sep curve as a floor; learner can raise further.
+        kp_sep, max_sep = lateral_sep_gain(ey_m)
+        kp_m = max(kp_nx, kp_sep, kp_lat)
+        max_m = max(max_nx, max_sep, max_lat)
+        # Combine with height: near + inside opening → ease yaw to punch through.
+        ez_m = None
+        if body is not None:
+            try:
+                ez_m = float(body[2])
+            except (TypeError, ValueError, IndexError):
+                ez_m = None
+        from vision.gate_pass_envelope import gate_pass_scales
+        pass_sc = gate_pass_scales(ey_m, ez_m, range_m)
+        self._last_gate_pass = pass_sc
+        kp_m *= float(pass_sc.lat_scale)
+        max_m *= float(0.55 + 0.45 * pass_sc.lat_scale)
         kp *= kp_m
-        bang_nx = float(getattr(config, 'ASSIST_YAW_BANG_NX', 0.28))
-        if abs(float(nx)) >= bang_nx:
+        max_yaw = min(float(self._max_yaw), max_yaw * max_m)
+
+        bang_nx = float(getattr(config, 'ASSIST_YAW_BANG_NX', 0.45))
+        bang_ey = float(getattr(config, 'ASSIST_YAW_BANG_EY_M', 2.2))
+        # Ghost / non-live: never bang-bang — stale edge nx spins full circles
+        # (031737: lost lock at nx=+0.72, held +90°/s through 360°+).
+        if live and (
+            abs(float(nx)) >= bang_nx or abs(float(ey_m)) >= bang_ey
+        ):
             sign = 1.0 if float(yaw_err) >= 0.0 else -1.0
             if abs(float(yaw_err)) < 1e-6:
                 sign = 1.0 if float(nx) >= 0.0 else -1.0
-            yaw_rate = sign * float(self._max_yaw)
+                if abs(float(ey_m)) >= bang_ey:
+                    sign = 1.0 if float(ey_m) >= 0.0 else -1.0
+            yaw_rate = sign * max_yaw
         else:
-            yaw_rate = float(
-                np.clip(kp * yaw_err, -self._max_yaw, self._max_yaw)
-            )
+            yaw_rate = float(np.clip(kp * float(yaw_err), -max_yaw, max_yaw))
+            if not live:
+                ghost_cap = math.radians(
+                    float(getattr(config, 'ASSIST_SEEK_GHOST_YAW_MAX_DEG', 28.0))
+                )
+                yaw_rate = float(np.clip(yaw_rate * 0.45, -ghost_cap, ghost_cap))
 
-        max_step = self._yaw_slew * dt * max(1.0, 0.55 + 0.45 * kp_m)
+        base_slew = float(getattr(config, 'ASSIST_YAW_SLEW_DEG', 280.0))
+        max_step = math.radians(
+            base_slew * max(1.0, 0.55 + 0.45 * kp_m)
+        ) * max(1e-3, float(dt))
         if soft_start and self._lock_ok_t is not None:
-            age = time.monotonic() - float(self._lock_ok_t)
+            age = self._now - float(self._lock_ok_t)
             ramp = float(np.clip(age / 0.60, 0.0, 1.0))
             yaw_rate *= ramp
             max_step *= 0.25 + 0.75 * ramp
@@ -1168,6 +1623,17 @@ class AssistImagePlanner:
         return yaw_rate
 
     def _climb_m(self, shared_data) -> float:
+        # VQ2 does not publish LOCAL_POSITION_NED, and its IMU-only EKF can
+        # drift by hundreds of pseudo-units during a slow-motion acro prefix.
+        # A handoff caller may therefore provide a conservative physical climb
+        # estimate so the assist does not incorrectly re-enter pad-lift logic.
+        override = shared_data.get('assist_climb_override_m')
+        try:
+            override = float(override)
+        except (TypeError, ValueError):
+            override = None
+        if override is not None and math.isfinite(override):
+            return max(0.0, min(20.0, override))
         if self._arm_z is None:
             return 0.0
         climbs = []
@@ -1277,6 +1743,9 @@ class AssistImagePlanner:
         if self._active_gate is not None and ag_i > self._active_gate:
             prev_pass = self._pass_t
             self._pass_t = now
+            # Slot finished — allow next-gate chase / latch seed.
+            self._slot_hold = False
+            self._slot_hold_t = None
             self._coast_until = now + float(
                 getattr(config, 'ASSIST_COAST_S', 1.5)
             )
@@ -1459,7 +1928,14 @@ class AssistImagePlanner:
     def compute_target(self, shared_data):
         shared_data['planner_mode'] = self.name
         shared_data['post_pass_hunt'] = False
-        now = time.monotonic()
+        # Every deadline below is a duration in simulator seconds, so on the
+        # sim clock they hold whatever CE speed is set (see ASSIST_SIM_CLOCK).
+        wall = time.monotonic()
+        now = (
+            wall if self._clock is None
+            else self._clock.tick(wall, sim_boot_s(shared_data))
+        )
+        self._now = now
         dt = 0.02 if self._last_t is None else max(1e-3, now - self._last_t)
         self._last_t = now
 
@@ -1566,6 +2042,8 @@ class AssistImagePlanner:
                 self._seek_until,
                 now + float(getattr(config, 'ASSIST_SEEK_S', 14.0)),
             )
+            self._slot_hold = True
+            self._slot_hold_t = now
             print('[ASSIST] VISUAL_COMMIT → coast', flush=True)
             log = shared_data.get('log_event')
             if log:
@@ -1575,11 +2053,35 @@ class AssistImagePlanner:
                     f'area_r={area_rng} nx={float(nx_raw):+.3f}',
                 )
 
+        # Hold the committed opening until race GATE_PASSED — do not fully
+        # register / chase gate N+1 mid-slot (034542 edge hit).
+        if getattr(self, '_slot_hold', False):
+            hold_s = float(getattr(config, 'ASSIST_COMMIT_HOLD_S', 4.0))
+            t0 = float(self._slot_hold_t) if self._slot_hold_t is not None else now
+            age = float(now) - t0
+            if age < hold_s:
+                self._coast_until = max(
+                    float(self._coast_until),
+                    float(now) + min(0.40, hold_s - age),
+                )
+            else:
+                self._slot_hold = False
+                self._slot_hold_t = None
+
         coasting = now < self._coast_until
         seeking = now < self._seek_until
-        # Empty primary image: live gate2 first, else latched pre-pass gate2.
+        # Next-gate (live gate2 / latch) only after a real pass and outside
+        # slot-hold. Still *store* latch via _update_next_latch for seeding.
         hx, hy, hsrc, hrng = next_gate_hint(shared_data)
-        if (coasting or seeking) and nx_raw is None:
+        allow_next_chase = (
+            seeking
+            and not coasting
+            and not getattr(self, '_slot_hold', False)
+            and self._pass_t is not None
+            and (now - float(self._pass_t))
+            < float(getattr(config, 'ASSIST_SEEK_S', 14.0))
+        )
+        if allow_next_chase and nx_raw is None:
             if hx is not None:
                 nx_raw, ny_raw, src = hx, hy, hsrc
                 if range_m is None:
@@ -1593,7 +2095,9 @@ class AssistImagePlanner:
                 src = 'next_latch'
                 if range_m is None:
                     range_m = self._next_rng
-        shared_data['post_pass_hunt'] = bool(seeking and not coasting)
+        shared_data['post_pass_hunt'] = bool(
+            seeking and not coasting and allow_next_chase
+        )
 
         chaseable = self._chaseable(nx_raw, ny_raw, area_px, seeking)
         # assist_g: area collapsed while range jumped 18→34 (far-gate steal).
@@ -1939,6 +2443,7 @@ class AssistImagePlanner:
         ):
             self._body_f = self._next_body.copy()
         body = self._body_f
+        self._last_through_body = self._gate_through_body(shared_data)
 
         phase = 'hover'
         pose_dz = None  # NED-down gate height vs us (+ = gate lower)
@@ -1951,12 +2456,45 @@ class AssistImagePlanner:
         v_lat = lateral_speed_mps(
             shared_data, yaw, roll, self._max_lean
         )
-        nx_roll_bias = cam_bank_lateral_bias_nx(
-            roll, v_lat, v_fwd, self._max_lean
+        self._last_v_fwd = float(v_fwd)
+        self._last_v_lat = float(v_lat)
+        # Learn bank→nx bias from pose vs image (skip coast/lost ticks).
+        # Use commanded lean as bank proxy until measured roll develops.
+        learn_phase = str(getattr(self, '_last_phase', '') or '')
+        allow_learn = learn_phase not in (
+            'coast', 'lost', 'search', 'hover', 'pad_lift',
         )
-        # Bias aim left in image (−) ⇒ path right through the hole (104123).
-        # Image nx aim (trim) + pose aim_y (∝ ey/range) — both left-bias path.
-        nx_aim_lat = float(getattr(config, 'ASSIST_NX_AIM', 0.03))
+        nx_for_learn = (
+            float(self._nx_f) if self._have_filt else None
+        )
+        lean = max(1e-3, abs(float(self._max_lean)))
+        roll_dead = float(
+            getattr(config, 'ASSIST_CAM_ROLL_BIAS_LEARN_ROLL_DEAD', 0.08)
+        )
+        roll_for_learn = float(roll)
+        if abs(roll_for_learn) < roll_dead * lean:
+            prev_des = float(getattr(self, '_last_des_roll', 0.0))
+            if abs(prev_des) >= roll_dead * lean:
+                roll_for_learn = prev_des
+        if body is not None and nx_for_learn is not None:
+            bank_obs = self._bank_bias_learner.observe(
+                nx_image=nx_for_learn,
+                body=body,
+                roll=roll_for_learn,
+                lat_speed_mps=v_lat,
+                fwd_speed_mps=v_fwd,
+                max_lean=self._max_lean,
+                allow=allow_learn,
+            )
+            if getattr(bank_obs, 'accepted', False):
+                self._maybe_save_assist_learn()
+        # Always apply current EMA gain (starts at ASSIST_CAM_ROLL_BIAS / disk).
+        roll_gain = float(self._bank_bias_learner.gain)
+        nx_roll_bias = cam_bank_lateral_bias_nx(
+            roll, v_lat, v_fwd, self._max_lean, gain=roll_gain
+        )
+        # Image nx aim + pose aim_y: 0 = through gate centre.
+        nx_aim_lat = float(getattr(config, 'ASSIST_NX_AIM', 0.0))
         pose_aim_y = pose_aim_y_m()
         # Build/refresh lock while seeking (before any yaw adjust).
         locked = self._update_gate_lock(
@@ -1968,13 +2506,6 @@ class AssistImagePlanner:
 
         if coasting:
             phase = 'coast'
-            lean_scale = float(
-                getattr(
-                    config,
-                    'KALMAN_BODY_Y_LEAN_SCALE',
-                    getattr(config, 'ASSIST_ROLL_SCALE', 0.45),
-                )
-            )
             recently_passed = (
                 self._pass_t is not None and (now - self._pass_t) < 8.0
             )
@@ -1985,16 +2516,20 @@ class AssistImagePlanner:
             ):
                 nx = float(np.clip(self._nx_f, -1.2, 1.2))
                 ny = float(self._ny_f) if self._have_filt else ny_aim
-                nx_cmd = float(
-                    np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-                )
+                nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
                 yaw_rate = self._seek_glimpse_yaw(
                     nx_cmd,
                     dt,
                     live=bool(live_glimpse),
                     body=body,
+                    range_m=range_m if range_m is not None else self._next_rng,
                 )
-                des_roll = 0.0
+                des_roll = self._des_roll_from_lateral(
+                    nx_cmd,
+                    body,
+                    range_m if range_m is not None else self._next_rng,
+                    seek=True,
+                )
                 des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
                 # Sink toward next gate during post-pass coast (not hover).
                 # Latch-only: no climb (112030 lofted on ny=-0.22).
@@ -2030,35 +2565,21 @@ class AssistImagePlanner:
                     coast_rng,
                     soft_start=bool(recently_passed),
                 )
-                lat_coast = float(nx_cmd)
-                if lat_coast > 0.0:
-                    lat_coast *= float(
-                        getattr(config, 'ASSIST_ROLL_LEFT_MISS_BOOST', 1.6)
-                    )
-                des_roll = float(
-                    np.clip(
-                        -self._lat_sign
-                        * min(1.25, lean_scale * 2.6)
-                        * lat_coast
-                        * self._max_lean,
-                        -self._max_lean,
-                        self._max_lean,
-                    )
-                )
+                # Punch committed centre: wings level, tip through (no L/R chase).
+                des_roll = 0.0
                 des_pitch = self._fwd_sign * self._max_lean * 0.95
-                # Through-slot: tip-high (we're low) → lift; tip-low/high alt
-                # → settle. 124438: ny→−0.16 on coast_lift still hit bottom.
-                tip_low = float(ny) > float(ny_aim) + 0.12
-                tip_high = float(ny) < float(ny_aim) - 0.04
+                # Through-slot height: prefer mid-hole. 034220: settle on
+                # climbed>1.85 kept digging (2.4→1.4 m) through the bottom.
+                tip_low = float(ny) > float(ny_aim) + 0.22
+                tip_high = float(ny) < float(ny_aim) + 0.02
                 if tip_high:
-                    thrust = hover + 0.012
+                    thrust = hover + 0.014
                     vert_src = 'coast_lift'
-                elif tip_low or float(climbed) > 1.85:
-                    bleed = 0.012 if tip_low else 0.008
-                    thrust = hover - bleed
+                elif tip_low:
+                    thrust = hover - 0.006
                     vert_src = 'coast_settle'
                 else:
-                    thrust = hover + 0.006
+                    thrust = hover + 0.008
                     vert_src = 'coast_lift'
             else:
                 nx = 0.0
@@ -2067,12 +2588,9 @@ class AssistImagePlanner:
                 self._last_yaw_cmd = 0.0
                 des_roll = 0.0
                 des_pitch = self._fwd_sign * self._max_lean * 0.95
-                if float(climbed) > 1.85:
-                    thrust = hover - 0.008
-                    vert_src = 'coast_settle'
-                else:
-                    thrust = hover + 0.006
-                    vert_src = 'coast_lift'
+                # No vision: hold a mild lift — do not dig on altitude alone.
+                thrust = hover + 0.008
+                vert_src = 'coast_lift'
         elif chaseable and not lost:
             hold_lock = bool(seeking and not locked)
             phase = (
@@ -2082,11 +2600,10 @@ class AssistImagePlanner:
             )
             nx = float(np.clip(self._nx_f, -1.2, 1.2))
             ny = float(np.clip(self._ny_f, -1.2, 1.2))
-            nx_cmd = float(
-                np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-            )
+            nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
             # Seeking: left/right yaw from image nx + pose (like sink/climb).
             # Course memory uses a heading target — perpetual nx=+0.35 hunted.
+            chase_rng = range_m if range_m is not None else area_rng
             if seeking and getattr(self, '_course_mem', False) and not live_glimpse:
                 yaw_rate = self._course_mem_yaw_rate(yaw, dt, now=now)
             elif hold_lock or seeking:
@@ -2095,23 +2612,27 @@ class AssistImagePlanner:
                     dt,
                     live=bool(live_glimpse or locked),
                     body=body,
+                    range_m=chase_rng,
                 )
             else:
                 yaw_rate = self._yaw_from_pose_and_image(
                     nx_cmd,
                     body,
                     dt,
-                    range_m if range_m is not None else area_rng,
+                    chase_rng,
                     soft_start=False,
                 )
             if hold_lock:
-                des_roll = 0.0
+                # Pre-lock: yaw + roll together (was yaw-only → slow L/R).
+                des_roll = self._des_roll_from_lateral(
+                    nx_cmd, body, chase_rng, seek=True
+                )
                 des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
                 thrust = hover
                 vert_src = 'seek_yaw'
 
             if hold_lock:
-                pass  # tip+yaw+bleed already set
+                pass  # tip+yaw+roll already set
             elif use_pad_lift:
                 phase = 'pad_lift'
                 des_pitch = 0.0
@@ -2126,13 +2647,6 @@ class AssistImagePlanner:
                 thrust = hover
                 vert_src = f'pad_lift:{src}'
             else:
-                lean_scale = float(
-                    getattr(
-                        config,
-                        'KALMAN_BODY_Y_LEAN_SCALE',
-                        getattr(config, 'ASSIST_ROLL_SCALE', 0.45),
-                    )
-                )
                 z_gain = float(
                     getattr(config, 'KALMAN_BODY_Z_THRUST_GAIN', 0.028)
                 )
@@ -2172,48 +2686,10 @@ class AssistImagePlanner:
                         np.clip(1.0 - abs(nx_cmd) / 0.55, 0.35, 1.0)
                     )
 
-                if nx_pose is None:
-                    lat_err = float(nx_cmd)
-                else:
-                    # Pose owns lateral (∝ ey); image trims, especially close.
-                    img_w = 0.35
-                    if range_m is not None and range_m < 12.0:
-                        img_w = 0.55
-                    if nx_pose * float(nx_cmd) < 0.0 and abs(float(nx_cmd)) > 0.06:
-                        img_w = 0.85
-                    lat_err = float(
-                        np.clip(
-                            (1.0 - img_w) * nx_pose + img_w * float(nx_cmd),
-                            -1.2,
-                            1.2,
-                        )
-                    )
-                # Prefer body-right residual when it confirms a left miss.
-                if nx_pose is not None and nx_pose > 0.05:
-                    lat_err = max(lat_err, 0.65 * float(nx_pose))
-                if lat_err > 0.0:
-                    lat_err *= float(
-                        getattr(config, 'ASSIST_ROLL_LEFT_MISS_BOOST', 1.6)
-                    )
-                # Roll ∝ |lat_err| (pose-proportional strength).
-                close_boost = 1.0 + 1.6 * min(abs(float(lat_err)) / 0.20, 1.8)
-                if range_m is not None and range_m < 12.0:
-                    close_boost *= 1.0 + 1.0 * (1.0 - range_m / 12.0)
-                if hold_lock:
-                    # Pose/image may still jump — no lateral whip while locking.
-                    des_roll = 0.0
-                else:
-                    des_roll = float(
-                        np.clip(
-                            -self._lat_sign
-                            * lean_scale
-                            * close_boost
-                            * lat_err
-                            * self._max_lean,
-                            -self._max_lean,
-                            self._max_lean,
-                        )
-                    )
+                # Yaw + roll toward gate; seek uses milder lean scale.
+                des_roll = self._des_roll_from_lateral(
+                    nx_cmd, body, range_m, seek=bool(seeking)
+                )
 
                 # Pitch = forward lean from range / alignment only.
                 des_pitch = self._fwd_sign * self._max_lean * fwd
@@ -2351,6 +2827,34 @@ class AssistImagePlanner:
                         )
                         if body_rng > max_sink_rng * 1.25:
                             pose_dz = 0.0
+                    # Lateral+height envelope: ease vertical trim when aim is
+                    # already through the opening so we still punch the gate.
+                    from vision.gate_pass_envelope import gate_pass_scales
+                    ey_pass = float(body[1]) if body is not None else 0.0
+                    ez_pass = (
+                        float(pose_dz)
+                        if pose_dz is not None
+                        else float(body[2]) if body is not None else 0.0
+                    )
+                    pass_sc = gate_pass_scales(ey_pass, ez_pass, body_rng)
+                    self._last_gate_pass = pass_sc
+                    if pose_dz is not None:
+                        pose_dz = float(pose_dz) * float(pass_sc.vert_scale)
+                    # Prefer tip-through only when aim is in/near the slot.
+                    if pass_sc.inside and pass_sc.forward_priority > 0.70:
+                        fwd = float(
+                            (1.0 - 0.45 * pass_sc.forward_priority) * fwd
+                            + 0.45 * pass_sc.forward_priority * 0.92
+                        )
+                        des_pitch = self._fwd_sign * self._max_lean * fwd
+                        if self._fwd_sign >= 0.0:
+                            des_pitch = float(
+                                np.clip(des_pitch, 0.0, self._max_lean)
+                            )
+                        else:
+                            des_pitch = float(
+                                np.clip(des_pitch, -self._max_lean, 0.0)
+                            )
                     # Hold near zero error; outside that, thrust ∝ |dz|
                     # (gentle when close, much harder when far — no fixed bias).
                     dead_climb = max(0.35, 0.028 * rng)
@@ -2414,16 +2918,25 @@ class AssistImagePlanner:
             phase = 'seek_yaw'
             nx = float(np.clip(self._nx_f, -1.2, 1.2))
             ny = float(self._ny_f)
-            nx_cmd = float(
-                np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-            )
+            nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
             if getattr(self, '_course_mem', False):
                 yaw_rate = self._course_mem_yaw_rate(yaw, dt, now=now)
             else:
                 yaw_rate = self._seek_glimpse_yaw(
-                    nx_cmd, dt, live=False, body=body
+                    nx_cmd,
+                    dt,
+                    live=False,
+                    body=body,
+                    range_m=range_m if range_m is not None else area_rng,
                 )
-            des_roll = 0.0
+            des_roll = self._des_roll_from_lateral(
+                nx_cmd,
+                body,
+                range_m if range_m is not None else area_rng,
+                seek=True,
+            )
+            # Ghost: soft roll only (avoid whip on stale edge nx).
+            des_roll = float(des_roll) * 0.45
             des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
             thrust = hover
             vert_src = 'seek_yaw'
@@ -2434,9 +2947,7 @@ class AssistImagePlanner:
             ny = float(self._ny_f) if self._have_filt else ny_aim
             des_roll = 0.0
             if getattr(self, '_course_mem', False):
-                nx_cmd = float(
-                    np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-                )
+                nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
                 yaw_rate = self._course_mem_yaw_rate(yaw, dt, now=now)
                 des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
                 vert_src = 'course_mem'
@@ -2447,12 +2958,18 @@ class AssistImagePlanner:
                 if not self._have_filt:
                     nx = float(self._next_nx)
                     ny = float(self._next_ny)
-                nx_cmd = float(
-                    np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-                )
+                nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
                 yaw_body = body if body is not None else self._next_body
                 yaw_rate = self._seek_glimpse_yaw(
-                    nx_cmd, dt, live=False, body=yaw_body
+                    nx_cmd,
+                    dt,
+                    live=False,
+                    body=yaw_body,
+                    range_m=(
+                        range_m
+                        if range_m is not None
+                        else getattr(self, '_next_rng', None)
+                    ),
                 )
                 des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
                 vert_src = 'seek_lock'
@@ -2480,11 +2997,13 @@ class AssistImagePlanner:
                 ):
                     nx = float(self._next_nx)
                     ny = float(self._next_ny)
-                    nx_cmd = float(
-                        np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2)
-                    )
+                    nx_cmd = float(np.clip(nx + nx_roll_bias - nx_aim_lat, -1.2, 1.2))
                     yaw_rate = self._seek_glimpse_yaw(
-                        nx_cmd, dt, live=False, body=self._next_body
+                        nx_cmd,
+                        dt,
+                        live=False,
+                        body=self._next_body,
+                        range_m=getattr(self, '_next_rng', None),
                     )
                     des_pitch = self._seek_forward_pitch(nx_cmd, False, v_fwd)
                     vert_src = 'seek_scan'
@@ -2664,6 +3183,10 @@ class AssistImagePlanner:
                 'seek_yaw',
                 'seek_scan',
                 'seek_floor',
+                # Mild tip dig while still low — climb to cruise first
+                # (034220 aim drop made latch ny≈0.3 look like seek_sink).
+                'seek_sink',
+                'seek_pose_sink',
                 'coast_lift',
                 'coast_yaw',
                 'coast_lock',
@@ -2820,6 +3343,53 @@ class AssistImagePlanner:
         # Wide rail — do not flatten pose-proportional sink with a tight clamp.
         thrust = float(np.clip(thrust, hover - 0.075, hover + 0.035))
         thrust = float(np.clip(thrust, 0.200, 0.33))
+        self._last_phase = str(phase)
+        # Final lateral+height envelope snapshot (coast/chase/seek).
+        try:
+            from vision.gate_pass_envelope import gate_pass_scales
+            ey_end = None
+            ez_end = None
+            if body is not None:
+                ey_end = float(body[1])
+                ez_end = float(body[2])
+            elif self._have_filt and range_m is not None:
+                ey_end = float(self._nx_f) * float(range_m) * 0.5
+            if pose_dz is not None:
+                ez_end = float(pose_dz)
+            self._last_gate_pass = gate_pass_scales(
+                ey_end, ez_end, range_m if range_m is not None else area_rng
+            )
+        except Exception:
+            pass
+
+        # Roll owns L/R metres; yaw only keeps gate in frame.
+        nx_rf = None
+        if self._have_filt:
+            nx_rf = float(
+                np.clip(
+                    float(self._nx_f)
+                    + float(nx_roll_bias)
+                    - float(nx_aim_lat),
+                    -1.2,
+                    1.2,
+                )
+            )
+        elif chaseable:
+            try:
+                nx_rf = float(nx)
+            except (TypeError, ValueError):
+                nx_rf = None
+        rng_rf = range_m if range_m is not None else area_rng
+        des_roll, yaw_rate = self._apply_lateral_roll_mode(
+            des_roll,
+            yaw_rate,
+            nx_rf,
+            body,
+            rng_rf,
+            phase=str(phase),
+            speed_mps=float(v_fwd),
+        )
+        self._last_des_roll = float(des_roll)
 
         path = {
             'phase': phase,
@@ -2842,6 +3412,63 @@ class AssistImagePlanner:
             'pose_dz_raw': pose_dz_raw,
             'tilt_bias': float(tilt_bias),
             'nx_roll_bias': float(nx_roll_bias),
+            'roll_first_t': float(getattr(self, '_last_roll_first_t', 0.0)),
+            'roll_metres_per': float(
+                getattr(self._last_roll_plan, 'metres_per_roll', 0.0)
+                if self._last_roll_plan is not None
+                else 0.0
+            ),
+            'roll_n': float(
+                getattr(self._last_roll_plan, 'n_rolls', 0.0)
+                if self._last_roll_plan is not None
+                else 0.0
+            ),
+            'roll_n_ceil': int(
+                getattr(self._last_roll_plan, 'n_rolls_ceil', 0)
+                if self._last_roll_plan is not None
+                else 0
+            ),
+            'roll_align_cos': float(
+                getattr(self._last_roll_plan, 'align_cos', 1.0)
+                if self._last_roll_plan is not None
+                else 1.0
+            ),
+            'roll_bearing_deg': float(
+                math.degrees(
+                    getattr(self._last_roll_plan, 'bearing_rad', 0.0)
+                )
+                if self._last_roll_plan is not None
+                else 0.0
+            ),
+            'centerline_align': bool(
+                getattr(self, '_last_centerline_align', False)
+            ),
+            'bank_bias_k': float(self._bank_bias_learner.gain),
+            'bank_bias_n': int(self._bank_bias_learner.sample_count),
+            'bank_bias_ready': bool(self._bank_bias_learner.ready),
+            'lat_yaw_kp_mult': float(
+                getattr(self, '_last_lat_yaw_kp_mult', 1.0)
+            ),
+            'lat_yaw_mild': float(self._lat_yaw_learner.mild_mult),
+            'lat_yaw_hard': float(self._lat_yaw_learner.hard_mult),
+            'gate_inside': bool(
+                getattr(self._last_gate_pass, 'inside', False)
+            ),
+            'gate_lat_scale': float(
+                getattr(self._last_gate_pass, 'lat_scale', 1.0)
+                if self._last_gate_pass is not None
+                else 1.0
+            ),
+            'gate_vert_scale': float(
+                getattr(self._last_gate_pass, 'vert_scale', 1.0)
+                if self._last_gate_pass is not None
+                else 1.0
+            ),
+            'gate_forward': float(
+                getattr(self._last_gate_pass, 'forward_priority', 0.0)
+                if self._last_gate_pass is not None
+                else 0.0
+            ),
             'v_lat': float(v_lat),
             'v_fwd': float(v_fwd),
             'chaseable': bool(chaseable),

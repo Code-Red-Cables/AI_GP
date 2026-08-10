@@ -25,7 +25,12 @@ class MAVLinkRX:
     @classmethod
     def create_mavlink_rx(cls, mavlink_connection, data):
         rx = cls(mavlink_connection, data)
-        rx.thread = threading.Thread(target=rx.mavlink_receive_loop, daemon=False)
+        # Daemon: a non-daemon reader keeps the interpreter alive after the
+        # main thread exits, so any Ctrl+C or traceback outside a shutdown()
+        # path hangs the console and needs a force-kill.
+        rx.thread = threading.Thread(
+            target=rx.mavlink_receive_loop, daemon=True,
+        )
         rx.is_running = True
         rx.thread.start()
         return rx
@@ -162,12 +167,18 @@ class MAVLinkRX:
             'race_finish_ns': race_finish_ns,
             'active_gate':    active_gate_idx,
             'last_gate_time': last_gate_time,
+            # Preserve receive phase so a command sample can extrapolate the
+            # otherwise 4 Hz race clock to its own high-resolution timestamp.
+            'received_perf_counter_s': time.perf_counter(),
+            'received_wall_time_ns': time.time_ns(),
         }
 
         if active_gate_idx != self._last_gate_idx:
             if self._last_gate_idx is not None:
                 self._log('GATE_PASSED',
                           f'gate={active_gate_idx}  last_gate_time={last_gate_time/1e9:.3f}s')
+                # Latch for remember-path capture (pilot timeline tagging).
+                self.data['last_gate_passed'] = int(active_gate_idx)
             self._last_gate_idx = active_gate_idx
 
         if race_finish_ns > 0:

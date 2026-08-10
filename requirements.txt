@@ -6,11 +6,30 @@ opencv-python
 numpy
 ultralytics>=8.4.106
 
+# Deep learning backend for the gate detector.
+#
+# ultralytics installs torch transitively, but on Windows pip resolves that to
+# the CPU-only wheel by default, and that single detail decides whether this
+# entry can see. CPU inference measures ~267 ms/frame against a 30 fps camera
+# stream, so roughly 86% of frames are dropped and the drone flies most of the
+# course blind. On CUDA the same model runs ~22 ms/frame and keeps up.
+#
+# Install the CUDA build explicitly first (cu126 shown; match the host driver):
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+#   pip install -r requirements.txt
+#
+# Verify with `python tools/preflight.py`, which fails loudly on CPU fallback.
+torch
+torchvision
+
 # Gate-pose training (tools/train_gate_pose.py)
 pyyaml
 
 # Tests
 pytest>=8
 
-# Pilot gamepad teleop (PlayStation / Xbox)
+# Pilot gamepad teleop — tools/ only. The flight entry point (main.py) never
+# imports this; VADR-TS-001 7 makes human interaction during a timed run
+# grounds for disqualification, so the autonomous path must not reach a pad.
 pygame>=2.5

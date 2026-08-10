@@ -23,7 +23,13 @@ import numpy as np
 os.environ.setdefault('FLIGHT_MODE', 'spline')
 
 import config  # noqa: E402
-from mission import Mission, Waypoint, load_mission, save_mission  # noqa: E402
+from mission import (  # noqa: E402
+    Mission,
+    Waypoint,
+    keep_until_gate,
+    load_mission,
+    save_mission,
+)
 from planning.spline_path import (  # noqa: E402
     build_spline_path,
     path_curvature,
@@ -119,6 +125,54 @@ class TestCaptureRoundTrip(unittest.TestCase):
         cap.mark({'position_ned': {'x': 0, 'y': 0, 'z': -1},
                   'attitude': {'yaw': 0.0}})
         self.assertIsNone(cap.save())
+
+
+class TestKeepUntilGate(unittest.TestCase):
+    def test_trim_by_name(self):
+        wps = [
+            Waypoint(0, 0, -2, 0, name='start'),
+            Waypoint(5, 0, -2, 0, name='gate1'),
+            Waypoint(10, 2, -2, 10, name='gate2'),
+            Waypoint(15, 4, -2, 20, name='gate3'),
+        ]
+        trimmed = keep_until_gate(Mission(wps, name='course'), 2)
+        self.assertEqual(len(trimmed), 3)
+        self.assertEqual(trimmed.waypoints[-1].name, 'gate2')
+        self.assertEqual(trimmed.keep_until_gate, 2)
+
+    def test_trim_by_gate_pass_event(self):
+        wps = [
+            Waypoint(0, 0, -2, 0, name='wp0'),
+            Waypoint(3, 0, -2, 0, name='wp1'),
+            Waypoint(6, 0, -2, 0, name='gate1',
+                     active_gate=1, event='gate_pass'),
+            Waypoint(12, 0, -2, 0, name='gate2',
+                     active_gate=2, event='gate_pass'),
+        ]
+        trimmed = keep_until_gate(Mission(wps), 1)
+        self.assertEqual(len(trimmed), 3)
+        self.assertEqual(trimmed.waypoints[-1].event, 'gate_pass')
+        self.assertEqual(trimmed.waypoints[-1].active_gate, 1)
+
+    def test_sparse_gate_only_synthesizes_start(self):
+        wps = [
+            Waypoint(6, 0, -2, 0, name='gate1',
+                     active_gate=1, event='gate_pass'),
+            Waypoint(12, 0, -2, 0, name='gate2',
+                     active_gate=2, event='gate_pass'),
+        ]
+        trimmed = keep_until_gate(Mission(wps), 1)
+        self.assertEqual(len(trimmed), 2)
+        self.assertEqual(trimmed.waypoints[0].name, 'start')
+        self.assertEqual(trimmed.waypoints[1].name, 'gate1')
+
+    def test_missing_gate_raises(self):
+        wps = [
+            Waypoint(0, 0, -2, 0, name='start'),
+            Waypoint(5, 0, -2, 0, name='gate1'),
+        ]
+        with self.assertRaises(ValueError):
+            keep_until_gate(Mission(wps), 3)
 
 
 class _Plant:

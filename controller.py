@@ -33,9 +33,11 @@ class Controller:
         self.data     = data
         self.boot_ms  = system_boot_ms
         self._interval = 1.0 / config.CONTROL_HZ
-        # Gyro-dominant estimator: it must observe the ±25-30 degree banks
-        # visible in the camera and the raw gyro trace.
-        self._ahrs = ComplementaryAHRS(AHRSConfig(alpha=0.95))
+        # Gyro-dominant estimator. Roll gyro sign matches EKF (-xgyro); the
+        # default +1 made ahrs_roll opposite ekf roll (033644 death spiral).
+        self._ahrs = ComplementaryAHRS(
+            AHRSConfig(alpha=0.95, gyro_sign_roll=-1.0)
+        )
         self._active_ahrs = self._ahrs
         self._last_imu_ts_us = None
         self._ahrs_ready = False
@@ -104,6 +106,13 @@ class Controller:
         self._roll_pid.reset()
         self._thrust_pid.reset()
         self._last_control_at = None
+
+    def reset_ahrs(self):
+        """Clear complementary-filter attitude (call on arm / sim reset)."""
+        self._ahrs.reset()
+        self._active_ahrs = self._ahrs
+        self._last_imu_ts_us = None
+        self._ahrs_ready = False
 
     def _demo_attitude(self):
         """Update and return collect_demos.py's legal-telemetry AHRS state."""
@@ -195,16 +204,20 @@ class Controller:
                 # Run 043812: +cmd produced left turns and walked the
                 # gate off-frame.
                 yaw_rate = yaw_rate * config.RATE_SIGN_YAW
-                # Yaw uses its own ceiling — MAX_RATE_RAD_S (~60°/s) was
-                # clipping assist extreme yaw (132028 planner asked 70°/s).
-                yaw_lim = float(
-                    getattr(
-                        config,
-                        'YAW_RATE_MAX_RAD_S',
-                        config.MAX_RATE_RAD_S,
+                # Acro / unrestricted: do not clip commanded body rates.
+                if bool(tgt.get('acro')) or bool(tgt.get('unrestricted_rates')):
+                    yaw_lim = None
+                else:
+                    # Yaw uses its own ceiling — MAX_RATE_RAD_S (~60°/s) was
+                    # clipping assist extreme yaw (132028 planner asked 70°/s).
+                    yaw_lim = float(
+                        getattr(
+                            config,
+                            'YAW_RATE_MAX_RAD_S',
+                            config.MAX_RATE_RAD_S,
+                        )
                     )
-                )
-                yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
+                    yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
                 # Kalman skips the attitude vertical loop — boost only until
                 # clear of the ground. 063921: 0.32×2s rocketed to −4 m.
                 if (
@@ -350,10 +363,17 @@ class Controller:
             else:
                 thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
         else:
-            yaw_lim = float(
-                getattr(config, 'YAW_RATE_MAX_RAD_S', config.MAX_RATE_RAD_S)
-            )
-            yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
+            # kalman_direct path: yaw was already signed above. Skip clip for
+            # acro / unrestricted rate targets (full-stick body rates).
+            if not (
+                bool(tgt.get('acro')) or bool(tgt.get('unrestricted_rates'))
+            ):
+                yaw_lim = float(
+                    getattr(
+                        config, 'YAW_RATE_MAX_RAD_S', config.MAX_RATE_RAD_S
+                    )
+                )
+                yaw_rate = max(-yaw_lim, min(yaw_lim, yaw_rate))
             thrust = max(config.MIN_THRUST, min(config.MAX_THRUST, thrust))
             vertical_lift_fraction = max(
                 config.MIN_TILT_COMPENSATION_COSINE,
@@ -437,6 +457,7 @@ class Controller:
     # ------------------------------------------------------------------
     def arm(self):
         self._reset_control_state()
+        self.reset_ahrs()
         self.conn.mav.command_long_send(
             self.conn.target_system, self.conn.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,

@@ -83,6 +83,13 @@ class PoseGateConfig:
     focal_length_px: float = cm.FX
 
 
+# The pose model labels the 2.7 m outer ring as keypoints 0-3 and the 1.5 m
+# opening as 4-7, each clockwise from top-left. Older four-keypoint weights
+# carry the outer ring alone, so both shapes stay loadable.
+SUPPORTED_KEYPOINT_COUNTS = (4, 8)
+OUTER_RING_IDX = (0, 1, 2, 3)
+
+
 @dataclass(frozen=True)
 class PoseGateCandidate:
     box: YoloGateBox
@@ -101,6 +108,19 @@ class PoseGateCandidate:
             return self.box.center
         center = points.mean(axis=0)
         return float(center[0]), float(center[1])
+
+    @property
+    def outer_keypoints(self) -> np.ndarray:
+        """The four outer corners, whichever ring count the model returned."""
+        points = np.asarray(self.keypoints, dtype=np.float32).reshape(-1, 2)
+        return points[list(OUTER_RING_IDX)]
+
+    @property
+    def outer_keypoint_confidences(self) -> np.ndarray:
+        conf = np.asarray(
+            self.keypoint_confidences, dtype=np.float32
+        ).reshape(-1)
+        return conf[list(OUTER_RING_IDX)]
 
 
 @dataclass
@@ -187,10 +207,15 @@ def detect_gate_poses(
             "model returned boxes without keypoints; use custom pose weights"
         )
     coordinates = _to_numpy(getattr(keypoints, "xy", None))
-    if coordinates.ndim != 3 or coordinates.shape[1:] != (4, 2):
+    if (
+        coordinates.ndim != 3
+        or coordinates.shape[2] != 2
+        or coordinates.shape[1] not in SUPPORTED_KEYPOINT_COUNTS
+    ):
         raise RuntimeError(
-            "gate pose model must return exactly four (x, y) keypoints "
-            f"per gate, received shape {coordinates.shape}"
+            "gate pose model must return four (outer ring) or eight "
+            "(outer + inner ring) (x, y) keypoints per gate, received "
+            f"shape {coordinates.shape}"
         )
     point_confidences = _to_numpy(getattr(keypoints, "conf", None))
     if point_confidences.shape != coordinates.shape[:2]:
@@ -218,7 +243,7 @@ def detect_gate_poses(
         points = np.asarray(coordinates[index], dtype=np.float32)
         confidences = np.asarray(
             point_confidences[index], dtype=np.float32
-        ).reshape(4)
+        ).reshape(-1)
         if (
             not all(math.isfinite(value) for value in bbox)
             or not np.all(np.isfinite(points))
@@ -424,10 +449,12 @@ def reliable_pose_corners(
     config: PoseGateConfig,
 ) -> tuple[Optional[InnerGateCorners], str]:
     """Validate the learned outer gate corners for orientation only."""
-    confidences = candidate.keypoint_confidences
+    # Orientation has always come from the outer ring; the inner ring feeds
+    # PnP only, so this gate keeps judging exactly the same four points.
+    confidences = candidate.outer_keypoint_confidences
     if np.any(confidences < config.keypoint_confidence_threshold):
         return None, "low_keypoint_confidence"
-    ordered = order_corners(candidate.keypoints)
+    ordered = order_corners(candidate.outer_keypoints)
     area = abs(float(cv2.contourArea(ordered.reshape(-1, 1, 2))))
     top_width = np.linalg.norm(ordered[1] - ordered[0])
     bottom_width = np.linalg.norm(ordered[2] - ordered[3])
@@ -453,52 +480,47 @@ def draw_pose_debug_overlay(
     frame: np.ndarray,
     debug: Optional[PoseGateDebug],
 ) -> np.ndarray:
-    """Draw all pose instances, selected keypoints, and center source."""
+    """Draw outer + inner keypoints only — no boxes or corner outlines."""
     if debug is None:
         return frame
     output = frame.copy()
+    # Outer ring = cyan, inner ring = magenta. Dimmer for non-selected gates.
+    outer_selected = (255, 255, 0)
+    inner_selected = (255, 0, 255)
+    outer_other = (160, 160, 0)
+    inner_other = (160, 0, 160)
     for candidate in debug.candidates:
-        x1, y1, x2, y2 = (
-            int(round(value)) for value in candidate.box.bbox
-        )
         selected = (
             debug.selected is not None
             and candidate.box.source_index
             == debug.selected.box.source_index
         )
-        if selected:
-            color = (0, 255, 0)
-        elif candidate.hsv_confirmed:
-            color = (255, 170, 0)
-        else:
-            color = (0, 0, 255)
-        thickness = 3 if selected else 1
-        cv2.rectangle(output, (x1, y1), (x2, y2), color, thickness)
-        cv2.putText(
-            output,
-            (
-                f"gate {candidate.box.confidence:.2f} "
-                f"hsv={candidate.hsv_orange_ratio:.2f} "
-                f"{candidate.hsv_supported_sides}/4"
-            ),
-            (x1, max(14, y1 - 5)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            color,
-            1,
-            cv2.LINE_AA,
+        points = np.asarray(candidate.keypoints, dtype=np.float32).reshape(
+            -1, 2
         )
-        for index, (point, confidence) in enumerate(
-            zip(candidate.keypoints, candidate.keypoint_confidences)
-        ):
-            if confidence <= 0.0:
+        confidences = np.asarray(
+            candidate.keypoint_confidences, dtype=np.float32
+        ).reshape(-1)
+        for index, (point, confidence) in enumerate(zip(points, confidences)):
+            if (
+                confidence <= 0.0
+                or not np.isfinite(point).all()
+                or (point[0] == 0.0 and point[1] == 0.0)
+            ):
                 continue
-            point_xy = tuple(int(round(value)) for value in point)
-            cv2.circle(output, point_xy, 4 if selected else 2, color, -1)
+            inner = index >= 4
+            color = (
+                (inner_selected if inner else outer_selected)
+                if selected
+                else (inner_other if inner else outer_other)
+            )
+            point_xy = (int(round(point[0])), int(round(point[1])))
+            radius = 5 if selected else 3
+            cv2.circle(output, point_xy, radius, color, -1, cv2.LINE_AA)
             if selected:
                 cv2.putText(
                     output,
-                    f"k{index}:{confidence:.2f}",
+                    f"{'i' if inner else 'o'}{index % 4}",
                     (point_xy[0] + 4, point_xy[1] - 4),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.34,
@@ -506,28 +528,6 @@ def draw_pose_debug_overlay(
                     1,
                     cv2.LINE_AA,
                 )
-    if debug.corners is not None:
-        polygon = np.round(
-            debug.corners.as_polygon()
-        ).astype(np.int32).reshape(-1, 1, 2)
-        cv2.polylines(output, [polygon], True, (255, 0, 255), 2)
-        for label, point in (
-            ("TL", debug.corners.top_left),
-            ("TR", debug.corners.top_right),
-            ("BR", debug.corners.bottom_right),
-            ("BL", debug.corners.bottom_left),
-        ):
-            point_xy = tuple(int(round(value)) for value in point)
-            cv2.putText(
-                output,
-                label,
-                (point_xy[0] + 4, point_xy[1] + 12),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.35,
-                (255, 0, 255),
-                1,
-                cv2.LINE_AA,
-            )
     if debug.center is not None:
         center = tuple(int(round(value)) for value in debug.center)
         cv2.drawMarker(
@@ -537,8 +537,8 @@ def draw_pose_debug_overlay(
         output,
         (
             f"POSE n={len(debug.candidates)} "
-            f"source={debug.center_source} "
-            f"keypoints={debug.keypoint_reason}"
+            f"cyan=outer magenta=inner "
+            f"src={debug.center_source}"
         ),
         (10, max(18, output.shape[0] - 32)),
         cv2.FONT_HERSHEY_SIMPLEX,
@@ -611,14 +611,33 @@ class YoloPoseGateDetector:
         return model
 
     def _warm_up_model(self) -> None:
-        """Pay the backend's first-inference cost before flight can arm."""
+        """Pay the backend's first-inference cost before flight can arm.
+
+        The device and the warm timing are printed because a CPU fallback is
+        otherwise silent and looks like nothing worse than a sluggish log.
+        It is not: the simulator emits 30 fps, CPU inference sustains about
+        4, and the drone then flies the gaps blind. That is invisible while
+        Cheat Engine holds the sim at 0.2x, where 4 fps of wall clock is a
+        comfortable 20 fps of simulated time, and it only bites at race speed.
+        """
         print("[VISION] warming YOLO pose inference...", flush=True)
-        detect_gate_poses(
-            np.zeros((360, 640, 3), dtype=np.uint8),
-            self.model,
-            self.config,
+        blank = np.zeros((360, 640, 3), dtype=np.uint8)
+        detect_gate_poses(blank, self.model, self.config)
+        started = time.perf_counter()
+        detect_gate_poses(blank, self.model, self.config)
+        warm_ms = (time.perf_counter() - started) * 1000.0
+
+        device = self.config.device or "auto"
+        try:
+            device = str(next(self.model.model.parameters()).device)
+        except (AttributeError, StopIteration, TypeError):
+            pass
+        note = "" if warm_ms <= 60.0 else "  <-- too slow for 30 fps vision"
+        print(
+            f"[VISION] YOLO pose inference ready on {device} "
+            f"({warm_ms:.0f} ms/frame){note}",
+            flush=True,
         )
-        print("[VISION] YOLO pose inference ready", flush=True)
 
     def reset_target_lock(self) -> None:
         self._previous_target = None

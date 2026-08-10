@@ -123,9 +123,15 @@ def test_loaded_pose_model_is_warmed_before_detector_is_ready(monkeypatch):
 
     YoloPoseGateDetector(PoseGateConfig())
 
-    assert len(model.calls) == 1
-    assert model.calls[0]["source"].shape == (360, 640, 3)
-    assert model.calls[0]["imgsz"] == 640
+    # Two inferences, not one: the first pays the backend's lazy init and the
+    # second is timed, so the reported ms/frame is the steady-state cost. That
+    # number is what distinguishes a working CUDA install (~22 ms) from a silent
+    # CPU fallback (~267 ms), which starves the 30 fps stream and flies the
+    # drone blind for most of the course.
+    assert len(model.calls) == 2
+    for call in model.calls:
+        assert call["source"].shape == (360, 640, 3)
+        assert call["imgsz"] == 640
 
 
 def test_pose_uses_box_center_and_keeps_outer_corners_debug_only():

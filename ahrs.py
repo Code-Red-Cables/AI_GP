@@ -51,10 +51,24 @@ class ComplementaryAHRS:
         ax, ay, az = accel
         dt = max(1e-3, min(0.1, dt))
 
-        # gyro integration (body rates ≈ euler rates for the modest lean angles we fly)
-        roll_g = self.roll + c.gyro_sign_roll * gx * dt
-        pitch_g = self.pitch + c.gyro_sign_pitch * gy * dt
-        self.yaw += c.gyro_sign_yaw * gz * dt
+        # Body rates → euler rates (needed when yawing while pitched; plain
+        # p/q integration leaves a false residual bank after a hard yaw).
+        gx *= c.gyro_sign_roll
+        gy *= c.gyro_sign_pitch
+        gz *= c.gyro_sign_yaw
+        sr = math.sin(self.roll)
+        cr = math.cos(self.roll)
+        # Clamp pitch away from ±90° so tan() stays finite.
+        pitch_clamped = max(
+            -math.radians(80.0),
+            min(math.radians(80.0), self.pitch),
+        )
+        tp = math.tan(pitch_clamped)
+        roll_dot = gx + (gy * sr + gz * cr) * tp
+        pitch_dot = gy * cr - gz * sr
+        roll_g = self.roll + roll_dot * dt
+        pitch_g = self.pitch + pitch_dot * dt
+        self.yaw += gz * dt
 
         # gravity correction only when acceleration is near 1 g (else accel is not gravity)
         amag = math.sqrt(ax * ax + ay * ay + az * az)

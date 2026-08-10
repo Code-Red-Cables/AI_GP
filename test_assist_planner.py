@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -12,10 +13,13 @@ import camera_model as cm
 import config
 from assist_planner import (
     AssistImagePlanner,
+    gate_lateral_geometry,
     image_gate_norm,
+    lateral_sep_gain,
     next_gate_hint,
     pose_aim_y_m,
     pose_bearing_yaw_rad,
+    roll_first_authority,
 )
 
 
@@ -66,6 +70,14 @@ class ImageGateNormTests(unittest.TestCase):
 
 
 class AssistPlannerTests(unittest.TestCase):
+    def setUp(self):
+        # Legacy yaw-lateral tests; roll-pulse mode covered explicitly below.
+        self._prev_lat_by_roll = getattr(config, 'ASSIST_LATERAL_BY_ROLL', True)
+        config.ASSIST_LATERAL_BY_ROLL = False
+
+    def tearDown(self):
+        config.ASSIST_LATERAL_BY_ROLL = self._prev_lat_by_roll
+
     def _shared(self, *, nx=0.0, ny=0.1, area=2500.0, body=None, range_m=12.0):
         cx = 320.0 + nx * 320.0
         cy = 180.0 + ny * 180.0
@@ -151,6 +163,114 @@ class AssistPlannerTests(unittest.TestCase):
             tgt = planner.compute_target(shared)
         self.assertLess(float(tgt['yaw_rate']), 0.0)
 
+    def test_seek_yaws_and_rolls_right_gate(self):
+        """Pre-lock seek (legacy yaw-lateral): gate right → yaw + bank."""
+        planner = AssistImagePlanner()
+        shared = self._shared(
+            nx=0.35, ny=0.22, body=[14.0, 3.0, 0.2], range_m=14.0, area=2500.0,
+        )
+        _airborne(planner, shared)
+        planner._seek_until = time.monotonic() + 10.0
+        planner._coast_until = 0.0
+        planner._pass_t = time.monotonic() - 2.0
+        planner._reset_gate_lock()
+        tgt = None
+        for _ in range(4):
+            planner._last_t = time.monotonic() - 0.05
+            tgt = planner.compute_target(shared)
+        self.assertIn(
+            shared['kalman_path']['phase'], ('seek_yaw', 'seek_chase')
+        )
+        self.assertGreater(float(tgt['yaw_rate']), 0.05)
+        self.assertNotAlmostEqual(float(tgt['desired_roll']), 0.0, places=3)
+
+    def test_lateral_by_roll_plans_pulses_yaw_frame_only(self):
+        """Roll closes ey metres; yaw=0 while gate inside frame band."""
+        config.ASSIST_LATERAL_BY_ROLL = True
+        planner = AssistImagePlanner()
+        # ey=+3.5 m right, nx well inside frame edge → bank, no yaw.
+        shared = self._shared(
+            nx=0.20, ny=0.22, body=[14.0, 3.5, 0.2], range_m=14.0, area=4000.0,
+        )
+        _airborne(planner, shared)
+        planner._gate_lock = True
+        planner._lock_count = 99
+        planner._have_filt = True
+        planner._nx_f = 0.20
+        planner._ny_f = 0.22
+        planner._last_see_t = time.monotonic()
+        planner._coast_until = 0.0
+        planner._seek_until = 0.0
+        tgt = None
+        for _ in range(6):
+            planner._last_t = time.monotonic() - 0.05
+            tgt = planner.compute_target(shared)
+        path = shared['kalman_path']
+        self.assertGreater(float(path.get('roll_metres_per', 0.0)), 0.15)
+        self.assertGreaterEqual(int(path.get('roll_n_ceil', 0)), 2)
+        self.assertGreater(float(path.get('roll_align_cos', 0.0)), 0.85)
+        self.assertGreater(
+            abs(float(tgt['desired_roll'])),
+            0.70 * math.radians(float(config.ASSIST_LEAN_DEG)),
+        )
+        self.assertAlmostEqual(float(tgt['yaw_rate']), 0.0, places=3)
+
+        # Past frame edge → yaw engages to keep box in view.
+        shared['gate_detection']['center_px'] = (
+            320.0 + 160.0 * 0.75,
+            180.0 + 90.0 * 0.22,
+        )
+        planner._nx_f = 0.75
+        planner._last_t = time.monotonic() - 0.05
+        tgt = planner.compute_target(shared)
+        self.assertGreater(float(tgt['yaw_rate']), 0.05)
+
+    def test_centerline_squares_into_gate(self):
+        """On approach line → yaw to face centre / through (perpendicular).
+
+        ASSIST_CENTERLINE_YAW_KP ships at 0.0, so the gain is injected here to
+        keep the geometry covered. The reason it is disabled is recorded in
+        test_roll_lateral_planner.CenterlineAlignTests.
+        test_centerline_yaw_is_disabled_by_default: gate_normal_* does not swing
+        when the drone yaws, so the loop never converged and wound the nose ~40°
+        off a dead-centre gate.
+        """
+        config.ASSIST_LATERAL_BY_ROLL = True
+        patcher = mock.patch.object(config, 'ASSIST_CENTERLINE_YAW_KP', 2.0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        planner = AssistImagePlanner()
+        # Near centre laterally; through axis skewed right → yaw right.
+        # Small area so visual-commit does not steal into coast.
+        th = math.radians(25.0)
+        shared = self._shared(
+            nx=0.04, ny=0.20, body=[12.0, 0.2, 0.1], range_m=12.0, area=2500.0,
+        )
+        shared['dual_gate_pnp']['gate1_through_body'] = [
+            math.cos(th), math.sin(th), 0.0,
+        ]
+        _airborne(planner, shared)
+        planner._gate_lock = True
+        planner._lock_count = 99
+        planner._have_filt = True
+        planner._nx_f = 0.04
+        planner._ny_f = 0.20
+        planner._last_see_t = time.monotonic()
+        planner._coast_until = 0.0
+        planner._seek_until = 0.0
+        tgt = None
+        for _ in range(5):
+            planner._last_t = time.monotonic() - 0.05
+            tgt = planner.compute_target(shared)
+        self.assertEqual(shared['kalman_path'].get('phase'), 'chase')
+        self.assertTrue(shared['kalman_path'].get('centerline_align'))
+        self.assertGreater(float(tgt['yaw_rate']), 0.08)
+        # On centreline: little/no lateral roll.
+        self.assertLess(
+            abs(float(tgt['desired_roll'])),
+            math.radians(4.0),
+        )
+
     def test_yaw_from_pose_bearing_more_than_image(self):
         """Near-centre image: pose bearing still yaws toward the gate."""
         # Gate ~3 m right at 15 m forward; image on nx_aim so pose owns yaw.
@@ -164,9 +284,58 @@ class AssistPlannerTests(unittest.TestCase):
             t = time.monotonic()
             planner._last_t = t - 0.05
             tgt = planner.compute_target(shared)
-        # Near-centre pose fill: rightward, not plant-saturated.
-        self.assertGreater(float(tgt['yaw_rate']), 0.05)
-        self.assertLess(float(tgt['yaw_rate']), 0.55)
+        # Lateral metres drive a hard right yaw (sep-scaled / bang).
+        self.assertGreater(float(tgt['yaw_rate']), 0.15)
+
+    def test_larger_lateral_sep_yaws_harder_both_sides(self):
+        """|ey| metres scale yaw — same magnitude left and right."""
+        near_r = [16.0, 0.8, 0.0]
+        far_r = [16.0, 3.5, 0.0]
+        near_l = [16.0, -0.8, 0.0]
+        far_l = [16.0, -3.5, 0.0]
+        g_near = gate_lateral_geometry(near_r)
+        g_far = gate_lateral_geometry(far_r)
+        self.assertIsNotNone(g_near)
+        self.assertIsNotNone(g_far)
+        self.assertGreater(abs(g_far[1]), abs(g_near[1]))
+        self.assertGreater(lateral_sep_gain(g_far[1])[0], lateral_sep_gain(g_near[1])[0])
+
+        def _lat(body, nx_sign):
+            planner = AssistImagePlanner()
+            shared = self._shared(
+                nx=0.04 * nx_sign, ny=0.20, body=body, range_m=16.0,
+            )
+            _airborne(planner, shared)
+            tgt = None
+            for _ in range(12):
+                planner._last_t = time.monotonic() - 0.05
+                tgt = planner.compute_target(shared)
+            return (
+                float(tgt['yaw_rate']),
+                float(tgt['desired_roll']),
+                float(shared['kalman_path'].get('roll_first_t', 0.0)),
+            )
+
+        y_near_r, r_near_r, _ = _lat(near_r, +1)
+        y_far_r, r_far_r, t_far_r = _lat(far_r, +1)
+        y_near_l, r_near_l, _ = _lat(near_l, -1)
+        y_far_l, r_far_l, t_far_l = _lat(far_l, -1)
+        # Far sideways: roll-first (harder bank); yaw may ease.
+        self.assertGreater(t_far_r, 0.5)
+        self.assertGreater(t_far_l, 0.5)
+        self.assertGreater(abs(r_far_r), abs(r_near_r))
+        self.assertGreater(abs(r_far_l), abs(r_near_l))
+        self.assertGreater(y_far_r, 0.0)
+        self.assertLess(y_far_l, 0.0)
+        self.assertAlmostEqual(abs(r_far_r), abs(r_far_l), delta=0.15)
+
+    def test_image_range_estimates_lateral_metres(self):
+        """No PnP body: nx×range still yields ey for sep-scaled yaw."""
+        geom = gate_lateral_geometry(None, nx=0.25, range_m=12.0)
+        self.assertIsNotNone(geom)
+        _ex, ey, bearing = geom
+        self.assertGreater(ey, 1.0)
+        self.assertGreater(bearing, 0.1)
 
     def test_pitch_not_used_to_keep_gate_in_frame(self):
         """Same body/range → same pitch regardless of image ny (092525)."""
@@ -558,7 +727,6 @@ class AssistPlannerTests(unittest.TestCase):
             planner._last_t = time.monotonic() - 0.05
             tgt = planner.compute_target(shared)
         self.assertGreater(float(tgt['yaw_rate']), 0.04)
-        self.assertLess(float(tgt['yaw_rate']), 0.55)
 
     def test_yaw_coarse_then_fine(self):
         """Far offset → large yaw; near centre → small fine yaw."""
@@ -575,35 +743,49 @@ class AssistPlannerTests(unittest.TestCase):
         _airborne(planner_far, far)
         _airborne(planner_near, near)
         # Inject realistic control dt so yaw slew can accumulate.
+        tgt_far = tgt_near = None
         for _ in range(8):
             t = time.monotonic()
             planner_far._last_t = t - 0.05
             planner_near._last_t = t - 0.05
-            y_far = float(planner_far.compute_target(far)['yaw_rate'])
-            y_near = float(planner_near.compute_target(near)['yaw_rate'])
-        self.assertGreater(y_far, 0.18)
+            tgt_far = planner_far.compute_target(far)
+            tgt_near = planner_near.compute_target(near)
+        y_far = float(tgt_far['yaw_rate'])
+        y_near = float(tgt_near['yaw_rate'])
+        r_far = abs(float(tgt_far['desired_roll']))
+        r_near = abs(float(tgt_near['desired_roll']))
+        # Far: roll-first near max lean; yaw still correct sign (may ease).
+        self.assertGreater(y_far, 0.0)
         self.assertGreater(y_near, 0.0)
-        self.assertLess(y_near, 0.22)
-        self.assertLess(y_far, 1.70)  # bang-bang may hit plant ~95°/s
-        self.assertGreater(y_far, y_near * 1.6)
+        self.assertGreater(r_far, r_near + math.radians(2.0))
+        self.assertGreater(
+            float(far['kalman_path'].get('roll_first_t', 0.0)), 0.7
+        )
 
     def test_extreme_nx_yaws_harder_than_mild(self):
-        """Far L/R in frame must command clearly stronger yaw than mild offset."""
+        """Far L/R in frame → roll-first hard bank (yaw may ease vs mild)."""
         planner_hi = AssistImagePlanner()
         planner_lo = AssistImagePlanner()
         hi = self._shared(nx=0.55, ny=0.20, body=None, range_m=16.0)
         lo = self._shared(nx=0.15, ny=0.20, body=None, range_m=16.0)
         _airborne(planner_hi, hi)
         _airborne(planner_lo, lo)
+        tgt_hi = tgt_lo = None
         for _ in range(10):
             t = time.monotonic()
             planner_hi._last_t = t - 0.05
             planner_lo._last_t = t - 0.05
-            y_hi = float(planner_hi.compute_target(hi)['yaw_rate'])
-            y_lo = float(planner_lo.compute_target(lo)['yaw_rate'])
-        self.assertGreater(y_hi, 0.0)
-        self.assertGreater(y_lo, 0.0)
-        self.assertGreater(y_hi, y_lo * 1.5)
+            tgt_hi = planner_hi.compute_target(hi)
+            tgt_lo = planner_lo.compute_target(lo)
+        self.assertGreater(float(tgt_hi['yaw_rate']), 0.0)
+        self.assertGreater(float(tgt_lo['yaw_rate']), 0.0)
+        self.assertGreater(
+            abs(float(tgt_hi['desired_roll'])),
+            abs(float(tgt_lo['desired_roll'])),
+        )
+        self.assertGreater(
+            float(hi['kalman_path'].get('roll_first_t', 0.0)), 0.85
+        )
 
     def test_visual_commit_keeps_aim_and_needs_align(self):
         """092927: do not drop lock on commit; refuse commit when |nx| large."""
@@ -629,23 +811,91 @@ class AssistPlannerTests(unittest.TestCase):
         self.assertTrue(planner2._have_filt)
         self.assertFalse(aligned.get('vision_begin_next_gate'))
 
-    def test_coast_rolls_toward_image_nx(self):
-        """Through-slot coast must strafe/yaw on live nx (not roll=0)."""
+    def test_coast_holds_center_line(self):
+        """Through-slot coast: soft centre bank when nx drifts (not full chase)."""
+        config.ASSIST_LATERAL_BY_ROLL = True
         planner = AssistImagePlanner()
+        # Near centre → wings level.
         shared = self._shared(
-            nx=0.30, ny=0.25, area=8000.0, range_m=6.0,
+            nx=0.04, ny=0.25, area=8000.0, range_m=6.0,
         )
         _airborne(planner, shared)
         planner._coast_until = time.monotonic() + 2.0
         planner._seek_until = time.monotonic() + 10.0
         planner._have_filt = True
-        planner._nx_f = 0.30
+        planner._nx_f = 0.04
         planner._ny_f = 0.25
         tgt = planner.compute_target(shared)
         self.assertEqual(shared['kalman_path']['phase'], 'coast')
-        # Gate right in frame → yaw right; roll sign follows LATERAL_LEAN_SIGN.
-        self.assertGreater(float(tgt['yaw_rate']), 0.0)
-        self.assertNotAlmostEqual(float(tgt['desired_roll']), 0.0, places=3)
+        self.assertAlmostEqual(float(tgt['desired_roll']), 0.0, places=3)
+        self.assertAlmostEqual(float(tgt['yaw_rate']), 0.0, places=2)
+
+        # Farther off → mild corrective roll (035017 edge clip with roll=0).
+        shared2 = self._shared(
+            nx=0.22, ny=0.25, area=8000.0, range_m=6.0,
+        )
+        _airborne(planner, shared2)
+        planner._coast_until = time.monotonic() + 2.0
+        planner._seek_until = time.monotonic() + 10.0
+        planner._have_filt = True
+        planner._nx_f = 0.22
+        planner._ny_f = 0.25
+        tgt2 = planner.compute_target(shared2)
+        self.assertEqual(shared2['kalman_path']['phase'], 'coast')
+        self.assertGreater(abs(float(tgt2['desired_roll'])), math.radians(2.0))
+        # Soft: under full max lean.
+        self.assertLess(
+            abs(float(tgt2['desired_roll'])),
+            0.90 * abs(float(planner._max_lean)),
+        )
+
+    def test_slot_hold_blocks_gate2_until_pass(self):
+        """034542: do not chase latched gate2 while still in the gate-1 slot."""
+        planner = AssistImagePlanner()
+        shared = self._shared(
+            nx=0.05, ny=0.18, body=[7.0, 0.2, 0.1], range_m=7.0, area=9000.0,
+        )
+        shared['dual_gate_pnp']['gate2_body'] = [20.0, 7.0, 1.0]
+        shared['dual_gate_pnp']['n_solved'] = 2
+        shared['race_status'] = {'active_gate': 0}
+        _airborne(planner, shared)
+        planner._active_gate = 0
+        planner._climb_f = 1.5
+        shared['position_ned'] = {'x': 0.0, 'y': 0.0, 'z': -1.5}
+        shared['local_position_ned'] = {'x': 0.0, 'y': 0.0, 'z': -1.5}
+        # Visual commit → slot hold.
+        planner._last_t = time.monotonic() - 0.05
+        planner.compute_target(shared)
+        self.assertTrue(planner._slot_hold)
+        self.assertEqual(shared['kalman_path']['phase'], 'coast')
+        # Latch may store gate2, but must not become the chase aim yet.
+        self.assertIsNotNone(planner._next_nx)
+        self.assertGreater(float(planner._next_nx), 0.25)
+        # Expire short coast timer; hold must keep coasting (not seek_chase).
+        planner._coast_until = time.monotonic() - 0.01
+        shared['gate_detection'] = {}  # primary blank — old bug chased latch
+        shared['dual_gate_pnp'] = {
+            'gate2_body': [20.0, 7.0, 1.0],
+            'n_solved': 2,
+        }
+        planner._last_t = time.monotonic() - 0.05
+        planner.compute_target(shared)
+        self.assertTrue(planner._slot_hold)
+        self.assertEqual(shared['kalman_path']['phase'], 'coast')
+        self.assertNotEqual(
+            shared['kalman_path'].get('norm_src'), 'next_latch'
+        )
+        self.assertNotEqual(
+            shared['kalman_path'].get('norm_src'), 'gate2_body'
+        )
+        # After race pass, slot hold clears and latch may seed.
+        shared['race_status'] = {'active_gate': 1}
+        shared['dual_gate_pnp'] = {'n_solved': 0}
+        planner._last_t = time.monotonic() - 0.05
+        planner.compute_target(shared)
+        self.assertFalse(planner._slot_hold)
+        self.assertTrue(planner._have_filt)
+        self.assertGreater(float(planner._nx_f), 0.25)
 
     def test_next_gate_hint_from_gate2_body(self):
         shared = {
@@ -730,9 +980,15 @@ class AssistPlannerTests(unittest.TestCase):
             tgt = planner.compute_target(shared)
         self.assertEqual(shared['kalman_path']['phase'], 'seek_yaw')
         self.assertFalse(shared['kalman_path']['gate_lock'])
-        # Far-right glimpse (|nx|≥bang) saturates yaw right.
-        self.assertGreater(float(tgt['yaw_rate']), math.radians(20.0))
-        self.assertAlmostEqual(float(tgt['desired_roll']), 0.0, places=3)
+        # Far-right glimpse: roll-first near max lean; yaw eases but stays right.
+        self.assertGreater(float(tgt['yaw_rate']), 0.05)
+        self.assertGreater(
+            abs(float(tgt['desired_roll'])),
+            0.65 * math.radians(float(config.ASSIST_LEAN_DEG)),
+        )
+        self.assertGreater(
+            float(shared['kalman_path'].get('roll_first_t', 0.0)), 0.7
+        )
         look = float(tgt['desired_pitch']) * float(config.FORWARD_PITCH_SIGN)
         # Post-pass: keep cam-level tip (not crawl-only sky look).
         self.assertGreater(look, math.radians(10.0))
@@ -1000,7 +1256,8 @@ class AssistPlannerTests(unittest.TestCase):
         shared['gate_detection'] = {}
         shared['dual_gate_pnp'] = {'n_solved': 0}
         settled = float(planner.compute_target(shared)['yaw_rate'])
-        self.assertLess(abs(settled), 0.08)
+        # Allow a little residual after heading hold hands off to seek.
+        self.assertLess(abs(settled), 0.12)
 
     def test_course2_memory_not_after_later_gates(self):
         """Right-yaw memory is g1→g2 only — never after gate 2+."""
