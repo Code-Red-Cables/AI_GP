@@ -122,11 +122,12 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # ---- Flight mode for main.py ----
 # assist  = image-chase on the manual attitude+hover plant (default).
 # kalman  = dual-gate PnP body-path / EKF geometric planner.
-# bc      = behavior-cloned MLP over human laps (see bc_planner.py; unflown).
+# race    = Li & de Croon classical: LS gate pose + drag EKF + PD/arc.
+# bc      = behavior-cloned MLP (bc_planner.py — removed from this checkout).
 FLIGHT_MODE = os.environ.get('FLIGHT_MODE', 'assist').strip().lower()
-if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'bc'}:
+if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'race'}:
     raise ValueError(
-        'FLIGHT_MODE must be "assist", "kalman", "spline" or "bc"'
+        'FLIGHT_MODE must be "assist", "kalman", "spline" or "race"'
     )
 
 # ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
@@ -833,7 +834,7 @@ ASSIST_ROLL_LEFT_MISS_BOOST = float(
     os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.0')
 )
 # Skip controller takeoff boost — assist clears the pad with soft lean only.
-if FLIGHT_MODE in ('assist', 'bc') and 'TAKEOFF_DURATION_S' not in os.environ:
+if FLIGHT_MODE in ('assist', 'race') and 'TAKEOFF_DURATION_S' not in os.environ:
     TAKEOFF_DURATION_S = 0.0
 # LEAN_THRUST_BOOST default is 0 (geometric gate1 height owns altitude in assist).
 
@@ -894,6 +895,30 @@ CAMERA_FOCAL_PX = 320.0     # fx = fy from spec
 CAMERA_CX       = 320.0
 CAMERA_CY       = 180.0
 CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward
+
+# ---- Race mode (Li & de Croon classical) ----
+# Drag: a_body = k * v_body. Negative k (force opposes motion). Fitted offline
+# by tools/identify_drag.py when telem returns; these defaults are order-of-
+# magnitude from earlier pitched-flight ax measurements.
+DRAG_KX = float(os.environ.get('DRAG_KX', '-0.50'))
+DRAG_KY = float(os.environ.get('DRAG_KY', '-0.50'))
+RACE_COURSE_MAP = os.environ.get('RACE_COURSE_MAP', 'course_map.json')
+RACE_PITCH_DEG = float(os.environ.get('RACE_PITCH_DEG', '-5.0'))
+RACE_MAX_LEAN_DEG = float(os.environ.get('RACE_MAX_LEAN_DEG', '12.0'))
+RACE_KP_LAT = float(os.environ.get('RACE_KP_LAT', '0.35'))
+RACE_KD_LAT = float(os.environ.get('RACE_KD_LAT', '0.15'))
+RACE_YAW_KP = float(os.environ.get('RACE_YAW_KP', '0.8'))
+RACE_VERT_THRUST_GAIN = float(os.environ.get('RACE_VERT_THRUST_GAIN', '0.04'))
+RACE_THRUST_MIN = float(os.environ.get('RACE_THRUST_MIN', '0.20'))
+RACE_THRUST_MAX = float(os.environ.get('RACE_THRUST_MAX', '0.55'))
+RACE_ARC_RADIUS_M = float(os.environ.get('RACE_ARC_RADIUS_M', '1.5'))
+RACE_ARC_TURN_RAD = float(os.environ.get('RACE_ARC_TURN_RAD', str(math.radians(90.0))))
+RACE_ARC_MAX_S = float(os.environ.get('RACE_ARC_MAX_S', '2.0'))
+RACE_COMMIT_RANGE_M = float(os.environ.get('RACE_COMMIT_RANGE_M', '1.2'))
+RACE_POSE_MAX_AGE_S = float(os.environ.get('RACE_POSE_MAX_AGE_S', '0.25'))
+RACE_MAX_RANGE_M = float(os.environ.get('RACE_MAX_RANGE_M', '40.0'))
+RACE_MAX_RESIDUAL_M = float(os.environ.get('RACE_MAX_RESIDUAL_M', '0.6'))
+RACE_MIN_KP_CONF = float(os.environ.get('RACE_MIN_KP_CONF', '0.25'))
 
 # ---- Vision runtime ----
 VISION_UDP_IP             = '0.0.0.0'

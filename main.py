@@ -224,7 +224,13 @@ def _wait_pad_vision(shared_data, timeout_s: float = 45.0) -> bool:
     detection only -- it never reads a PnP pose, so waiting for one would hang
     the arm on a fix it does not need.
     """
-    want_pnp = config.FLIGHT_MODE not in ('assist', 'bc')
+    # Assist / race accept a YOLO box; kalman wants dual-gate PnP.
+    #
+    # race is grouped with assist because the Li & de Croon planner steers
+    # from LS bearing pose on the same keypoints the YOLO detector already
+    # emits — waiting for dual-gate PnP would hang the arm on a fix it does
+    # not need.
+    want_pnp = config.FLIGHT_MODE not in ('assist', 'race')
     deadline = time.monotonic() + max(1.0, float(timeout_s))
     need = 'DUAL_PNP (gate1_body)' if want_pnp else 'YOLO gate or DUAL_PNP'
     print(

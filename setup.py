@@ -118,9 +118,9 @@ def setup_components(
     elif config.FLIGHT_MODE == 'assist':
         from assist_planner import AssistImagePlanner
         planner = AssistImagePlanner()
-    elif config.FLIGHT_MODE == 'bc':
-        from bc_planner import BCPlanner
-        planner = BCPlanner()
+    elif config.FLIGHT_MODE == 'race':
+        from race_planner import RacePlanner
+        planner = RacePlanner()
     else:
         from kalman_planner import KalmanDualGatePlanner
         planner = KalmanDualGatePlanner()

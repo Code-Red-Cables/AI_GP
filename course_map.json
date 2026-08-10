@@ -1,0 +1,107 @@
+{
+  "source": "stub",
+  "gates": [
+    {
+      "id": 1,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 2,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 3,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 4,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 5,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 6,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 7,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 8,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 9,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 10,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 11,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 12,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 13,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 14,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 15,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 16,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    },
+    {
+      "id": 17,
+      "turn_deg": 90.0,
+      "turn_radius_m": 1.5,
+      "note": "stub \u2014 replace after a scored lap"
+    }
+  ]
+}

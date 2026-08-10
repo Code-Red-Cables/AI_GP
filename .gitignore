@@ -33,6 +33,9 @@ datasets/
 logs/*.csv
 logs/*.txt
 
+# Training artifacts (Dreamer / BC checkpoints — large, regenerable)
+artifacts/
+
 # OS
 .DS_Store
 # Windows reserved device name — accidental `> nul` redirects create this file
