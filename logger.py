@@ -77,6 +77,11 @@ class Logger:
         nav  = d.get('navigation')      or {}
         # VIO-owned position_ned when present; VQ1 sim odometry otherwise.
         pos  = d.get('position_ned') or d.get('local_position_ned') or {}
+        # Raw sim ODOMETRY, kept strictly separate from the estimator's belief
+        # above. pos_*/vel_* are dead reckoning and have been observed ranging
+        # to 1e7 m; odo_* is measurement. Never conflate them when scoring.
+        odo  = d.get('odometry')        or {}
+        odo_q = odo.get('q') or (None, None, None, None)
         vio  = d.get('vio_stats')        or {}
         race = d.get('race_status')     or {}
         vis  = d.get('vision')          or {}
@@ -101,6 +106,30 @@ class Logger:
         gate_reproj = vis.get('pnp_reprojection_error')
         if gate_reproj is None:
             gate_reproj = dual.get('gate1_reproj_px')
+        # Raw eight keypoints — the learned policy's actual input. Logged
+        # per-corner rather than as the PnP-derived centre/range so a training
+        # run does not silently depend on a PnP solve that usually fails.
+        kps = (gate or {}).get('keypoints_px') or dual.get('keypoints_px')
+        kconf = (
+            (gate or {}).get('keypoint_confidences')
+            or dual.get('keypoint_confidences')
+        )
+        kp_cols: dict[str, str] = {}
+        for i in range(8):
+            u = v = c = None
+            if kps is not None and i < len(kps):
+                try:
+                    u, v = kps[i][0], kps[i][1]
+                except (TypeError, IndexError):
+                    u = v = None
+            if kconf is not None and i < len(kconf):
+                try:
+                    c = kconf[i]
+                except (TypeError, IndexError):
+                    c = None
+            kp_cols[f'kp{i}_u'] = self._f(u, 1)
+            kp_cols[f'kp{i}_v'] = self._f(v, 1)
+            kp_cols[f'kp{i}_c'] = self._f(c, 3)
 
         row = {
             # time
@@ -161,6 +190,7 @@ class Logger:
             'gate_predicted': str(int(bool(gate and gate.get('predicted')))),
             'gate_frame_id':  str(gate.get('frame_id', 'nan')) if gate else 'nan',
             'gate_ts_ns':     str(gate.get('ts', 'nan')) if gate else 'nan',
+            **kp_cols,
             'gate_norm_x':    self._f(dual.get('gate1_norm_x')),
             'gate_norm_y':    self._f(dual.get('gate1_norm_y')),
             'gate_range':     self._f(gate_range),
@@ -203,6 +233,26 @@ class Logger:
             'vel_e':          self._f(pos.get('vy')),
             'vel_d':          self._f(pos.get('vz')),
             'att_source':     att.get('source', 'sim'),
+            # ground truth from the sim's ODOMETRY (VQ1 only; nan on VQ2)
+            'odo_x':          self._f(odo.get('x')),
+            'odo_y':          self._f(odo.get('y')),
+            'odo_z':          self._f(odo.get('z')),
+            'odo_vx':         self._f(odo.get('vx')),
+            'odo_vy':         self._f(odo.get('vy')),
+            'odo_vz':         self._f(odo.get('vz')),
+            'odo_qw':         self._f(odo_q[0]),
+            'odo_qx':         self._f(odo_q[1]),
+            'odo_qy':         self._f(odo_q[2]),
+            'odo_qz':         self._f(odo_q[3]),
+            'odo_roll':       self._f(odo.get('roll')),
+            'odo_pitch':      self._f(odo.get('pitch')),
+            'odo_yaw':        self._f(odo.get('yaw')),
+            'odo_rollspeed':  self._f(odo.get('rollspeed')),
+            'odo_pitchspeed': self._f(odo.get('pitchspeed')),
+            'odo_yawspeed':   self._f(odo.get('yawspeed')),
+            # who is flying — HG-DAgger label provenance
+            'control_authority': str(d.get('control_authority', 'policy')),
+            'intervention_id':   str(d.get('intervention_id', '')),
             'vio_fixes':      str(vio.get('fixes', 0)),
             'vio_fix_rejects': str(vio.get('fixes_rejected', 0)),
             # vision attitude aid (gate horizon / yaw anchor)

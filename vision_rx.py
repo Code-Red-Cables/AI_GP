@@ -234,6 +234,54 @@ def create_gate_detector():
     return detector
 
 
+def _candidate_keypoints(pose_debug, center_px):
+    """The eight keypoints of whichever pose candidate matches ``center_px``.
+
+    Returns ``(keypoints, confidences)`` as plain lists, or ``(None, None)``
+    when the active detector is not a pose model. Matching is by nearest box
+    centre because the selected detection has already been through association
+    and target-lock logic, so identity has to be recovered rather than assumed.
+    """
+    candidates = list(getattr(pose_debug, 'candidates', None) or ())
+    if not candidates or center_px is None:
+        return None, None
+    try:
+        cx, cy = float(center_px[0]), float(center_px[1])
+    except (TypeError, ValueError, IndexError):
+        return None, None
+
+    best = None
+    best_d2 = float('inf')
+    for candidate in candidates:
+        box = getattr(candidate, 'box', None)
+        kps = getattr(candidate, 'keypoints', None)
+        if box is None or kps is None:
+            continue
+        try:
+            bx, by = box.center
+        except (TypeError, ValueError, AttributeError):
+            continue
+        d2 = (float(bx) - cx) ** 2 + (float(by) - cy) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            best = candidate
+    if best is None:
+        return None, None
+
+    try:
+        points = np.asarray(best.keypoints, dtype=np.float64).reshape(-1, 2)
+    except (TypeError, ValueError):
+        return None, None
+    confs = getattr(best, 'keypoint_confidences', None)
+    try:
+        conf_list = [
+            float(c) for c in np.asarray(confs, dtype=np.float64).reshape(-1)
+        ] if confs is not None else [1.0] * len(points)
+    except (TypeError, ValueError):
+        conf_list = [1.0] * len(points)
+    return [[float(u), float(v)] for u, v in points], conf_list
+
+
 class VisionRX:
 
     def __init__(self, data):
@@ -1391,6 +1439,14 @@ class VisionRX:
                 'frame_id': frame_id,
                 'ts': timestamp_ns,
             }
+            # The eight raw keypoints, taken from the pose candidate rather
+            # than from dual_gate_pnp. The learned policy consumes corners
+            # directly (paper1 uses no pose estimation), so it must not be
+            # gated on a PnP solve succeeding — PnP was non-null in 1 of 39
+            # laps on this detector.
+            kps, kconf = _candidate_keypoints(pose_debug, measured.center_px)
+            gate_detection['keypoints_px'] = kps
+            gate_detection['keypoint_confidences'] = kconf
 
         total_ms = (time.perf_counter() - started) * 1000.0
         self.data['gate_detection'] = gate_detection

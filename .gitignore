@@ -36,6 +36,10 @@ logs/*.txt
 # Training artifacts (Dreamer / BC checkpoints — large, regenerable)
 artifacts/
 
+# YOLO / policy training output (checkpoints + plots, hundreds of MB, and
+# fully regenerable from datasets/ via tools/train_gate_pose.py)
+runs/
+
 # OS
 .DS_Store
 # Windows reserved device name — accidental `> nul` redirects create this file
