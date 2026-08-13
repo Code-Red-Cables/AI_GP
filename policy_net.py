@@ -55,7 +55,15 @@ class TemporalBlock(nn.Module):
 
 
 class RacePolicy(nn.Module):
-    """Observation history -> [thrust, roll_rate, pitch_rate, yaw_rate]."""
+    """Observation history -> ``chunk`` future [thrust, roll, pitch, yaw] steps.
+
+    ``chunk > 1`` is action chunking: the network predicts a short burst of
+    future commands instead of only the next one. Predicting a sequence forces
+    the model to commit to a coherent short-term plan rather than re-deciding
+    every frame, and it lets the planner average overlapping predictions, which
+    is the standard remedy for the jitter-then-diverge failure of single-step
+    behaviour cloning.
+    """
 
     def __init__(
         self,
@@ -67,11 +75,18 @@ class RacePolicy(nn.Module):
         layers: int = 3,
         hidden: int = 128,
         dropout: float = 0.1,
+        chunk: int = 1,
+        bins: int = 0,
     ):
         super().__init__()
         self.n_in = int(n_in)
         self.n_out = int(n_out)
         self.history = int(history)
+        self.chunk = max(1, int(chunk))
+        # bins > 0 switches the head from regression to per-channel
+        # classification over discretised actions, so the output can commit to
+        # a mode instead of averaging across them. See race_obs.ACTION_RANGES.
+        self.bins = max(0, int(bins))
 
         blocks: list[nn.Module] = []
         in_ch = self.n_in
@@ -89,24 +104,39 @@ class RacePolicy(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, self.n_out),
+            nn.Linear(
+                hidden,
+                self.n_out * self.chunk * (self.bins if self.bins else 1),
+            ),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """``x`` is (batch, history, features); returns (batch, n_out)."""
+        """``x`` is (batch, history, features).
+
+        Regression head: (batch, n_out), or (batch, chunk, n_out).
+        Categorical head: (batch, chunk, n_out, bins) logits — chunk axis kept
+        even at chunk=1 so callers have one shape to handle.
+        """
         if x.dim() != 3:
             raise ValueError(f'expected (batch, history, features), got {tuple(x.shape)}')
         # Conv1d wants (batch, channels, time).
         h = self.tcn(x.transpose(1, 2))
         # Read out the newest timestep only — this is a control policy, not a
         # sequence-to-sequence model.
-        return self.head(h[:, :, -1])
+        out = self.head(h[:, :, -1])
+        if self.bins:
+            return out.view(-1, self.chunk, self.n_out, self.bins)
+        if self.chunk == 1:
+            return out
+        return out.view(-1, self.chunk, self.n_out)
 
     def arch(self) -> dict:
         return {
             'n_in': self.n_in,
             'n_out': self.n_out,
             'history': self.history,
+            'chunk': self.chunk,
+            'bins': self.bins,
         }
 
 
@@ -124,7 +154,9 @@ def load_policy(path, map_location='cpu') -> tuple[RacePolicy, dict]:
     blob = torch.load(path, map_location=map_location, weights_only=False)
     arch = blob['arch']
     model = RacePolicy(
-        n_in=arch['n_in'], n_out=arch['n_out'], history=arch['history']
+        n_in=arch['n_in'], n_out=arch['n_out'], history=arch['history'],
+        chunk=int(arch.get('chunk', 1)),
+        bins=int(arch.get('bins', 0)),
     )
     model.load_state_dict(blob['state_dict'])
     model.eval()

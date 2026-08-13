@@ -39,6 +39,44 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
+def _tilt_compensate(thrust: float, roll: float, pitch: float) -> float:
+    """Keep vertical lift constant while leaned.
+
+    Only the component of thrust along the vertical holds the drone up, so a
+    level-flight collective sinks as soon as the craft pitches to drive forward:
+    at 35 degrees only 82% of it is lifting. Without this the planner trades
+    altitude for speed and settles onto the floor.
+    """
+    if not bool(getattr(config, 'RACE_TILT_COMPENSATE', True)):
+        return float(thrust)
+    cos_tilt = math.cos(float(roll)) * math.cos(float(pitch))
+    floor = float(getattr(config, 'MIN_TILT_COMPENSATION_COSINE', 0.70) or 0.70)
+    cos_tilt = max(max(0.55, min(0.95, floor)), cos_tilt)
+    return float(thrust) / cos_tilt
+
+
+class _HeldPose:
+    """A dead-reckoned gate pose, shaped like GateLSPose for the controller."""
+
+    __slots__ = ('lateral_m', 'vertical_m', 'through_m', 'range_m',
+                 'bearing_rad', 'residual_m', 'ring_disagree_m',
+                 'body_forward_range', 'age_s', 'held')
+
+    def __init__(self, d: dict):
+        self.lateral_m = float(d['lateral_m'])
+        self.vertical_m = float(d['vertical_m'])
+        self.through_m = float(d['through_m'])
+        self.range_m = float(d['range_m'])
+        self.bearing_rad = math.atan2(
+            self.lateral_m, max(-self.through_m, 1e-6)
+        )
+        self.residual_m = 0.0
+        self.ring_disagree_m = 0.0
+        self.body_forward_range = abs(self.through_m)
+        self.age_s = float(d.get('age_s', 0.0))
+        self.held = True
+
+
 class RacePlanner:
     """PD gate alignment with a short feed-forward arc between gates."""
 
@@ -58,6 +96,8 @@ class RacePlanner:
         self._last_gate: Optional[int] = None
         self._last_imu_t: Optional[float] = None
         self._last_pose_t: Optional[float] = None
+        # Last solved gate pose, dead-reckoned forward while vision is blind.
+        self._held_pose: Optional[dict] = None
         self._roll_i = 0.0
         print(f'[RACE] course_map={len(self._course)} gates, '
               f'k_x={self._ekf.k_x:.3f} k_y={self._ekf.k_y:.3f}', flush=True)
@@ -96,15 +136,33 @@ class RacePlanner:
         self._last_gate = None
         self._last_imu_t = None
         self._last_pose_t = None
+        self._held_pose = None
         self._roll_i = 0.0
 
     def _attitude(self, shared_data: dict) -> tuple[float, float, float]:
+        """Roll/pitch/yaw, gravity-referenced sources first.
+
+        ``shared_data['attitude']`` is the EKF's integrated-gyro belief, which
+        this repo measured drifting +4 deg to -23 deg over 50 s. The LS gate
+        pose de-rotates the corner rays by this attitude, so feeding it drift
+        tilts every solved gate position. Prefer the controller's AHRS, then the
+        sim's own ATTITUDE, and fall back to the EKF only if neither exists.
+        """
+        ctrl = shared_data.get('control_output') or {}
+        raw = shared_data.get('attitude_raw') or {}
         att = shared_data.get('attitude') or {}
-        return (
-            _num(att.get('roll')),
-            _num(att.get('pitch')),
-            _num(att.get('yaw')),
-        )
+        roll = _num(ctrl.get('ahrs_roll'), math.nan)
+        pitch = _num(ctrl.get('ahrs_pitch'), math.nan)
+        if not (math.isfinite(roll) and math.isfinite(pitch)):
+            roll = _num(raw.get('roll'), math.nan)
+            pitch = _num(raw.get('pitch'), math.nan)
+        if not (math.isfinite(roll) and math.isfinite(pitch)):
+            roll, pitch = _num(att.get('roll')), _num(att.get('pitch'))
+        # Yaw has no gravity reference; the sim's own value beats the EKF's.
+        yaw = _num(raw.get('yaw'), math.nan)
+        if not math.isfinite(yaw):
+            yaw = _num(att.get('yaw'))
+        return roll, pitch, yaw
 
     def _imu(self, shared_data: dict) -> tuple[np.ndarray, np.ndarray]:
         imu = shared_data.get('highres_imu') or {}
@@ -120,13 +178,22 @@ class RacePlanner:
         ], dtype=np.float64)
         return accel, gyro
 
-    def _predict_ekf(self, shared_data: dict, roll: float, pitch: float, yaw: float) -> float:
+    def _predict_ekf(
+        self, shared_data: dict, roll: float, pitch: float, yaw: float
+    ) -> tuple[float, float]:
+        """Advance the drag EKF; return body (forward, right) velocity.
+
+        Lateral velocity is the paper's damping term in eq. 22, recovered from
+        specific force via the drag model (eq. 14) rather than differentiated
+        from a noisy position.
+        """
         accel, gyro = self._imu(shared_data)
         now = time.monotonic()
         dt = 0.01 if self._last_imu_t is None else max(1e-3, min(0.05, now - self._last_imu_t))
         self._last_imu_t = now
         self._ekf.predict(accel, gyro, roll, pitch, yaw, dt)
-        return self._ekf.velocity_body_forward(accel)
+        v_xy = self._ekf.body_velocity_xy(accel)
+        return float(v_xy[0]), float(v_xy[1])
 
     def _solve_pose(self, shared_data: dict, roll: float, pitch: float, yaw: float):
         gate = shared_data.get('gate_detection') or {}
@@ -160,6 +227,34 @@ class RacePlanner:
             self._last_pose_t = time.monotonic()
         return pose
 
+    def _propagate_pose(self, v_fwd: float, v_lat: float, dt: float):
+        """Dead-reckon the last gate pose while the gate is out of sight.
+
+        Detection is strongly pitch-dependent -- measured 65% at level falling
+        to 31% beyond 40 degrees of pitch, because the camera is tilted up 20
+        degrees and hard forward flight aims it below the horizon. So the fast
+        flight this planner is trying to achieve is exactly when it goes blind,
+        for stretches of several seconds.
+
+        The paper's answer is its Kalman filter: it propagates the drone's
+        position on drag-model velocity and lets a new detection correct the
+        drift (their Figure 22 shows the jump when vision returns). This does the
+        same on the gate-relative pose, so control continues on a decaying
+        estimate rather than dropping to a hold the instant a corner is lost.
+        """
+        held = self._held_pose
+        if held is None:
+            return None
+        # Camera moves forward and right; the gate's relative position moves the
+        # opposite way in the gate frame.
+        held['lateral_m'] -= float(v_lat) * dt
+        held['through_m'] += float(v_fwd) * dt
+        held['range_m'] = max(
+            0.1, math.hypot(held['lateral_m'], abs(held['through_m']))
+        )
+        held['age_s'] += dt
+        return held
+
     def _gate_visible(self, shared_data: dict, pose) -> bool:
         if pose is None:
             return False
@@ -175,13 +270,22 @@ class RacePlanner:
             return False
         return True
 
-    def _begin_arc(self, shared_data: dict, yaw: float) -> None:
+    def _begin_arc(self, shared_data: dict, yaw: float) -> bool:
+        """Start a feed-forward arc. Returns False when the map cannot say how.
+
+        Without a surveyed course map every gate defaults to a 90 degree right
+        turn, and committing to that blind is worse than flying straight: on a
+        left-hand gate it drives into the scenery. The caller falls back to a
+        hold-and-search when this returns False.
+        """
         race = shared_data.get('race_status') or {}
         try:
             gid = int(race.get('active_gate') or 0)
         except (TypeError, ValueError):
             gid = 0
         spec = self._course.get(gid) or self._course.get(gid - 1) or {}
+        if not spec or str(spec.get('note', '')).startswith('stub'):
+            return False
         self._arc_radius = float(spec.get(
             'turn_radius_m', getattr(config, 'RACE_ARC_RADIUS_M', 1.5)
         ))
@@ -198,6 +302,7 @@ class RacePlanner:
         if callable(log):
             log('RACE', f'arc_start gate={gid} r={self._arc_radius:.2f} '
                 f'turn_deg={turn_deg:.1f}')
+        return True
 
     def _align_command(
         self,
@@ -207,35 +312,56 @@ class RacePlanner:
         yaw: float,
         v_fwd: float,
         dt: float,
+        v_lat: float = 0.0,
     ) -> dict:
-        # Paper eq. 22: phi_c = -kp y - kd ydot, theta fixed, psi hold.
+        """Straight-part control, paper eq. 22:
+
+            phi_c = -kp * y - kd * ydot     roll nulls the lateral offset
+            theta_c = theta_0               pitch is fixed; it sets the speed
+            psi_c = 0                       heading held on the gate
+
+        Three departures from the paper have been removed here.
+
+        The damping term is the *lateral velocity*, taken from the drag EKF
+        (paper eq. 14), not the roll angle. Roll is where the controller is
+        already pushing, not how fast the drone is sliding, so damping on it fed
+        the output back into itself.
+
+        There is no yaw term. The paper fixes heading to the gate's direction
+        and steers purely with roll; adding a bearing-driven yaw loop puts a
+        second controller on the same error, competing with the roll loop.
+
+        There is no altitude term -- see ``_hold_thrust``.
+        """
         y = float(pose.lateral_m)
-        # Finite-difference lateral rate in gate frame ≈ body-right when
-        # roughly aligned; use drag lateral velocity as a stand-in.
-        kp = float(getattr(config, 'RACE_KP_LAT', 0.35))
-        kd = float(getattr(config, 'RACE_KD_LAT', 0.15))
-        # No direct ydot; damp with current roll as a proxy for lateral rate.
-        phi_c = -kp * y - kd * roll
+        kp = float(getattr(config, 'RACE_KP_LAT', 1.0))
+        kd = float(getattr(config, 'RACE_KD_LAT', 2.0))
+        phi_c = -kp * y - kd * float(v_lat)
         max_lean = math.radians(float(getattr(config, 'RACE_MAX_LEAN_DEG', 12.0)))
         phi_c = _clamp(phi_c, -max_lean, max_lean)
 
-        theta_c = math.radians(float(getattr(config, 'RACE_PITCH_DEG', -5.0)))
-        # Vertical: push thrust from vertical offset (Y down → positive means
-        # camera below gate centre → climb).
-        hover = float(config.HOVER_THRUST)
-        vert_gain = float(getattr(config, 'RACE_VERT_THRUST_GAIN', 0.04))
-        thrust = hover + vert_gain * float(pose.vertical_m)
-        thrust = _clamp(
-            thrust,
+        theta_c = math.radians(float(getattr(config, 'RACE_PITCH_DEG', 20.0)))
+        thrust = self._hold_thrust(phi_c, theta_c)
+        return self._angles_to_target(phi_c, theta_c, 0.0, thrust, roll, pitch, dt)
+
+    def _hold_thrust(self, phi_c: float, theta_c: float) -> float:
+        """Collective for level flight while leaned (paper eq. 27).
+
+            T = (-g - a_z) / (cos(theta) cos(phi))
+
+        The paper never derives altitude from the gate: "we neglect z because in
+        the real-world flight, the altitude is controlled by a separate
+        controller which can keep the altitude to be a constant" -- a sonar, in
+        their Figure 16c. Driving thrust from the gate's apparent vertical offset
+        couples height to a quantity that grows with both range and attitude
+        error, and in flight it pinned the collective at maximum for half the run
+        and climbed away.
+        """
+        return _clamp(
+            _tilt_compensate(float(config.HOVER_THRUST), phi_c, theta_c),
             float(getattr(config, 'RACE_THRUST_MIN', 0.20)),
-            float(getattr(config, 'RACE_THRUST_MAX', 0.55)),
+            float(getattr(config, 'RACE_THRUST_MAX', 0.40)),
         )
-
-        # Hold heading; small yaw toward bearing if configured.
-        yaw_kp = float(getattr(config, 'RACE_YAW_KP', 0.8))
-        yaw_rate = _clamp(yaw_kp * float(pose.bearing_rad), -0.6, 0.6)
-
-        return self._angles_to_target(phi_c, theta_c, yaw_rate, thrust, roll, pitch, dt)
 
     def _arc_command(
         self,
@@ -310,11 +436,27 @@ class RacePlanner:
             'desired_pitch': theta_c,
         }
 
+    def _search_command(self, roll: float, pitch: float, dt: float) -> dict:
+        """Wings level, gentle forward, slow yaw scan — reacquire, do not guess.
+
+        Used when no gate is solved and the course map cannot say which way the
+        next one lies.
+        """
+        # Positive is forward on this plant; keep it gentle while blind.
+        theta_c = math.radians(
+            float(getattr(config, 'RACE_SEARCH_PITCH_DEG', 6.0))
+        )
+        yaw_rate = float(getattr(config, 'RACE_SEARCH_YAW_RATE', 0.0))
+        thrust = _tilt_compensate(float(config.HOVER_THRUST), 0.0, theta_c)
+        return self._angles_to_target(
+            0.0, theta_c, yaw_rate, thrust, roll, pitch, dt,
+        )
+
     def compute_target(self, shared_data: dict) -> dict:
         shared_data['planner_mode'] = self.name
         roll, pitch, yaw = self._attitude(shared_data)
         accel, _gyro = self._imu(shared_data)
-        v_fwd = self._predict_ekf(shared_data, roll, pitch, yaw)
+        v_fwd, v_lat = self._predict_ekf(shared_data, roll, pitch, yaw)
         dt = 0.01
 
         race = shared_data.get('race_status') or {}
@@ -330,20 +472,45 @@ class RacePlanner:
         pose = self._solve_pose(shared_data, roll, pitch, yaw)
         visible = self._gate_visible(shared_data, pose)
 
+        if visible:
+            # Fresh solve: reset the dead-reckoned estimate to it.
+            self._held_pose = {
+                'lateral_m': float(pose.lateral_m),
+                'vertical_m': float(pose.vertical_m),
+                'through_m': float(pose.through_m),
+                'range_m': float(pose.range_m),
+                'age_s': 0.0,
+            }
+        else:
+            held = self._propagate_pose(v_fwd, v_lat, dt)
+            hold_s = float(getattr(config, 'RACE_POSE_HOLD_S', 2.0))
+            if held is not None and held['age_s'] <= hold_s:
+                pose = _HeldPose(held)
+                visible = True
+            else:
+                self._held_pose = None
+
         if self._mode == 'arc':
             target = self._arc_command(roll, pitch, yaw, v_fwd, accel, dt)
         elif visible:
-            target = self._align_command(pose, roll, pitch, yaw, v_fwd, dt)
+            target = self._align_command(
+                pose, roll, pitch, yaw, v_fwd, dt, v_lat=v_lat
+            )
             # Commit to arc when very close (histogram regime in the paper).
             commit_m = float(getattr(config, 'RACE_COMMIT_RANGE_M', 1.2))
             if pose is not None and pose.body_forward_range < commit_m:
-                self._begin_arc(shared_data, yaw)
-                target = self._arc_command(roll, pitch, yaw, v_fwd, accel, dt)
+                if self._begin_arc(shared_data, yaw):
+                    target = self._arc_command(
+                        roll, pitch, yaw, v_fwd, accel, dt
+                    )
         else:
-            # Blind without an active arc: gentle pitch hold, seek with yaw 0.
-            if self._arc_t0 is None:
-                self._begin_arc(shared_data, yaw)
-            target = self._arc_command(roll, pitch, yaw, v_fwd, accel, dt)
+            # No gate solved and no arc running. With a surveyed map the arc
+            # carries us to the next gate; without one, guessing a 90 degree
+            # turn is how you fly into scenery, so hold and let vision reacquire.
+            if self._arc_t0 is None and not self._begin_arc(shared_data, yaw):
+                target = self._search_command(roll, pitch, dt)
+            else:
+                target = self._arc_command(roll, pitch, yaw, v_fwd, accel, dt)
 
         shared_data['planner_target'] = target
         shared_data['race_pose'] = None if pose is None else {

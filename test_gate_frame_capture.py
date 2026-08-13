@@ -52,3 +52,38 @@ def test_captures_land_in_a_per_run_subfolder(tmp_path, monkeypatch):
         r'run_\d{8}_\d{6}', receiver._gate_capture_dir.name
     ), receiver._gate_capture_dir.name
     assert receiver._gate_capture_dir.is_dir()
+
+
+def test_default_capture_skips_misses(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, 'GATE_FRAME_CAPTURE', True)
+    monkeypatch.setattr(config, 'GATE_FRAME_CAPTURE_DIR', str(tmp_path))
+    from vision.gate_detector import GateDetection
+    from vision_rx import VisionRX
+
+    receiver = VisionRX.__new__(VisionRX)
+    receiver.data = {}
+    VisionRX._init_gate_capture(receiver)
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
+    VisionRX._capture_gate_frame(
+        receiver, GateDetection(found=False), 1, image, None, now=10.0,
+    )
+    assert receiver._gate_capture_count == 0
+
+
+def test_capture_all_saves_misses_once_per_second(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, 'GATE_FRAME_CAPTURE', True)
+    monkeypatch.setattr(config, 'GATE_FRAME_CAPTURE_DIR', str(tmp_path))
+    monkeypatch.setattr(config, 'GATE_FRAME_CAPTURE_INTERVAL_S', 1.0)
+    from vision.gate_detector import GateDetection
+    from vision_rx import VisionRX
+
+    receiver = VisionRX.__new__(VisionRX)
+    receiver.data = {'vision_reference_capture_all': True}
+    VisionRX._init_gate_capture(receiver)
+    image = np.zeros((24, 32, 3), dtype=np.uint8)
+    miss = GateDetection(found=False)
+    VisionRX._capture_gate_frame(receiver, miss, 1, image, None, now=10.0)
+    VisionRX._capture_gate_frame(receiver, miss, 2, image, None, now=10.2)
+    VisionRX._capture_gate_frame(receiver, miss, 3, image, None, now=11.0)
+    assert receiver._gate_capture_count == 2
+    assert not receiver.data['gate_frame_capture']['confirmed_detections_only']

@@ -240,15 +240,32 @@ def main() -> None:
         print(f"    ... {len(track_gates) - 3} more")
 
     print("\n=== what this means for the plan ===")
-    if odom_live:
-        print("  Phase 3 observation check CAN use true gate bearing.")
+    # Spec section 4.3 only guarantees HEARTBEAT, ATTITUDE, HIGHRES_IMU and
+    # TIMESYNC. ODOMETRY was a bonus on the 3391 build and is not something to
+    # design around; ATTITUDE is, because it is the only drift-free attitude
+    # source the policy can use.
+    if attitude_sample is not None:
+        print("  ATTITUDE present — the policy's attitude channel is sound.")
     else:
-        print("  ODOMETRY absent/zeroed — Phase 3 cannot validate against")
-        print("  truth. Stop and reconsider before training.")
+        print("  ATTITUDE MISSING. The observation then falls back to the")
+        print("  controller AHRS, and if that is unavailable to the EKF belief,")
+        print("  which drifts tens of degrees per minute. Check this first.")
+    if imu_sample is not None:
+        print("  HIGHRES_IMU present — body rates available.")
+    else:
+        print("  HIGHRES_IMU MISSING — no body-rate channel.")
+    if odom_live:
+        print("  ODOMETRY present (bonus): the ground-truth bearing check in")
+        print("  tools/eval_observation.py will run as check 0.")
+    else:
+        print("  ODOMETRY absent — expected on current builds. The observation")
+        print("  gate runs ground-truth free (rigidity / identity / coupling);")
+        print("  nothing in the policy needed it. Run:")
+        print("    python tools/eval_observation.py --telem logs/telem_*.csv")
     if track_live:
         print("  Gate map is FREE — decode TRACK_DATA into the course map.")
     else:
-        print("  Gate map must be flown: sample ODOMETRY at each GATE_PASSED.")
+        print("  No gate map. Only the optional ODOMETRY check wanted one.")
     print(f"\nwrote {args.out}")
 
 

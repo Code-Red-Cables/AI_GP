@@ -123,9 +123,15 @@ class ObservationTests(unittest.TestCase):
         self.assertEqual(from_row, direct)
 
     def test_labels_from_row(self):
+        import config
+        # Logged cmd_* already include RATE_SIGN_*; labels undo them.
         row = {'cmd_thrust': '0.3', 'cmd_roll_rate': '0.1',
                'cmd_pitch_rate': '-0.2', 'cmd_yaw_rate': '0.05'}
-        self.assertEqual(labels_from_row(row), [0.3, 0.1, -0.2, 0.05])
+        got = labels_from_row(row)
+        self.assertAlmostEqual(got[0], 0.3)
+        self.assertAlmostEqual(got[1], 0.1 / config.RATE_SIGN_ROLL)
+        self.assertAlmostEqual(got[2], -0.2 / config.RATE_SIGN_PITCH)
+        self.assertAlmostEqual(got[3], 0.05 / config.RATE_SIGN_YAW)
 
 
 class HistoryTests(unittest.TestCase):

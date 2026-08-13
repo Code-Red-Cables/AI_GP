@@ -50,6 +50,7 @@ def setup_components(
     server_udp_port,
     *,
     enable_vision: bool = True,
+    enable_planner: bool = True,
 ):
     # The VIO state estimator reads/writes the blackboard under this lock;
     # the other components keep their existing atomic-replace access.
@@ -112,20 +113,29 @@ def setup_components(
         'dual_gate_pnp+imu' if config.EKF_USE_PNP else 'imu_only',
     )
 
-    if config.FLIGHT_MODE == 'spline':
-        from spline_planner import SplinePlanner
-        planner = SplinePlanner()
-    elif config.FLIGHT_MODE == 'assist':
-        from assist_planner import AssistImagePlanner
-        planner = AssistImagePlanner()
-    elif config.FLIGHT_MODE == 'race':
-        from race_planner import RacePlanner
-        planner = RacePlanner()
+    planner = None
+    if enable_planner:
+        if config.FLIGHT_MODE == 'spline':
+            from spline_planner import SplinePlanner
+            planner = SplinePlanner()
+        elif config.FLIGHT_MODE == 'assist':
+            from assist_planner import AssistImagePlanner
+            planner = AssistImagePlanner()
+        elif config.FLIGHT_MODE == 'race':
+            from race_planner import RacePlanner
+            planner = RacePlanner()
+        elif config.FLIGHT_MODE == 'policy':
+            from policy_planner import PolicyPlanner
+            planner = PolicyPlanner(getattr(config, 'POLICY_WEIGHTS', None))
+        else:
+            from kalman_planner import KalmanDualGatePlanner
+            planner = KalmanDualGatePlanner()
+        logger.log_event('PLANNER', f'{planner.name} mode={config.FLIGHT_MODE}')
     else:
-        from kalman_planner import KalmanDualGatePlanner
-        planner = KalmanDualGatePlanner()
+        # Teleop seed / acro: sticks own the plant; vision is observe-only.
+        logger.log_event('PLANNER', f'none (teleop) mode={config.FLIGHT_MODE}')
+        print('[PLANNER] disabled (teleop / observe-only)', flush=True)
 
-    logger.log_event('PLANNER', f'{planner.name} mode={config.FLIGHT_MODE}')
     shared_data['planner'] = planner
 
     return {

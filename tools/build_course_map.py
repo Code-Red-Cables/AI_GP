@@ -81,18 +81,50 @@ def stub_map(n_gates: int = 17) -> dict[int, dict]:
     }
 
 
+def from_probe(path: Path) -> dict[int, dict]:
+    """Load gate NED positions from ``tools/probe_vq1.py`` JSON output."""
+    raw = json.loads(path.read_text(encoding='utf-8'))
+    out: dict[int, dict] = {}
+    for g in raw.get('track_gates') or []:
+        try:
+            gid = int(g.get('gate_id', g.get('id')))
+            pos = g.get('position_ned') or g.get('pos')
+            x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        out[gid] = {
+            'id': gid,
+            'pos': [x, y, z],
+            'width': g.get('width'),
+            'height': g.get('height'),
+        }
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--telem', type=Path, default=None)
+    ap.add_argument(
+        '--probe', type=Path, default=None,
+        help='artifacts/vq1_probe.json from tools/probe_vq1.py (preferred: '
+             'live TRACK_DATA positions)',
+    )
     ap.add_argument('--out', type=Path, default=ROOT / 'course_map.json')
     ap.add_argument('--gates', type=int, default=17)
     args = ap.parse_args()
 
     gates: dict[int, dict] = {}
     source = 'stub'
+    if args.probe and args.probe.is_file():
+        gates = from_probe(args.probe)
+        source = str(args.probe)
     if args.telem and args.telem.is_file():
-        gates = from_telem(args.telem)
-        source = str(args.telem)
+        telem_gates = from_telem(args.telem)
+        if telem_gates:
+            # Merge turn estimates onto any positions already loaded.
+            for gid, meta in telem_gates.items():
+                gates.setdefault(gid, {'id': gid}).update(meta)
+            source = f'{source}+{args.telem}' if gates else str(args.telem)
     if not gates:
         gates = stub_map(args.gates)
         source = 'stub'
@@ -102,7 +134,11 @@ def main() -> None:
         'gates': [gates[k] for k in sorted(gates)],
     }
     args.out.write_text(json.dumps(payload, indent=2))
-    print(f'wrote {args.out} ({len(gates)} gates, source={source})')
+    n_pos = sum(1 for g in gates.values() if g.get('pos'))
+    print(
+        f'wrote {args.out} ({len(gates)} gates, {n_pos} with pos, '
+        f'source={source})'
+    )
 
 
 if __name__ == '__main__':

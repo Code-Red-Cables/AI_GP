@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 
 LOG_DIR = 'logs'
-LOG_HZ  = 50
+LOG_HZ  = float(os.environ.get('LOG_HZ', '50') or 50)
 
 _NAN = float('nan')
 
@@ -17,6 +17,9 @@ class Logger:
     events text file on demand.  Call log_event() from any thread.
     shared_data['log_event'] is set to this method so other components
     can log without importing this module.
+
+    ``shared_data['log_hz']`` overrides the rate at runtime (used when the
+    client is in slow-mo so H-frame history still spans similar sim time).
     """
 
     def __init__(self, shared_data):
@@ -30,6 +33,7 @@ class Logger:
         self._csv_writer = None
         self._running = True
         shared_data['log_event'] = self.log_event
+        shared_data.setdefault('log_hz', LOG_HZ)
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         print(f'[LOG] telem  -> {self._csv_path}', flush=True)
@@ -50,8 +54,13 @@ class Logger:
 
     # ------------------------------------------------------------------
     def _loop(self):
-        interval = 1.0 / LOG_HZ
         while self._running:
+            try:
+                hz = float(self.data.get('log_hz') or LOG_HZ)
+            except (TypeError, ValueError):
+                hz = LOG_HZ
+            hz = max(1.0, min(200.0, hz))
+            interval = 1.0 / hz
             t0 = time.time()
             try:
                 self._write_row()
@@ -68,12 +77,37 @@ class Logger:
             return 'nan'
         return f'{v:.{prec}f}'
 
+    def _cand_best_conf(self, cands: dict) -> str:
+        """Confidence of the strongest raw candidate box, or nan."""
+        best = None
+        for item in (cands.get('items') or ()):
+            try:
+                c = float(item.get('confidence'))
+            except (TypeError, ValueError):
+                continue
+            if c == c and (best is None or c > best):
+                best = c
+        return self._f(best, 3)
+
     def _write_row(self):
         d    = self.data
         att  = d.get('attitude')        or {}
+        # The sim's own ATTITUDE message. Spec section 4.3 lists it as
+        # supported telemetry, and it is gravity-referenced, so unlike
+        # shared_data['attitude'] (EKF-owned integrated gyro, measured drifting
+        # +4 deg to -23 deg over 50 s) it is safe as a policy input. Logged
+        # separately so a training run can never silently learn from the drift.
+        att_raw = d.get('attitude_raw') or {}
         imu  = d.get('highres_imu')     or {}
         ctrl = d.get('control_output')  or {}
         gate = d.get('gate_detection')
+        # Every box YOLO produced this frame, before identity selection and the
+        # predicted/found gates in vision_rx dropped any of them. Without this a
+        # frame where the detector saw the gate and the selection logic threw it
+        # away is indistinguishable from a frame where nothing was in view.
+        cands = d.get('gate_candidates') or {}
+        snake = d.get('snake_gate')     or {}
+        gatenet = d.get('gatenet')      or {}
         nav  = d.get('navigation')      or {}
         # VIO-owned position_ned when present; VQ1 sim odometry otherwise.
         pos  = d.get('position_ned') or d.get('local_position_ned') or {}
@@ -88,6 +122,7 @@ class Logger:
         dual = d.get('dual_gate_pnp')   or {}
         vision_nav = d.get('navigation') or {}
         tel  = d.get('teleop_cmd')      or {}
+        race_pose = d.get('race_pose')  or {}
         tgt  = d.get('planner_target')  or {}
         ekf  = d.get('ekf_state')       or {}
         gyro_bias = ekf.get('gyro_bias') or (None, None, None)
@@ -190,6 +225,19 @@ class Logger:
             'gate_predicted': str(int(bool(gate and gate.get('predicted')))),
             'gate_frame_id':  str(gate.get('frame_id', 'nan')) if gate else 'nan',
             'gate_ts_ns':     str(gate.get('ts', 'nan')) if gate else 'nan',
+            'gate_cand_n':    str(len(cands.get('items') or ())),
+            'gate_cand_conf': self._cand_best_conf(cands),
+            'gate_cand_frame': str(cands.get('frame_id', 'nan')),
+            'gate_reject':    str(cands.get('reject', '') or ''),
+            'gate_raw_method': str(cands.get('method', '') or ''),
+            # Observe-only snake gate detection, for comparison against YOLO.
+            'snake_n':        str(int(snake.get('n', 0) or 0)),
+            'snake_cf':       self._f(snake.get('best_fitness'), 3),
+            'snake_ms':       self._f(snake.get('elapsed_ms'), 2),
+            'snake_mask':     self._f(snake.get('mask_fraction'), 4),
+            'gatenet_n':      str(int(gatenet.get('n_seen', 0) or 0)),
+            'gatenet_score':  self._f(gatenet.get('min_score'), 3),
+            'gatenet_ms':     self._f(gatenet.get('elapsed_ms'), 2),
             **kp_cols,
             'gate_norm_x':    self._f(dual.get('gate1_norm_x')),
             'gate_norm_y':    self._f(dual.get('gate1_norm_y')),
@@ -233,6 +281,13 @@ class Logger:
             'vel_e':          self._f(pos.get('vy')),
             'vel_d':          self._f(pos.get('vz')),
             'att_source':     att.get('source', 'sim'),
+            # sim ATTITUDE, unfiltered — the policy's attitude channel
+            'att_raw_roll':   self._f(att_raw.get('roll')),
+            'att_raw_pitch':  self._f(att_raw.get('pitch')),
+            'att_raw_yaw':    self._f(att_raw.get('yaw')),
+            'att_raw_rollspeed':  self._f(att_raw.get('rollspeed')),
+            'att_raw_pitchspeed': self._f(att_raw.get('pitchspeed')),
+            'att_raw_yawspeed':   self._f(att_raw.get('yawspeed')),
             # ground truth from the sim's ODOMETRY (VQ1 only; nan on VQ2)
             'odo_x':          self._f(odo.get('x')),
             'odo_y':          self._f(odo.get('y')),
@@ -253,6 +308,12 @@ class Logger:
             # who is flying — HG-DAgger label provenance
             'control_authority': str(d.get('control_authority', 'policy')),
             'intervention_id':   str(d.get('intervention_id', '')),
+            # Attempt index within this log. A sim reset teleports the drone,
+            # so a training window must never span two attempts.
+            'attempt':           str(d.get('attempt', 0)),
+            # Operator-marked "do not learn from this" — repositioning after a
+            # failure, ferrying to a section, anything not worth imitating.
+            'exclude':           str(int(bool(d.get('exclude', 0)))),
             'vio_fixes':      str(vio.get('fixes', 0)),
             'vio_fix_rejects': str(vio.get('fixes_rejected', 0)),
             # vision attitude aid (gate horizon / yaw anchor)
@@ -277,6 +338,16 @@ class Logger:
             'race_rx_wall_ns': race.get('received_wall_time_ns', 'nan'),
             # planner mode
             'planner':        d.get('planner_mode', 'unknown'),
+            # Classical race planner (FLIGHT_MODE=race): the LS gate solve it
+            # steers on. Without these there is no way to tell "no gate in
+            # view" from "gate seen but the solve was rejected".
+            'race_mode':      str(race_pose.get('mode', 'none')),
+            'race_range':     self._f(race_pose.get('range_m')),
+            'race_lat':       self._f(race_pose.get('lateral_m')),
+            'race_vert':      self._f(race_pose.get('vertical_m')),
+            'race_bearing':   self._f(race_pose.get('bearing_rad')),
+            'race_resid':     self._f(race_pose.get('residual_m')),
+            'race_ring_dis':  self._f(race_pose.get('ring_disagree_m')),
             # assist / kalman path snapshot
             'path_phase':     str((d.get('kalman_path') or {}).get('phase', 'none')),
             'path_source':    str((d.get('kalman_path') or {}).get('source', 'none')),

@@ -47,6 +47,12 @@ Subcommands, smallest blast radius first:
               main.py FLIGHT_MODE=assist). Prefer `python main.py` for
               full races; use this for short gain tweaks.
 
+  coach       HG-DAgger intervention harness. Policy flies; press H the
+              instant it looks wrong (human takes the proven MANUAL stick);
+              press T to return control. Every telem row is tagged with
+              control_authority=policy|human and an intervention_id.
+              Training rounds only — never use for timed evaluation.
+
   pilot       Manual-first: you fly with YOLO still tracking. Console shows
               LOCK when a gate is locked. Press T to hand that gate to
               assist; press H to take the sticks again. Esc/X quits.
@@ -380,15 +386,15 @@ def build_parser() -> argparse.ArgumentParser:
     common(p_man, 0.0)  # 0 = until Esc / Ctrl+C
     p_man.add_argument(
         '--lean-deg', type=float, default=None,
-        help='roll/pitch lean while held (default PILOT_LEAN_DEG=38)',
+        help='roll/pitch lean while held (default MANUAL_LEAN_DEG=14)',
     )
     p_man.add_argument(
         '--yaw-rate-deg', type=float, default=None,
-        help='yaw rate while Q/E held (default PILOT_YAW_RATE_DEG=85)',
+        help='yaw rate while Q/E held (default MANUAL_YAW_RATE_DEG=40)',
     )
     p_man.add_argument(
         '--climb-rate', type=float, default=None,
-        help='climb/sink RATE m/s (default PILOT_CLIMB_RATE=2.2)',
+        help='climb/sink RATE m/s (opts into rate-hold; default is open-loop MANUAL stick)',
     )
     p_man.add_argument(
         '--climb-auth', type=float, default=None,
@@ -398,11 +404,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_man.add_argument('--climb-ki', type=float, default=None)
     p_man.add_argument(
         '--open-loop-thrust', action='store_true',
-        help='revert to the old behaviour: R/F is a raw thrust offset (acceleration command, coasts on release)',
+        help='force open-loop R/F thrust offsets (default for seed laps)',
     )
     p_man.add_argument(
-        '--thrust-step', type=float, default=0.022,
-        help='open-loop collective offset while R/F held (only with --open-loop-thrust)',
+        '--thrust-step', type=float, default=None,
+        help='open-loop climb thrust offset (default MANUAL_THRUST_STEP=0.028)',
     )
     p_man.add_argument(
         '--capture', nargs='?', const='', default=None, metavar='PATH',
@@ -418,6 +424,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_man.add_argument('--kd-att', type=float, default=None)
     p_man.add_argument('--max-rate', type=float, default=None)
     p_man.add_argument('--lean-boost', type=float, default=None)
+    p_man.add_argument(
+        '--slow-mo', action='store_true',
+        help='start with client slow-mo ON (match Cheat Engine / DxWnd). '
+             'Also scales telem LOG_HZ so H=32 still spans ~0.64 s of sim time.',
+    )
+    p_man.add_argument(
+        '--slow-mo-scale', type=float, default=None,
+        help='client/CE slow-mo factor (default PILOT_SLOW_MO_SCALE; use 0.2)',
+    )
 
     p_assist = sub.add_parser(
         'assist',
@@ -429,6 +444,73 @@ def build_parser() -> argparse.ArgumentParser:
     p_assist.add_argument('--kd-att', type=float, default=None)
     p_assist.add_argument('--kp-yaw', type=float, default=None)
     p_assist.add_argument('--lean-boost', type=float, default=None)
+
+    p_coach = sub.add_parser(
+        'coach',
+        help='HG-DAgger: policy flies, H=intervene, T=return (authority logged)',
+    )
+    common(p_coach, 0.0)
+    p_coach.add_argument(
+        '--weights', default=None,
+        help='policy checkpoint (default POLICY_WEIGHTS / models/policy.pt)',
+    )
+    p_coach.add_argument(
+        '--planner', choices=('policy', 'race', 'assist', 'kalman'),
+        default='policy',
+        help='which autopilot the harness hands control to. Use this to test '
+             'an untried controller with a human takeover available.',
+    )
+    p_coach.add_argument(
+        '--angle', action='store_true',
+        help='take over in ANGLE (self-levelling) mode instead of ACRO. '
+             'Default is ACRO, matching how the seed laps were flown.',
+    )
+    p_coach.add_argument(
+        '--roll-rate-deg', type=float, default=None,
+        help='full-stick roll rate °/s in acro (default ACRO_ROLL_RATE_DEG)',
+    )
+    p_coach.add_argument(
+        '--pitch-rate-deg', type=float, default=None,
+        help='full-stick pitch rate °/s in acro (default ACRO_PITCH_RATE_DEG)',
+    )
+    p_coach.add_argument(
+        '--yaw-rate-deg', type=float, default=None,
+        help='full-stick yaw rate °/s (default ACRO_YAW_RATE_DEG)',
+    )
+    p_coach.add_argument('--hover-thrust', type=float, default=None)
+    p_coach.add_argument('--kp-att', type=float, default=None)
+    p_coach.add_argument('--kd-att', type=float, default=None)
+    p_coach.add_argument('--lean-boost', type=float, default=None)
+    p_coach.add_argument(
+        '--start-human', action='store_true',
+        help='begin in human mode (seed a takeoff, then T to hand to policy)',
+    )
+    p_coach.add_argument(
+        '--panel', action='store_true',
+        help='live window: camera frame plus the exact observation vector fed '
+             'to the network, the attitude source in use, and the command out',
+    )
+    p_coach.add_argument(
+        '--panel-scale', type=float, default=1.0,
+        help='scale factor for the --panel window',
+    )
+    p_coach.add_argument(
+        '--gatenet', action='store_true',
+        help='show GateNet 4 inner corners on the panel instead of YOLO '
+             '(observe-only; YOLO still feeds the policy unless --detector gatenet)',
+    )
+    p_coach.add_argument(
+        '--detector', choices=('yolo_pose', 'gatenet', 'hsv', 'yolo_hybrid'),
+        default=None,
+        help='which detector feeds the policy. Default yolo_pose. '
+             '"gatenet" flies on the 4 inner corners only.',
+    )
+    p_coach.add_argument(
+        '--save-frames', nargs='?', const=1.0, default=None, type=float,
+        metavar='SEC',
+        help='save a raw camera JPEG every SEC seconds (default 1), including '
+             'misses, under frames/run_<timestamp>/ for labelling',
+    )
 
     p_pilot = sub.add_parser(
         'pilot',
@@ -627,6 +709,10 @@ def build_parser() -> argparse.ArgumentParser:
         '--slow-mo', action='store_true',
         help='start with client slow-mo ON (toggle with O / D-pad ↓)',
     )
+    p_acro.add_argument(
+        '--slow-mo-scale', type=float, default=None,
+        help='client/CE slow-mo factor (default PILOT_SLOW_MO_SCALE; use 0.2)',
+    )
 
     p_prac = sub.add_parser(
         'practice',
@@ -664,7 +750,8 @@ def export_gain_overrides(args) -> dict:
     # `acquire` and `climb` keep the real takeoff path.
     if getattr(args, 'mode', None) in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive',
-            'yaw-align', 'authority', 'manual', 'assist', 'pilot', 'fly',
+            'yaw-align', 'authority', 'manual', 'assist', 'coach',
+            'pilot', 'fly',
     ) or (
         getattr(args, 'mode', None) == 'localize'
         and bool(getattr(args, 'teleop', False))
@@ -672,7 +759,7 @@ def export_gain_overrides(args) -> dict:
         os.environ['TAKEOFF_DURATION_S'] = '0'
         applied['TAKEOFF_DURATION_S'] = 0.0
     if getattr(args, 'mode', None) in (
-            'acquire', 'manual', 'assist', 'pilot', 'fly',
+            'acquire', 'manual', 'assist', 'coach', 'pilot', 'fly',
     ):
         os.environ.setdefault('CRASH_USE_SIM_ODOMETRY', '0')
         applied.setdefault('CRASH_USE_SIM_ODOMETRY', 0.0)
@@ -681,6 +768,66 @@ def export_gain_overrides(args) -> dict:
         if not bool(getattr(args, 'pure', False)):
             os.environ['FLIGHT_MODE'] = 'assist'
             applied['FLIGHT_MODE'] = 'assist'
+    if getattr(args, 'mode', None) == 'coach':
+        which = str(getattr(args, 'planner', 'policy') or 'policy')
+        os.environ['FLIGHT_MODE'] = which
+        applied['FLIGHT_MODE'] = which
+        weights = getattr(args, 'weights', None)
+        if weights:
+            os.environ['POLICY_WEIGHTS'] = str(weights)
+            applied['POLICY_WEIGHTS'] = str(weights)
+        if which == 'race':
+            # The classical stack solves gate pose itself from the keypoints;
+            # it wants the detector, not the PnP/EKF path.
+            os.environ.setdefault('EKF_USE_PNP', '0')
+        # Match the acro plant the seed laps were flown on, and strip
+        # everything the policy does not consume. It reads raw keypoints, so
+        # the dual-gate PnP solve, the PnP-fed EKF and the debug window are
+        # pure overhead that also steal time from the control loop.
+        os.environ['EKF_USE_PNP'] = '0'
+        os.environ['VISION_DISPLAY'] = '0'
+        os.environ['TAKEOFF_DURATION_S'] = '0'
+        applied['EKF_USE_PNP'] = 0.0
+        applied['VISION_DISPLAY'] = 0.0
+        os.environ.setdefault('PILOT_PAD_SOFT_GAIN', '1.0')
+        os.environ.setdefault('PILOT_PAD_SOFT_YAW', '1.0')
+        os.environ.setdefault('PILOT_PAD_SOFT_THRUST', '1.0')
+        if bool(getattr(args, 'gatenet', False)):
+            os.environ['GATENET_ENABLED'] = '1'
+            applied['GATENET_ENABLED'] = 1.0
+        detector = getattr(args, 'detector', None)
+        if detector:
+            os.environ['GATE_DETECTOR_BACKEND'] = str(detector)
+            applied['GATE_DETECTOR_BACKEND'] = str(detector)
+            if detector == 'gatenet':
+                os.environ['GATENET_ENABLED'] = '1'
+                applied['GATENET_ENABLED'] = 1.0
+        save_frames = getattr(args, 'save_frames', None)
+        if save_frames is not None:
+            interval = max(0.05, float(save_frames))
+            os.environ['GATE_FRAME_CAPTURE'] = '1'
+            os.environ['GATE_FRAME_CAPTURE_INTERVAL_S'] = repr(interval)
+            applied['GATE_FRAME_CAPTURE'] = 1.0
+            applied['GATE_FRAME_CAPTURE_INTERVAL_S'] = interval
+    if getattr(args, 'mode', None) in ('manual', 'acro'):
+        # Seed laps need YOLO keypoints in the full telem logger.
+        os.environ.setdefault('GATE_DETECTOR_BACKEND', 'yolo_pose')
+        scale = getattr(args, 'slow_mo_scale', None)
+        if scale is not None:
+            os.environ['PILOT_SLOW_MO_SCALE'] = repr(float(scale))
+            applied['PILOT_SLOW_MO_SCALE'] = float(scale)
+        if bool(getattr(args, 'slow_mo', False)) or scale is not None:
+            os.environ['PILOT_SLOW_MO'] = '1'
+            applied['PILOT_SLOW_MO'] = 1.0
+            try:
+                s = float(os.environ.get('PILOT_SLOW_MO_SCALE', '0.77') or 0.77)
+            except ValueError:
+                s = 0.77
+            s = max(0.05, min(1.0, s))
+            # Keep ~50 Hz of *sim* samples under CE slow-mo.
+            log_hz = max(5.0, 50.0 * s)
+            os.environ['LOG_HZ'] = repr(log_hz)
+            applied['LOG_HZ'] = log_hz
     return applied
 
 
@@ -4117,6 +4264,46 @@ def run_assist(args) -> int:
 # --------------------------------------------------------------------------
 # manual — auto-stabilize teleop
 # --------------------------------------------------------------------------
+def _seed_logging_preflight(shared_data, *, slow_mo_scale: float | None) -> None:
+    """Confirm the fields HG-DAgger training needs will be written."""
+    import config
+    from pathlib import Path as _Path
+
+    weights = _Path(getattr(config, 'YOLO_POSE_MODEL_PATH', 'models/gate_pose.pt'))
+    print('', flush=True)
+    print('=== SEED LOGGING (HG-DAgger) ===', flush=True)
+    print(
+        '  Full training telem is logs/telem_*.csv (NOT logs/tuning/).',
+        flush=True,
+    )
+    print(
+        '  Required columns: kp0..7_u/v/c, roll/pitch, gx/gy/gz_imu, '
+        'cmd_thrust/roll/pitch/yaw_rate, control_authority, '
+        'odo_*, active_gate',
+        flush=True,
+    )
+    if weights.is_file():
+        print(f'  YOLO pose weights: {weights}  OK', flush=True)
+    else:
+        print(
+            f'  WARNING: missing {weights} — keypoints will be empty and '
+            'train_policy will find no usable windows.',
+            flush=True,
+        )
+    print(
+        f'  detector={getattr(config, "GATE_DETECTOR_BACKEND", "?")}  '
+        f'log_hz={shared_data.get("log_hz", "?")}',
+        flush=True,
+    )
+    if slow_mo_scale is not None and slow_mo_scale < 1.0:
+        print(
+            f'  slow-mo x{slow_mo_scale:.2f}: set Cheat Engine / DxWnd to '
+            f'the SAME factor, or sim-time and client diverge.',
+            flush=True,
+        )
+    print('', flush=True)
+
+
 def run_manual(args) -> int:
     """ANGLE self-level + hover trim; human commands lean / yaw / thrust."""
     import config
@@ -4127,18 +4314,45 @@ def run_manual(args) -> int:
     components = setup_components(
         shared_data, int(time.time() * 1000),
         SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
+        enable_planner=False,
     )
     controller = components['controller']
+    logger = components.get('logger')
+    if logger is not None:
+        shared_data['_telem_path'] = getattr(logger, '_csv_path', None)
     recorder = Recorder(
         Path(args.csv) if args.csv else default_csv_path('manual')
     )
 
+    slow_mo_on = bool(getattr(args, 'slow_mo', False)) or bool(
+        getattr(config, 'PILOT_SLOW_MO', 0)
+    )
+    if getattr(args, 'slow_mo_scale', None) is not None:
+        slow_mo_on = True
+        slow_mo_scale = float(args.slow_mo_scale)
+    else:
+        slow_mo_scale = float(getattr(config, 'PILOT_SLOW_MO_SCALE', 0.77) or 0.77)
+    if slow_mo_on:
+        slow_mo_scale = max(0.05, min(1.0, slow_mo_scale))
+        shared_data['log_hz'] = max(5.0, 50.0 * slow_mo_scale)
+    else:
+        slow_mo_scale = 1.0
+        shared_data['log_hz'] = float(getattr(config, 'LOG_HZ', 50) or 50)
+
+    _seed_logging_preflight(
+        shared_data,
+        slow_mo_scale=slow_mo_scale if slow_mo_on else None,
+    )
+    if logger is not None:
+        print(f'  telem file: {logger._csv_path}', flush=True)
+        print('', flush=True)
+
     lean_deg = getattr(args, 'lean_deg', None)
     if lean_deg is None:
-        lean_deg = float(getattr(config, 'PILOT_LEAN_DEG', 24.0) or 24.0)
+        lean_deg = float(getattr(config, 'MANUAL_LEAN_DEG', 14.0) or 14.0)
     yaw_deg = getattr(args, 'yaw_rate_deg', None)
     if yaw_deg is None:
-        yaw_deg = float(getattr(config, 'PILOT_YAW_RATE_DEG', 45.0) or 45.0)
+        yaw_deg = float(getattr(config, 'MANUAL_YAW_RATE_DEG', 40.0) or 40.0)
     climb_rate_cmd = getattr(args, 'climb_rate', None)
     if climb_rate_cmd is None:
         climb_rate_cmd = float(
@@ -4149,11 +4363,22 @@ def run_manual(args) -> int:
         climb_auth = float(getattr(config, 'PILOT_CLIMB_AUTH', 0.12) or 0.12)
     lean_rad = math.radians(float(lean_deg))
     yaw_rate_cmd = math.radians(float(yaw_deg))
-    open_loop = bool(getattr(args, 'open_loop_thrust', False))
+    # Proven stick: R/F are thrust offsets unless the caller asked for rate-hold
+    # via --climb-rate without --open-loop-thrust.
+    want_rate_hold = (
+        getattr(args, 'climb_rate', None) is not None
+        and not bool(getattr(args, 'open_loop_thrust', False))
+    )
+    open_loop = not want_rate_hold
     climb_rate_cmd = float(climb_rate_cmd)
     # Key returns a raw thrust offset in open loop, else a rate setpoint.
-    thrust_step = (float(getattr(args, 'thrust_step', 0.022))
-                   if open_loop else climb_rate_cmd)
+    if open_loop:
+        thrust_step = float(
+            getattr(args, 'thrust_step', None)
+            or getattr(config, 'MANUAL_THRUST_STEP', 0.028)
+        )
+    else:
+        thrust_step = climb_rate_cmd
     vrate = None if open_loop else VerticalRateHold(
         kp=getattr(args, 'climb_kp', None),
         ki=getattr(args, 'climb_ki', None),
@@ -4193,6 +4418,7 @@ def run_manual(args) -> int:
               flush=True)
         print(f'  capture -> {capture.path}', flush=True)
     print('  Esc / X      disarm and quit', flush=True)
+    print('  O            toggle client slow-mo (match CE/DxWnd)', flush=True)
     if vrate is None:
         print('  R/F mode: OPEN LOOP thrust offset (coasts on release)', flush=True)
     else:
@@ -4200,6 +4426,7 @@ def run_manual(args) -> int:
             f'  R/F mode: RATE hold +/-{climb_rate_cmd:.2f} m/s (release brakes to 0)',
             flush=True,
         )
+    sink_step = float(getattr(config, 'MANUAL_SINK_STEP', 0.040))
     print(
         f'  lean={math.degrees(lean_rad):.0f}°  '
         f'yaw={math.degrees(yaw_rate_cmd):.0f}°/s  '
@@ -4208,6 +4435,16 @@ def run_manual(args) -> int:
         f'lean_boost={getattr(config, "LEAN_THRUST_BOOST", 0.0)}',
         flush=True,
     )
+    if open_loop:
+        print(
+            f'  R=+{thrust_step:.3f}  F=-{sink_step:.3f}  (MANUAL_* stick)',
+            flush=True,
+        )
+    if slow_mo_on:
+        print(
+            f'  slow-mo ON x{slow_mo_scale:.2f}  log_hz={shared_data.get("log_hz")}',
+            flush=True,
+        )
     print('', flush=True)
 
     if bool(getattr(args, 'no_sim_reset', False)):
@@ -4239,11 +4476,19 @@ def run_manual(args) -> int:
     print('Arming...', flush=True)
     controller.arm()
     shared_data['flight_started'] = True
+    # Seed-lap provenance for HG-DAgger BC: entire run is human.
+    shared_data['control_authority'] = 'human'
+    shared_data['intervention_id'] = ''
 
     hold_state: dict = {}
     last_t = None
+    # Wall-rate loop, deliberately unscaled by slow-mo: the sticks are polled
+    # once per iteration, so stretching the period to hold a constant sim-time
+    # rate turns 0.2x into 250 ms of input latency. Under slow-mo this simply
+    # sends more commands per simulated second, which is the good direction.
     period = 1.0 / max(args.hz, 1.0)
     started = time.monotonic()
+    slowmos_seen = 0
     if not args.quiet:
         print(
             '\n    t   climb  vz_up  roll  pitch   yaw_r   thr   '
@@ -4267,10 +4512,25 @@ def run_manual(args) -> int:
                 yaw_rate_cmd=yaw_rate_cmd,
                 thrust_step=thrust_step,
                 now=now,
+                sink_step=sink_step if open_loop else None,
             )
             if quit_req:
                 print('\n[STOP] quit key', flush=True)
                 break
+
+            slowmos = int(hold_state.get('slowmo', 0))
+            if slowmos > slowmos_seen:
+                slowmos_seen = slowmos
+                slow_mo_on = not slow_mo_on
+                shared_data['log_hz'] = (
+                    max(5.0, 50.0 * slow_mo_scale) if slow_mo_on else 50.0
+                )
+                print(
+                    f'[SLOW-MO] {"ON" if slow_mo_on else "OFF"} '
+                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]}',
+                    flush=True,
+                )
+
             if capture is not None:
                 marks = int(hold_state.get('marks', 0))
                 while marks_seen < marks:
@@ -4282,6 +4542,7 @@ def run_manual(args) -> int:
                 capture.maybe_sample(shared_data, elapsed)
 
             dt = period if last_t is None else max(1e-3, now - last_t)
+            # Attitude PID sees wall dt (IMU is wall-referenced under CE).
             last_t = now
             roll, pitch, _, _ = read_attitude(shared_data)
             roll_rate = roll_pid.update(des_roll - roll, dt)
@@ -4313,6 +4574,8 @@ def run_manual(args) -> int:
             # Wider clamp than race planner — manual R/F needs authority.
             thrust = float(max(0.06, min(0.45, thrust + thrust_delta + bump)))
 
+            shared_data['control_authority'] = 'human'
+            shared_data['intervention_id'] = ''
             shared_data['planner_target'] = {
                 'kalman': True,
                 'roll_rate': roll_rate,
@@ -4322,7 +4585,7 @@ def run_manual(args) -> int:
                 'desired_roll': des_roll,
                 'desired_pitch': des_pitch,
             }
-            shared_data['planner_mode'] = 'kalman_dual_gate'
+            shared_data['planner_mode'] = 'manual_seed'
             controller.update()
 
             dual = shared_data.get('dual_gate_pnp') or {}
@@ -4399,6 +4662,401 @@ def run_manual(args) -> int:
             )
             print('[CAPTURE] keep EKF_USE_PNP identical on replay', flush=True)
     print(f'\nCSV: {recorder.path}')
+    return 0
+
+
+def run_coach(args) -> int:
+    """HG-DAgger harness: policy flies, H intervenes, T returns authority."""
+    import config
+    from control.pid import PIDConfig, PIDController
+    from policy_planner import PolicyPlanner
+    from setup import setup_components
+
+    shared_data = {}
+    # Must be set before VisionRX starts, or capture stays detections-only
+    # and missed gates never land in the label set.
+    if getattr(args, 'save_frames', None) is not None:
+        shared_data['vision_reference_capture_all'] = True
+    which = str(getattr(args, 'planner', 'policy') or 'policy')
+    os.environ['FLIGHT_MODE'] = which
+    if getattr(args, 'weights', None):
+        os.environ['POLICY_WEIGHTS'] = str(args.weights)
+    components = setup_components(
+        shared_data, int(time.time() * 1000),
+        SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
+    )
+    controller = components['controller']
+    planner = components.get('planner')
+    if planner is None and which == 'policy':
+        planner = PolicyPlanner(
+            getattr(args, 'weights', None)
+            or getattr(config, 'POLICY_WEIGHTS', 'models/policy.pt')
+        )
+        components['planner'] = planner
+        shared_data['planner'] = planner
+    if planner is None:
+        print(f'[COACH] no planner for --planner {which}', flush=True)
+        shutdown(components)
+        return 2
+
+    # ACRO stick, matching how every seed lap was flown: the sticks command
+    # body rates directly, with no self-levelling and no lean cap. Taking over
+    # in angle mode would hand the policy corrections generated by a different
+    # plant than the demonstrations it learned from.
+    angle_mode = bool(getattr(args, 'angle', False))
+    if angle_mode:
+        roll_rate_deg = float(getattr(config, 'MANUAL_LEAN_DEG', 14.0))
+        pitch_rate_deg = roll_rate_deg
+        yaw_deg = float(getattr(config, 'MANUAL_YAW_RATE_DEG', 40.0))
+        thrust_step = float(getattr(config, 'MANUAL_THRUST_STEP', 0.028))
+        sink_step = float(getattr(config, 'MANUAL_SINK_STEP', 0.040))
+    else:
+        roll_rate_deg = float(
+            getattr(args, 'roll_rate_deg', None)
+            or getattr(config, 'ACRO_ROLL_RATE_DEG', 180.0)
+        )
+        pitch_rate_deg = float(
+            getattr(args, 'pitch_rate_deg', None)
+            or getattr(config, 'ACRO_PITCH_RATE_DEG', 180.0)
+        )
+        yaw_deg = float(
+            getattr(args, 'yaw_rate_deg', None)
+            or getattr(config, 'ACRO_YAW_RATE_DEG', 160.0)
+        )
+        thrust_step = float(getattr(config, 'ACRO_CLIMB_AUTH', 0.55))
+        sink_step = float(getattr(config, 'ACRO_SINK_AUTH', 0.55))
+        # Acro yaw must not be clipped by the assist-era ceiling.
+        config.YAW_RATE_MAX_RAD_S = math.radians(
+            max(720.0, yaw_deg * 1.25)
+        )
+    lean_rad = math.radians(float(roll_rate_deg))
+    pitch_rad = math.radians(float(pitch_rate_deg))
+    yaw_rate_cmd = math.radians(float(yaw_deg))
+
+    max_rate = config.KALMAN_MAX_RATE_RAD_S
+    roll_pid = PIDController(PIDConfig(
+        kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
+        output_min=-max_rate, output_max=max_rate,
+    ))
+    pitch_pid = PIDController(PIDConfig(
+        kp=config.KALMAN_KP_ATT, kd=config.KALMAN_KD_ATT,
+        output_min=-max_rate, output_max=max_rate,
+    ))
+
+    mode = 'human' if bool(getattr(args, 'start_human', False)) else 'policy'
+    intervention_id = 0
+    shared_data['control_authority'] = mode if mode == 'human' else 'policy'
+    shared_data['intervention_id'] = ''
+
+    print('', flush=True)
+    print('=== COACH (HG-DAgger) ===', flush=True)
+    print('  Focus THIS console. Policy flies until you intervene.', flush=True)
+    print('  H            HUMAN — take sticks NOW', flush=True)
+    print('  T            POLICY — return control after recovery', flush=True)
+    print('  Y            RESET — new attempt without restarting', flush=True)
+    print('  K / Start    EXCLUDE toggle — drop these frames from training',
+          flush=True)
+    print('  Esc / X      disarm and quit', flush=True)
+    if angle_mode:
+        print(
+            f'  human: ANGLE self-level  lean={roll_rate_deg:.0f}°  '
+            f'yaw={yaw_deg:.0f}°/s',
+            flush=True,
+        )
+    else:
+        print(
+            f'  human: ACRO rates  roll={roll_rate_deg:.0f}°/s  '
+            f'pitch={pitch_rate_deg:.0f}°/s  yaw={yaw_deg:.0f}°/s  '
+            f'collective ±{thrust_step:.2f}',
+            flush=True,
+        )
+    print(
+        f'  vision: keypoints only (PnP window off, EKF_USE_PNP='
+        f'{int(bool(getattr(config, "EKF_USE_PNP", False)))})',
+        flush=True,
+    )
+    print(f'  autopilot: {planner.name}', flush=True)
+    if hasattr(planner, 'weights_path'):
+        print(f'  weights: {planner.weights_path}', flush=True)
+    cap = shared_data.get('gate_frame_capture') or {}
+    if cap.get('enabled'):
+        every = float(cap.get('interval_s') or 0.0)
+        kind = (
+            'all frames' if not cap.get('confirmed_detections_only')
+            else 'detections only'
+        )
+        print(
+            f'  frames: every {every:.1f}s ({kind}) -> {cap.get("directory")}',
+            flush=True,
+        )
+    print('  TELEOP NOW when you see the policy drift.', flush=True)
+    print('', flush=True)
+
+    if bool(getattr(args, 'no_sim_reset', False)):
+        print('[SIM] skip reset (--no-sim-reset)', flush=True)
+        time.sleep(1.0)
+    else:
+        print('[SIM] reset (command 31000) before arm...', flush=True)
+        controller.send_sim_reset()
+        time.sleep(max(0.5, float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5))))
+
+    panel = None
+    if bool(getattr(args, 'panel', False)):
+        from obs_panel import ObservationPanel
+        panel = ObservationPanel(
+            with_context=bool(getattr(planner, '_with_context', False)),
+            scale=float(getattr(args, 'panel_scale', 1.0) or 1.0),
+        )
+        print('[COACH] input panel on (q or Esc in the window closes it)',
+              flush=True)
+
+    hold_state: dict = {}
+    attempt = {'n': 0}
+    log = shared_data.get('log_event')
+
+    # One telemetry row per policy decision. The policy's history buffer
+    # advances once per control-loop iteration, and training builds its H-frame
+    # windows from telemetry rows, so if the two rates differ the model is
+    # trained on a different time span than it sees in flight. Logging at the
+    # default 50 Hz against a 10 Hz loop made every intervention window cover
+    # 0.66 s where the seed laps covered 3.2 s.
+    shared_data['log_hz'] = float(max(1.0, args.hz))
+    print(f'[COACH] telem log_hz={shared_data["log_hz"]:.0f} (= control loop)',
+          flush=True)
+
+    def _arm_attempt(t_reset: float) -> None:
+        """Wait for the sim's GO, with a gate in view, then arm."""
+        attempt['n'] += 1
+        shared_data['attempt'] = attempt['n']
+        # Arming with no gate in view hands the policy an all-sentinel
+        # observation on its very first frame -- the one input it was never
+        # trained on. Poll for a detection while the countdown runs.
+        for _ in range(100):
+            det = shared_data.get('gate_detection') or {}
+            if det.get('center_px') is not None:
+                break
+            time.sleep(0.02)
+        # Race clock, not a wall-clock guess: under slow-mo the two disagree by
+        # the slow-mo factor and every attempt starts early.
+        if not _wait_for_race_go(shared_data, label='PAD'):
+            _wait_aligned_to_countdown(
+                shared_data, t_reset, _countdown_hold_s(args),
+                label='PAD', need_vision=True, vision_grace_s=2.0,
+            )
+        controller.arm()
+        shared_data['flight_started'] = True
+        if hasattr(planner, 'reset_episode'):
+            planner.reset_episode()
+        roll_pid.reset()
+        pitch_pid.reset()
+        for axis in ('roll', 'pitch', 'yaw', 'thrust'):
+            hold_state[axis] = 0.0
+            hold_state[f'{axis}_t'] = 0.0
+        print(f'[COACH] attempt {attempt["n"]} armed — mode={mode.upper()}',
+              flush=True)
+        if log:
+            log('COACH', f'attempt={attempt["n"]} mode={mode}')
+
+    _arm_attempt(time.monotonic() - float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5)))
+
+    last_t = None
+    period = 1.0 / max(args.hz, 1.0)
+    started = time.monotonic()
+    autos_seen = 0
+    humans_seen = 0
+    resets_seen = 0
+    keeps_seen = 0
+    excluded = False
+    shared_data['exclude'] = 0
+
+    try:
+        while True:
+            now = time.monotonic()
+            elapsed = now - started
+            if args.seconds > 0 and elapsed >= args.seconds:
+                print('\n[STOP] time limit', flush=True)
+                break
+
+            (
+                des_roll, des_pitch, yaw_rate, thrust_delta, quit_req
+            ) = _poll_manual_controls(
+                hold_state,
+                lean_rad=lean_rad,
+                yaw_rate_cmd=yaw_rate_cmd,
+                thrust_step=float(thrust_step),
+                now=now,
+                sink_step=float(sink_step),
+                pitch_rad=pitch_rad,
+            )
+            if quit_req:
+                print('\n[STOP] quit key', flush=True)
+                break
+
+            keeps = int(hold_state.get('keeps', 0))
+            if keeps > keeps_seen:
+                keeps_seen = keeps
+                excluded = not excluded
+                shared_data['exclude'] = 1 if excluded else 0
+                print(
+                    '[COACH] EXCLUDE ON — these frames will NOT be trained on'
+                    if excluded else
+                    '[COACH] EXCLUDE OFF — recording again',
+                    flush=True,
+                )
+                if log:
+                    log('COACH', f'exclude={int(excluded)}')
+
+            resets = int(hold_state.get('resets', 0))
+            if resets > resets_seen:
+                resets_seen = resets
+                print('\n[COACH] RESET — new attempt', flush=True)
+                controller.send_sim_reset()
+                t_reset = time.monotonic()
+                time.sleep(max(0.5, float(
+                    getattr(config, 'SIM_RESET_SETTLE_S', 1.5)
+                )))
+                mode = (
+                    'human' if bool(getattr(args, 'start_human', False))
+                    else 'policy'
+                )
+                shared_data['control_authority'] = mode
+                shared_data['intervention_id'] = ''
+                _arm_attempt(t_reset)
+                last_t = None
+                started = time.monotonic()
+                continue
+
+            humans = int(hold_state.get('human', 0))
+            if humans > humans_seen:
+                humans_seen = humans
+                if mode != 'human':
+                    mode = 'human'
+                    intervention_id += 1
+                    shared_data['control_authority'] = 'human'
+                    shared_data['intervention_id'] = str(intervention_id)
+                    roll_pid.reset()
+                    pitch_pid.reset()
+                    print(
+                        f'[COACH] TELEOP NOW  intervention={intervention_id}  '
+                        '(T returns policy)',
+                        flush=True,
+                    )
+                    if log:
+                        log('COACH', f'human intervention_id={intervention_id}')
+                else:
+                    print('[COACH] H ignored — already HUMAN', flush=True)
+
+            autos = int(hold_state.get('auto', 0))
+            if autos > autos_seen:
+                autos_seen = autos
+                if mode != 'policy':
+                    mode = 'policy'
+                    shared_data['control_authority'] = 'policy'
+                    # Keep intervention_id on the recovery tail so train_policy
+                    # can still mark the post-handoff frames via --tail-s.
+                    roll_pid.reset()
+                    pitch_pid.reset()
+                    if hasattr(planner, 'reset_episode'):
+                        # Keep history — only clear on crash/reset.
+                        pass
+                    print(
+                        f'[COACH] POLICY  (released intervention '
+                        f'{intervention_id})',
+                        flush=True,
+                    )
+                    if log:
+                        log('COACH', f'policy resume intervention_id={intervention_id}')
+                else:
+                    print('[COACH] T ignored — already POLICY', flush=True)
+
+            dt = period if last_t is None else max(1e-3, now - last_t)
+            last_t = now
+
+            if mode == 'policy':
+                planner.compute_target(shared_data)
+                shared_data['planner_mode'] = planner.name
+            else:
+                roll, pitch, _, _ = read_attitude(shared_data)
+                lean_boost = float(
+                    getattr(config, 'LEAN_THRUST_BOOST', 0.0) or 0.0
+                )
+                if angle_mode:
+                    roll_rate = roll_pid.update(des_roll - roll, dt)
+                    pitch_rate = pitch_pid.update(des_pitch - pitch, dt)
+                    thrust = _tilt_compensated_thrust(
+                        config.HOVER_THRUST, des_roll, des_pitch,
+                        lean_boost=lean_boost,
+                    )
+                    thr_lo, thr_hi = 0.06, 0.45
+                else:
+                    # Acro: the sticks ARE body rates. Centre stick holds the
+                    # current attitude rather than levelling it, and collective
+                    # is compensated against *measured* tilt.
+                    roll_rate = float(des_roll)
+                    pitch_rate = float(des_pitch)
+                    thrust = _tilt_compensated_thrust(
+                        config.HOVER_THRUST, roll, pitch,
+                        lean_boost=lean_boost,
+                    )
+                    thr_lo = float(getattr(config, 'ACRO_THRUST_MIN', 0.05))
+                    thr_hi = float(getattr(config, 'ACRO_THRUST_MAX', 0.70))
+                thrust = float(max(
+                    thr_lo, min(thr_hi, thrust + float(thrust_delta))
+                ))
+                shared_data['planner_target'] = {
+                    'kalman': True,
+                    'acro': not angle_mode,
+                    'unrestricted_rates': not angle_mode,
+                    'roll_rate': roll_rate,
+                    'pitch_rate': pitch_rate,
+                    'yaw_rate': yaw_rate,
+                    'thrust': thrust,
+                    'desired_roll': roll if not angle_mode else des_roll,
+                    'desired_pitch': pitch if not angle_mode else des_pitch,
+                }
+                shared_data['planner_mode'] = (
+                    'coach_human_angle' if angle_mode else 'coach_human_acro'
+                )
+
+            controller.update()
+            if panel is not None and not panel.show(shared_data):
+                panel = None
+            if not args.quiet and int(elapsed * 2) != int((elapsed - period) * 2):
+                race = shared_data.get('race_status') or {}
+                print(
+                    f'[COACH] t={elapsed:5.1f}s  auth={shared_data.get("control_authority")}  '
+                    f'interv={shared_data.get("intervention_id") or "-"}  '
+                    f'gate={race.get("active_gate", "?")}',
+                    flush=True,
+                )
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print('\n[STOP] interrupted', flush=True)
+    finally:
+        try:
+            shared_data['planner_target'] = {
+                'kalman': True,
+                'roll_rate': 0.0,
+                'pitch_rate': 0.0,
+                'yaw_rate': 0.0,
+                'thrust': float(config.HOVER_THRUST),
+                'desired_roll': 0.0,
+                'desired_pitch': 0.0,
+            }
+            for _ in range(8):
+                controller.update()
+                time.sleep(0.02)
+            controller.disarm()
+            print('Disarmed.', flush=True)
+        except Exception:
+            pass
+        if panel is not None:
+            panel.close()
+        shutdown(components)
+
+    logger = components.get('logger')
+    if logger is not None:
+        print(f'\ntelem: {getattr(logger, "_csv_path", "?")}')
     return 0
 
 
@@ -4587,6 +5245,80 @@ def _countdown_hold_s(args) -> float:
     return max(0.0, float(v))
 
 
+def _wait_for_race_go(
+    shared_data,
+    *,
+    timeout_s: float = 90.0,
+    label: str = 'PAD',
+) -> bool:
+    """Block until the sim's race clock says GO, not until a wall-clock guess.
+
+    The countdown runs on *sim* time. ``EARLY_START_HOLD_S`` is a wall-clock
+    approximation of it, which is correct at 1x and badly wrong under client
+    slow-mo: a 3.3 sim-second countdown takes 16.5 s of wall time at 0.2x, so a
+    3.55 s hold arms roughly thirteen seconds early, every run.
+
+    The simulator publishes the answer. From MANUAL_INSTRUCTIONS: ``sim_boot_ms``
+    advances in sim time and ``race_start_ms`` is -1 while pending, then the
+    future ``sim_boot_ms`` of GO. So GO is exactly
+    ``sim_boot_ms >= race_start_ms``.
+
+    That test cannot be applied naively, because until the 31000 reset lands the
+    sim still reports the *previous* race, whose start time is long past -- the
+    test would pass instantly. Hence three phases: wait for the reset to land,
+    wait for a countdown to be scheduled and still pending, then wait for GO.
+    """
+    deadline = time.monotonic() + float(timeout_s)
+
+    def _race():
+        return shared_data.get('race_status') or {}
+
+    def _pair():
+        r = _race()
+        try:
+            return int(r.get('sim_boot_ms')), int(r.get('race_start_ms'))
+        except (TypeError, ValueError):
+            return None, None
+
+    # Phase 1: the reset has landed when the previous race's start time clears.
+    while time.monotonic() < deadline:
+        _boot, start = _pair()
+        if start is not None and start < 0:
+            break
+        time.sleep(0.02)
+
+    # Phase 2: a countdown exists and has not fired yet.
+    pending = False
+    while time.monotonic() < deadline:
+        boot, start = _pair()
+        if boot is not None and start is not None and start >= 0:
+            if boot < start:
+                pending = True
+                print(f'[{label}] countdown scheduled: '
+                      f'{(start - boot) / 1000.0:.2f} sim-seconds to GO',
+                      flush=True)
+                break
+            # Already past: no fresh countdown, fall through and fly.
+            print(f'[{label}] no pending countdown — starting now', flush=True)
+            return True
+        time.sleep(0.02)
+
+    if not pending:
+        print(f'[{label}] race clock unavailable — falling back to wall hold',
+              flush=True)
+        return False
+
+    # Phase 3: GO.
+    while time.monotonic() < deadline:
+        boot, start = _pair()
+        if boot is not None and start is not None and boot >= start:
+            print(f'[{label}] GO', flush=True)
+            return True
+        time.sleep(0.01)
+    print(f'[{label}] timed out waiting for GO', flush=True)
+    return False
+
+
 def _wait_aligned_to_countdown(
     shared_data,
     t0: float,
@@ -4697,13 +5429,33 @@ def run_pilot(args) -> int:
     components = setup_components(
         shared_data, int(time.time() * 1000),
         SIM_SERVER_UDP_IP, SIM_SERVER_UDP_PORT,
-        # Acro vision is observation only: EKF_USE_PNP remains false, no
-        # planner is installed below, and manual body-rate commands are still
-        # sent verbatim. It exists solely to record a spatial reference.
+        # Acro vision is observation only: EKF_USE_PNP remains false, and
+        # manual body-rate commands are sent verbatim. Skip constructing the
+        # FLIGHT_MODE planner (assist pulls optional learner modules we do
+        # not need for seed logging).
         enable_vision=(not pure_fly) or acro_vision,
+        enable_planner=not pure_fly,
     )
     controller = components['controller']
     state_estimator = components.get('state_estimator')
+    logger = components.get('logger')
+
+    # Client slow-mo (seed laps at CE 0.2): scale telem rate so H=32 spans
+    # ~0.64 s of sim time, matching 50 Hz at 1x.
+    slow_mo_on = bool(getattr(args, 'slow_mo', False)) or bool(
+        getattr(config, 'PILOT_SLOW_MO', 0)
+    )
+    if getattr(args, 'slow_mo_scale', None) is not None:
+        slow_mo_on = True
+        slow_mo_scale = float(args.slow_mo_scale)
+    else:
+        slow_mo_scale = float(getattr(config, 'PILOT_SLOW_MO_SCALE', 0.77) or 0.77)
+    slow_mo_scale = max(0.05, min(1.0, slow_mo_scale))
+    if slow_mo_on:
+        shared_data['log_hz'] = max(5.0, 50.0 * slow_mo_scale)
+    else:
+        shared_data['log_hz'] = float(os.environ.get('LOG_HZ', '50') or 50)
+
     if acro_mode:
         log_event = shared_data.get('log_event')
         if log_event:
@@ -4713,6 +5465,24 @@ def run_pilot(args) -> int:
                 if acro_vision else
                 'acro_observe_only=0 (--no-vision)',
             )
+        # HG-DAgger seed provenance — entire acro run is human.
+        shared_data['control_authority'] = 'human'
+        shared_data['intervention_id'] = ''
+        if logger is not None:
+            shared_data['_telem_path'] = getattr(logger, '_csv_path', None)
+        _seed_logging_preflight(
+            shared_data,
+            slow_mo_scale=slow_mo_scale if slow_mo_on else None,
+        )
+        if logger is not None:
+            print(f'  telem file: {logger._csv_path}', flush=True)
+            if not acro_vision:
+                print(
+                    '  WARNING: --no-vision — no keypoints; unusable for '
+                    'policy training.',
+                    flush=True,
+                )
+            print('', flush=True)
     planner = None
     if not pure_fly:
         from assist_planner import AssistImagePlanner
@@ -5269,8 +6039,12 @@ def run_pilot(args) -> int:
     last_t = None
     att_last_idx = None
     handoff_wait_announced = False
+    # Wall-rate loop; see run_manual. Slow-mo must not stretch this period or
+    # stick polling becomes visibly laggy, and `elapsed` also drives the
+    # attitude-tape playhead, which does its own speed inference.
     period = 1.0 / max(args.hz, 1.0)
     started = time.monotonic()
+    slowmos_seen = 0
     # Deliberate stick/key gate — auto-arm after countdown early-start DQs.
     engage_frac = max(
         0.05,
@@ -5739,6 +6513,19 @@ def run_pilot(args) -> int:
                 print('\n[STOP] quit key', flush=True)
                 break
 
+            slowmos = int(hold_state.get('slowmo', 0))
+            if slowmos > slowmos_seen:
+                slowmos_seen = slowmos
+                slow_mo_on = not slow_mo_on
+                shared_data['log_hz'] = (
+                    max(5.0, 50.0 * slow_mo_scale) if slow_mo_on else 50.0
+                )
+                print(
+                    f'[SLOW-MO] {"ON" if slow_mo_on else "OFF"} '
+                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]}',
+                    flush=True,
+                )
+
             resets = int(hold_state.get('resets', 0))
             if resets > resets_seen:
                 resets_seen = resets
@@ -6063,6 +6850,9 @@ def run_pilot(args) -> int:
                     thrust = float(
                         max(thr_lo, min(thr_hi, thrust + thrust_delta + bump))
                     )
+                if acro_mode or pure_fly:
+                    shared_data['control_authority'] = 'human'
+                    shared_data['intervention_id'] = ''
                 shared_data['planner_target'] = {
                     'kalman': True,
                     'acro': direct_rates,
@@ -6237,8 +7027,8 @@ def main() -> int:
         not pure_cli
         and args.mode in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive', 'yaw-align',
-            'authority', 'climb', 'acquire', 'manual', 'assist', 'pilot',
-            'acro',
+            'authority', 'climb', 'acquire', 'manual', 'assist', 'coach',
+            'pilot', 'acro',
         )
     ) or (args.mode == 'localize' and bool(getattr(args, 'teleop', False))):
         _prewarm_yolo()
@@ -6266,6 +7056,8 @@ def main() -> int:
         return run_manual(args)
     if args.mode == 'assist':
         return run_assist(args)
+    if args.mode == 'coach':
+        return run_coach(args)
     if args.mode in ('pilot', 'fly', 'acro'):
         return run_pilot(args)
     if args.mode == 'practice':

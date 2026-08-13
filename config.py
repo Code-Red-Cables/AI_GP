@@ -123,12 +123,13 @@ VIO_THRUST_MAX = float(os.environ.get('VIO_THRUST_MAX', '0.90'))
 # assist  = image-chase on the manual attitude+hover plant (default).
 # kalman  = dual-gate PnP body-path / EKF geometric planner.
 # race    = Li & de Croon classical: LS gate pose + drag EKF + PD/arc.
-# bc      = behavior-cloned MLP (bc_planner.py — removed from this checkout).
+# policy  = HG-DAgger student (policy_planner.py); timed runs only — no gamepad.
 FLIGHT_MODE = os.environ.get('FLIGHT_MODE', 'assist').strip().lower()
-if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'race'}:
+if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'race', 'policy'}:
     raise ValueError(
-        'FLIGHT_MODE must be "assist", "kalman", "spline" or "race"'
+        'FLIGHT_MODE must be "assist", "kalman", "spline", "race" or "policy"'
     )
+POLICY_WEIGHTS = os.environ.get('POLICY_WEIGHTS', 'models/policy.pt')
 
 # ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
 # Capture/replay use the same EKF_USE_PNP so drift stays common-mode.
@@ -688,6 +689,13 @@ PILOT_PAD_AXIS_PITCH = int(
     float(os.environ.get('PILOT_PAD_AXIS_PITCH', '1') or 1)
 )
 PILOT_PAD_AXIS_YAW = int(float(os.environ.get('PILOT_PAD_AXIS_YAW', '2') or 2))
+# Proven manual teleop stick (manual_20260730_005007 cleared gates 1–4).
+# coach / localize --teleop / seed-lap flying prefer these over PILOT_*.
+MANUAL_LEAN_DEG = float(os.environ.get('MANUAL_LEAN_DEG', '14.0'))
+MANUAL_YAW_RATE_DEG = float(os.environ.get('MANUAL_YAW_RATE_DEG', '40.0'))
+MANUAL_THRUST_STEP = float(os.environ.get('MANUAL_THRUST_STEP', '0.028'))
+MANUAL_SINK_STEP = float(os.environ.get('MANUAL_SINK_STEP', '0.040'))
+
 # Soft keyboard defaults for pilot/manual (full keys still hit these caps).
 # Lean capped by MAX_LEAN_RAD. Climb/sink are rate setpoints (m/s).
 PILOT_LEAN_DEG = float(os.environ.get('PILOT_LEAN_DEG', '52.0'))
@@ -903,19 +911,46 @@ CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward
 DRAG_KX = float(os.environ.get('DRAG_KX', '-0.50'))
 DRAG_KY = float(os.environ.get('DRAG_KY', '-0.50'))
 RACE_COURSE_MAP = os.environ.get('RACE_COURSE_MAP', 'course_map.json')
-RACE_PITCH_DEG = float(os.environ.get('RACE_PITCH_DEG', '-5.0'))
+# Forward drive for FLIGHT_MODE=race. POSITIVE is forward on this plant:
+# FORWARD_PITCH_SIGN is +1 and the manual stick maps W to +lean. The paper's
+# eq. 22 writes a small negative theta_c in the aerospace convention (nose-down
+# negative), and transcribing that literally gave -5 deg, which pitches *back*
+# by five degrees -- the drone aligned with gates beautifully and hovered.
+# Measured reference: human race laps hold +0.61 to +0.65 rad (35-37 deg).
+RACE_PITCH_DEG = float(os.environ.get('RACE_PITCH_DEG', '20.0'))
+# Collective must rise with lean or the drone sinks while driving forward:
+# at 35 deg, cos(tilt) = 0.82, so level thrust leaves 18% of lift missing.
+RACE_TILT_COMPENSATE = _env_bool('RACE_TILT_COMPENSATE', True)
 RACE_MAX_LEAN_DEG = float(os.environ.get('RACE_MAX_LEAN_DEG', '12.0'))
-RACE_KP_LAT = float(os.environ.get('RACE_KP_LAT', '0.35'))
-RACE_KD_LAT = float(os.environ.get('RACE_KD_LAT', '0.15'))
+# Paper section 4: "A PD controller is employed to steer the drone to y = 0 by
+# phi = kv(kp(0 - y) - vy), where kp = 1 and kv = 2".
+RACE_KP_LAT = float(os.environ.get('RACE_KP_LAT', '1.0'))
+RACE_KD_LAT = float(os.environ.get('RACE_KD_LAT', '2.0'))
+# Unused in the straight part: the paper fixes psi_c = 0 and steers with roll
+# alone. Kept only for the arc, where heading tracks the turn (eq. 29).
 RACE_YAW_KP = float(os.environ.get('RACE_YAW_KP', '0.8'))
+# Vertical authority, deliberately timid. Raising the gain to 0.09 and the
+# ceiling to 0.62 made the drone climb away at full collective, because the
+# vertical the planner steers on is not trustworthy: it reads +5.5 m (drone
+# below the gate) whenever the craft pitches 20 deg forward, which is the size
+# of error a mishandled camera tilt produces at 10 m range. Do not re-open this
+# authority until the vertical estimate itself is fixed.
 RACE_VERT_THRUST_GAIN = float(os.environ.get('RACE_VERT_THRUST_GAIN', '0.04'))
 RACE_THRUST_MIN = float(os.environ.get('RACE_THRUST_MIN', '0.20'))
-RACE_THRUST_MAX = float(os.environ.get('RACE_THRUST_MAX', '0.55'))
+RACE_THRUST_MAX = float(os.environ.get('RACE_THRUST_MAX', '0.40'))
 RACE_ARC_RADIUS_M = float(os.environ.get('RACE_ARC_RADIUS_M', '1.5'))
 RACE_ARC_TURN_RAD = float(os.environ.get('RACE_ARC_TURN_RAD', str(math.radians(90.0))))
 RACE_ARC_MAX_S = float(os.environ.get('RACE_ARC_MAX_S', '2.0'))
 RACE_COMMIT_RANGE_M = float(os.environ.get('RACE_COMMIT_RANGE_M', '1.2'))
 RACE_POSE_MAX_AGE_S = float(os.environ.get('RACE_POSE_MAX_AGE_S', '0.25'))
+# How long to keep steering on a dead-reckoned gate pose after vision drops.
+# Detection falls from 65% at level to 31% past 40 deg of pitch (the camera is
+# tilted up 20 deg, so fast forward flight aims it at the ground), and blind
+# stretches on real laps ran 5-6 s of wall time. Discarding the gate after
+# RACE_POSE_MAX_AGE_S left the planner holding level through all of it. The
+# paper instead propagates on drag-model velocity and lets the next detection
+# correct the drift. Beyond a couple of seconds the estimate is not worth having.
+RACE_POSE_HOLD_S = float(os.environ.get('RACE_POSE_HOLD_S', '2.0'))
 RACE_MAX_RANGE_M = float(os.environ.get('RACE_MAX_RANGE_M', '40.0'))
 RACE_MAX_RESIDUAL_M = float(os.environ.get('RACE_MAX_RESIDUAL_M', '0.6'))
 RACE_MIN_KP_CONF = float(os.environ.get('RACE_MIN_KP_CONF', '0.25'))
@@ -1062,11 +1097,11 @@ GATE_DETECTOR_BACKEND = os.environ.get(
     'GATE_DETECTOR_BACKEND', 'yolo_pose'
 ).strip().lower()
 if GATE_DETECTOR_BACKEND not in {
-    'auto', 'yolo_pose', 'yolo_hybrid', 'hsv'
+    'auto', 'yolo_pose', 'yolo_hybrid', 'hsv', 'gatenet'
 }:
     raise ValueError(
         'GATE_DETECTOR_BACKEND must be "auto", "yolo_pose", '
-        '"yolo_hybrid", or "hsv"'
+        '"yolo_hybrid", "hsv", or "gatenet"'
     )
 
 YOLO_POSE_MODEL_PATH = os.environ.get(
@@ -1077,7 +1112,7 @@ YOLO_MODEL_PATH = os.environ.get(
 )
 YOLO_GATE_CLASS_NAME = os.environ.get('YOLO_GATE_CLASS_NAME', 'gate')
 YOLO_CONFIDENCE_THRESHOLD = float(
-    os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.45')
+    os.environ.get('YOLO_CONFIDENCE_THRESHOLD', '0.25')
 )
 YOLO_KEYPOINT_CONFIDENCE_THRESHOLD = float(
     os.environ.get('YOLO_KEYPOINT_CONFIDENCE_THRESHOLD', '0.25')
@@ -1185,14 +1220,65 @@ YOLO_HSV_CENTER_BLEND = float(
 YOLO_HSV_CENTER_MAX_SHIFT_FRACTION = float(
     os.environ.get('YOLO_HSV_CENTER_MAX_SHIFT_FRACTION', '0.12')
 )
-# Kept off: racing uses YOLO pose only. Enable only for offline HSV recovery
-# experiments.
+# Colour recovery when YOLO pose comes up empty. Measured on
+# telem_20260813_025559: beyond 45 deg of roll the pose model delivered a gate
+# on 51-61% of frames against 74% while level, and the flight logs show the
+# policy going fully blind through exactly those moments. Li & de Croon
+# (reference/paper0.pdf) raced a 15-gate track on colour alone, so colour is a
+# reasonable second opinion even though its standalone true positive rate (0.46)
+# is below this detector's.
 GLOBAL_HSV_FALLBACK_ENABLED = _env_bool(
-    'GLOBAL_HSV_FALLBACK_ENABLED', False
+    'GLOBAL_HSV_FALLBACK_ENABLED', True
 )
 GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE = float(
     os.environ.get('GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE', '0.55')
 )
+# The fallback previously required that no target had ever been locked, so it
+# only ever fired before acquisition and never mid-race.
+GLOBAL_HSV_FALLBACK_DURING_LOCK = _env_bool(
+    'GLOBAL_HSV_FALLBACK_DURING_LOCK', True
+)
+
+# How many consecutive missed frames a held ("predicted") detection may span
+# before the policy is given nothing instead. At ~5 Hz vision this is about
+# 0.6 s of coasting on the last seen gate; beyond that the geometry is stale
+# enough that an all-sentinel observation is more honest.
+GATE_HELD_MAX_FRAMES = int(os.environ.get('GATE_HELD_MAX_FRAMES', '3'))
+
+# Snake gate detection (Li & de Croon, reference/paper0.pdf section 3.1) run
+# observe-only next to the YOLO pose model, so its hit rate on this course can be
+# compared before committing to it. Nothing in the control path reads it. Off by
+# default because it costs a few ms per frame.
+SNAKE_GATE_ENABLED = _env_bool('SNAKE_GATE_ENABLED', False)
+
+# GateNet (gatenet_handoff): four inner-aperture corners. Observe-only by
+# default so YOLO still feeds the policy and the panel can compare the two on
+# the same frame. Set GATE_DETECTOR_BACKEND=gatenet to actually fly on it.
+GATENET_ENABLED = _env_bool('GATENET_ENABLED', False)
+GATENET_MODEL_PATH = os.environ.get(
+    'GATENET_MODEL_PATH', 'gatenet_handoff/gatenet.onnx'
+)
+# Author's instruction: gate on the weakest per-corner peak, not the collapsed
+# confidence head. 0.80 is the README's recommended operating point.
+GATENET_SCORE_THRESHOLD = float(
+    os.environ.get('GATENET_SCORE_THRESHOLD', '0.80')
+)
+# Two visible inner corners still give a bearing; PnP needs all four.
+GATENET_MIN_CORNERS = int(os.environ.get('GATENET_MIN_CORNERS', '2'))
+# sigma_L. The paper's ROC sweep puts the knee at 25 px: under 15 the false
+# positives climb, over 35 the true positive rate drops sharply.
+SNAKE_MIN_LENGTH_PX = int(os.environ.get('SNAKE_MIN_LENGTH_PX', '25'))
+# sigma_cf, the colour-fitness threshold from eq. 1.
+SNAKE_MIN_COLOR_FITNESS = float(
+    os.environ.get('SNAKE_MIN_COLOR_FITNESS', '0.35')
+)
+SNAKE_MAX_SAMPLES = int(os.environ.get('SNAKE_MAX_SAMPLES', '1500'))
+# Square the snake points off with a rotated rectangle instead of the paper's
+# axis-aligned one. Measured on synthetic gates, the paper's version scores
+# colour fitness 1.00 / 0.34 / 0.19 / 0.09 at 0 / 5 / 10 / 20 deg of roll and so
+# goes blind past about 5 deg; the rotated version holds 1.00 out to 60 deg.
+# Set SNAKE_USE_ROTATED_RECT=0 to measure the published behaviour instead.
+SNAKE_USE_ROTATED_RECT = _env_bool('SNAKE_USE_ROTATED_RECT', True)
 
 # Initial crop-local segmentation uses the calibrated Q2 values. These remain
 # environment-configurable without modifying detector code.

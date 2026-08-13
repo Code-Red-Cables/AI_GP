@@ -363,6 +363,10 @@ def run_racing():
         shared_data['flight_started'] = True
         monitor.note_armed(shared_data)
     print('Control loop running -- Ctrl+C to exit', flush=True)
+    # Timed path: never take human authority (spec §7). Interventions are
+    # training-only via tools/tune_flight.py coach.
+    shared_data['control_authority'] = 'policy'
+    shared_data['intervention_id'] = ''
 
     run_started_at = time.monotonic()
     try:
@@ -392,6 +396,7 @@ def run_racing():
                     monitor,
                 )
                 continue
+            shared_data['control_authority'] = 'policy'
             shared_data['planner_target'] = planner.compute_target(shared_data)
             if config.PERCEPTION_ONLY:
                 time.sleep(1.0 / config.CONTROL_HZ)

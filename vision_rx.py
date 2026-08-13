@@ -8,6 +8,7 @@ import socket
 import struct
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import cv2
@@ -29,6 +30,18 @@ from vision.dual_gate_pnp import (
 )
 from vision.yolo_pnp import draw_gate_frame_axes
 from vision.yolo_pose_gate_detector import draw_pose_debug_overlay
+
+
+def _detector_timings(detector, total_ms: float) -> dict:
+    """Timing dict for the log. GateNet has no YOLO ``last_debug`` object."""
+    debug = getattr(detector, 'last_debug', None)
+    extra = getattr(debug, 'timings_ms', None) or {}
+    try:
+        extra = dict(extra)
+    except (TypeError, ValueError):
+        extra = {}
+    extra['total'] = float(total_ms)
+    return extra
 
 
 def save_gate_capture(
@@ -61,6 +74,26 @@ def create_gate_detector():
     if backend == 'hsv':
         print('[VISION] detector=hsv (explicit legacy mode)', flush=True)
         return OrangeGateDetector(legacy_config)
+    if backend == 'gatenet':
+        from vision.gatenet_detector import GateNetDetector
+
+        model_path = Path(config.GATENET_MODEL_PATH)
+        if not model_path.is_absolute():
+            model_path = Path(__file__).resolve().parent / model_path
+        detector = GateNetDetector(
+            model_path=str(model_path),
+            score_threshold=config.GATENET_SCORE_THRESHOLD,
+            min_corners=config.GATENET_MIN_CORNERS,
+        )
+        print(
+            '[VISION] detector=gatenet '
+            f'model={model_path} '
+            f'score>={config.GATENET_SCORE_THRESHOLD:.2f} '
+            f'min_corners={config.GATENET_MIN_CORNERS} '
+            f'provider={detector._provider}',
+            flush=True,
+        )
+        return detector
 
     repository_root = Path(__file__).resolve().parent
 
@@ -154,6 +187,9 @@ def create_gate_detector():
             ),
             global_hsv_fallback_confidence_scale=(
                 config.GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE
+            ),
+            global_hsv_fallback_during_lock=(
+                config.GLOBAL_HSV_FALLBACK_DURING_LOCK
             ),
         )
         try:
@@ -280,6 +316,31 @@ def _candidate_keypoints(pose_debug, center_px):
     except (TypeError, ValueError):
         conf_list = [1.0] * len(points)
     return [[float(u), float(v)] for u, v in points], conf_list
+
+
+def _gatenet_payload(res, frame_id: int, timestamp_ns: int) -> dict:
+    """Shared dict the panel and logger both read."""
+    names = ('TL', 'TR', 'BR', 'BL')
+    thresh = float(getattr(config, 'GATENET_SCORE_THRESHOLD', 0.80))
+    corners = [
+        [float(res.corners_px[i, 0]), float(res.corners_px[i, 1])]
+        for i in range(4)
+    ]
+    scores = [float(res.scores[i]) for i in range(4)]
+    return {
+        'frame_id': frame_id,
+        'ts': timestamp_ns,
+        'found': bool(res.found),
+        'n_seen': int(res.n_seen),
+        'elapsed_ms': float(res.elapsed_ms),
+        'min_score': float(res.scores.min()) if len(res.scores) else 0.0,
+        'threshold': thresh,
+        'corners_px': corners,
+        'scores': scores,
+        'names': list(names),
+        'center_px': res.center_px,
+        'bbox_px': res.bbox_px,
+    }
 
 
 class VisionRX:
@@ -890,20 +951,34 @@ class VisionRX:
                         )
                         if image is not None:
                             t_proc = time.perf_counter()
-                            self.process_frame(
-                                frame_id,
-                                image,
-                                sim_time_ns=entry['sim_time_ns'],
-                                jpeg_bytes=jpeg,
-                            )
-                            stats['process_s'] += time.perf_counter() - t_proc
-                            stats['processed'] += 1
                             try:
-                                stats['detect_s'] += 0.001 * float(
-                                    self.data['vision_timings_ms']['total']
+                                self.process_frame(
+                                    frame_id,
+                                    image,
+                                    sim_time_ns=entry['sim_time_ns'],
+                                    jpeg_bytes=jpeg,
                                 )
-                            except (KeyError, TypeError, ValueError):
-                                pass
+                            except Exception as exc:  # noqa: BLE001
+                                # One detector mismatch used to kill this
+                                # thread: debug_frame froze on the first
+                                # image and the panel never moved again.
+                                print(
+                                    f'[VISION] process_frame failed '
+                                    f'frame={frame_id}: {exc}',
+                                    flush=True,
+                                )
+                                traceback.print_exc()
+                            else:
+                                stats['process_s'] += (
+                                    time.perf_counter() - t_proc
+                                )
+                                stats['processed'] += 1
+                                try:
+                                    stats['detect_s'] += 0.001 * float(
+                                        self.data['vision_timings_ms']['total']
+                                    )
+                                except (KeyError, TypeError, ValueError):
+                                    pass
                             latest_complete_id = frame_id
                             latest_complete_sim_time = sim_time_ns
                     del frames[frame_id]
@@ -1173,8 +1248,125 @@ class VisionRX:
             )
 
     # ------------------------------------------------------------------
+    def _run_snake_comparison(
+        self, img, frame_id: int, timestamp_ns: int
+    ) -> None:
+        """Observe-only snake gate detection, published for the panel and log.
+
+        Strictly a measurement: no planner or policy reads ``snake_gate``. It
+        exists so the paper's colour method can be compared against the pose
+        model on this course before either is trusted.
+        """
+        if not getattr(config, 'SNAKE_GATE_ENABLED', False):
+            return
+        if self._snake is None:
+            from vision.snake_gate_detector import (
+                SnakeGateConfig,
+                SnakeGateDetector,
+            )
+            self._snake = SnakeGateDetector(SnakeGateConfig(
+                hsv_lower=config.GATE_HSV_LOWER,
+                hsv_upper=config.GATE_HSV_UPPER,
+                min_length_px=config.SNAKE_MIN_LENGTH_PX,
+                min_color_fitness=config.SNAKE_MIN_COLOR_FITNESS,
+                max_samples=config.SNAKE_MAX_SAMPLES,
+                use_rotated_rect=config.SNAKE_USE_ROTATED_RECT,
+            ))
+            print(
+                '[VISION] snake gate detection ON (observe-only): '
+                f'sigma_L={config.SNAKE_MIN_LENGTH_PX} '
+                f'sigma_cf={config.SNAKE_MIN_COLOR_FITNESS:.2f} '
+                f'rect={"rotated" if config.SNAKE_USE_ROTATED_RECT else "axis"}',
+                flush=True,
+            )
+        try:
+            res = self._snake.detect(img)
+        except Exception as exc:                       # observe-only: never fatal
+            if not self._snake_warned:
+                self._snake_warned = True
+                print(f'[VISION] snake detection failed: {exc}', flush=True)
+            return
+        self.data['snake_gate'] = {
+            'frame_id': frame_id,
+            'ts': timestamp_ns,
+            'found': bool(res.found),
+            'n': len(res.gates),
+            'elapsed_ms': float(res.elapsed_ms),
+            'mask_fraction': float(res.mask_fraction),
+            'best_fitness': (
+                float(res.best.color_fitness) if res.best else float('nan')
+            ),
+            'items': [
+                {
+                    'corners_px': g.corners_px,
+                    'center_px': g.center_px,
+                    'bbox_px': g.bbox_px,
+                    'area_px': g.area_px,
+                    'color_fitness': g.color_fitness,
+                }
+                for g in res.gates
+            ],
+        }
+
+    def _run_gatenet_comparison(
+        self, img, frame_id: int, timestamp_ns: int
+    ) -> None:
+        """Observe-only GateNet, published for the panel and log.
+
+        YOLO remains the detector that feeds the policy. This exists so the
+        four inner corners can be compared against the eight-keypoint pose
+        model on the same frame before committing to a backend switch.
+        """
+        if getattr(config, 'GATE_DETECTOR_BACKEND', '') == 'gatenet':
+            det = getattr(self, 'detector', None)
+            res = getattr(det, 'last_result', None)
+            if res is None:
+                return
+            self.data['gatenet'] = _gatenet_payload(
+                res, frame_id, timestamp_ns,
+            )
+            return
+        if not getattr(config, 'GATENET_ENABLED', False):
+            return
+        if self._gatenet is None:
+            from vision.gatenet_detector import GateNetDetector
+
+            model_path = Path(config.GATENET_MODEL_PATH)
+            if not model_path.is_absolute():
+                model_path = Path(__file__).resolve().parent / model_path
+            try:
+                self._gatenet = GateNetDetector(
+                    model_path=str(model_path),
+                    score_threshold=config.GATENET_SCORE_THRESHOLD,
+                    min_corners=config.GATENET_MIN_CORNERS,
+                )
+            except Exception as exc:
+                if not self._gatenet_warned:
+                    self._gatenet_warned = True
+                    print(f'[VISION] GateNet unavailable: {exc}', flush=True)
+                return
+            print(
+                '[VISION] GateNet ON (observe-only): '
+                f'model={model_path} score>={config.GATENET_SCORE_THRESHOLD:.2f} '
+                f'provider={self._gatenet._provider}',
+                flush=True,
+            )
+        try:
+            res = self._gatenet.infer(img)
+        except Exception as exc:
+            if not self._gatenet_warned:
+                self._gatenet_warned = True
+                print(f'[VISION] GateNet inference failed: {exc}', flush=True)
+            return
+        self.data['gatenet'] = _gatenet_payload(res, frame_id, timestamp_ns)
+
+    # ------------------------------------------------------------------
     def _init_gate_capture(self) -> None:
         """Point frame capture at a fresh per-run subfolder."""
+        self._snake = None
+        self._snake_warned = False
+        self._gatenet = None
+        self._gatenet_warned = False
         self._gate_capture_enabled = config.GATE_FRAME_CAPTURE
         base = Path(config.GATE_FRAME_CAPTURE_DIR)
         if not base.is_absolute():
@@ -1407,11 +1599,28 @@ class VisionRX:
                 })
             except (TypeError, ValueError, AttributeError):
                 continue
+        # Why the policy did not get a detection this frame. The detector
+        # degrades gracefully on its own (it re-serves the previous target with
+        # predicted=True while the lock is briefly lost) and the policy path
+        # below throws exactly those away, so the reason has to be recorded or
+        # a lock dropout is indistinguishable from an empty sky.
+        if measured is None:
+            reject = 'no_result'
+        elif not measured.found:
+            reject = 'not_found'
+        else:
+            # Held results are admitted below; that block overwrites this when
+            # it decides the hold is too stale to use.
+            reject = ''
         self.data['gate_candidates'] = {
             'frame_id': frame_id,
             'ts': timestamp_ns,
             'items': raw_candidates,
+            'reject': reject,
+            'method': getattr(measured, 'method', '') or '',
         }
+        self._run_snake_comparison(img, frame_id, timestamp_ns)
+        self._run_gatenet_comparison(img, frame_id, timestamp_ns)
         self._update_bearing_table(img, monotonic_now)
         self._capture_gate_frame(
             measured,
@@ -1427,29 +1636,53 @@ class VisionRX:
         self._log_state(state)
 
         gate_detection = None
-        if measured is not None and measured.found and not measured.predicted:
-            gate_detection = {
-                'center_px': measured.center_px,
-                'corners_px': measured.corners_px,
-                'bbox_px': measured.bbox_px,
-                'area_px': measured.area_px,
-                'confidence': measured.confidence,
-                'method': measured.method,
-                'predicted': measured.predicted,
-                'frame_id': frame_id,
-                'ts': timestamp_ns,
-            }
+        if measured is not None and measured.found:
             # The eight raw keypoints, taken from the pose candidate rather
             # than from dual_gate_pnp. The learned policy consumes corners
             # directly (paper1 uses no pose estimation), so it must not be
             # gated on a PnP solve succeeding — PnP was non-null in 1 of 39
             # laps on this detector.
+            #
+            # Predicted results used to be dropped here. They are the detector
+            # re-serving the previous target while its lock catches up, and
+            # discarding them cost 24% of frames beyond 45 deg of roll while
+            # confident boxes (0.66 median) sat unused in this very frame.
+            # They are admitted now, but only with corners matched out of the
+            # *current* pose candidates: a held centre with no fresh corners is
+            # stale geometry, and an all-sentinel observation is more honest
+            # than a gate that has already moved.
             kps, kconf = _candidate_keypoints(pose_debug, measured.center_px)
-            gate_detection['keypoints_px'] = kps
-            gate_detection['keypoint_confidences'] = kconf
+            stale = bool(measured.predicted) and kps is None
+            too_old = bool(measured.predicted) and int(
+                getattr(measured, 'missing_frames', 0) or 0
+            ) > int(getattr(config, 'GATE_HELD_MAX_FRAMES', 3))
+            if not stale and not too_old:
+                gate_detection = {
+                    'center_px': measured.center_px,
+                    'corners_px': measured.corners_px,
+                    'bbox_px': measured.bbox_px,
+                    'area_px': measured.area_px,
+                    'confidence': measured.confidence,
+                    'method': measured.method,
+                    'predicted': measured.predicted,
+                    'frame_id': frame_id,
+                    'ts': timestamp_ns,
+                    'keypoints_px': kps,
+                    'keypoint_confidences': kconf,
+                }
+            else:
+                reject = 'stale_held' if stale else 'held_too_old'
+                cand = self.data.get('gate_candidates')
+                if isinstance(cand, dict):
+                    cand['reject'] = reject
 
         total_ms = (time.perf_counter() - started) * 1000.0
         self.data['gate_detection'] = gate_detection
+        # Raw frame for tools/obs_panel.py. Deliberately un-annotated: the panel
+        # draws the keypoints the *network* is given, so any disagreement with
+        # the vision overlay is visible rather than hidden by a shared drawing.
+        self.data['debug_frame'] = img
+        self.data['debug_frame_id'] = frame_id
         self.data['vision'] = None
         self.data['navigation'] = {
             'ts': timestamp_ns,
@@ -1468,10 +1701,9 @@ class VisionRX:
             else 0.0,
             'predicted': False,
         }
-        self.data['vision_timings_ms'] = {
-            **getattr(self.detector.last_debug, 'timings_ms', {}),
-            'total': total_ms,
-        }
+        self.data['vision_timings_ms'] = _detector_timings(
+            self.detector, total_ms,
+        )
         self.data['control_source'] = 'kalman'
 
         should_save_debug = (
@@ -1499,7 +1731,7 @@ class VisionRX:
                         annotated = draw_detection(
                             img,
                             detection_for_overlay,
-                            debug=self.detector.last_debug,
+                            debug=getattr(self.detector, 'last_debug', None),
                             state=state,
                             command=None,
                             total_time_ms=total_ms,
@@ -1544,7 +1776,7 @@ class VisionRX:
                 cv2.imwrite(path, annotated)
                 self._last_debug_t = time.time()
             if self._display_enabled:
-                debug = self.detector.last_debug
+                debug = getattr(self.detector, 'last_debug', None)
                 cleaned = getattr(debug, 'cleaned_mask', None)
                 if cleaned is None:
                     cleaned = np.zeros(annotated.shape[:2], dtype=np.uint8)

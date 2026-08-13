@@ -79,6 +79,9 @@ class PoseGateConfig:
     hsv_center_max_shift_fraction: float = 0.12
     global_hsv_fallback_enabled: bool = False
     global_hsv_fallback_confidence_scale: float = 0.55
+    # Also run the colour fallback while a target lock is alive but this frame
+    # produced nothing. Without it the fallback only ever fires pre-acquisition.
+    global_hsv_fallback_during_lock: bool = True
     gate_inner_width_m: float = cm.GATE_INNER_M
     focal_length_px: float = cm.FX
 
@@ -1348,11 +1351,22 @@ class YoloPoseGateDetector:
                 and not persistent_lock
             ):
                 self.reset_target_lock()
+        # The colour fallback used to require that no target had ever been
+        # locked, which meant it fired only before acquisition and never during
+        # a race — precisely when it is wanted. It now also runs while a lock
+        # exists but this frame produced nothing, which is what a roll past 45
+        # degrees does. Confidence is still scaled down, so a colour hit never
+        # outranks a real YOLO detection downstream.
         if (
             not result.found
             and self.config.global_hsv_fallback_enabled
-            and self._previous_target is None
-            and self._pending_target is None
+            and (
+                self.config.global_hsv_fallback_during_lock
+                or (
+                    self._previous_target is None
+                    and self._pending_target is None
+                )
+            )
         ):
             fallback = self._global_hsv_detector.detect(
                 frame,

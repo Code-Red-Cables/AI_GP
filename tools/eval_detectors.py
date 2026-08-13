@@ -125,11 +125,17 @@ def main() -> None:
     if not args.skip_hsv:
         from vision.gate_detector import GateVisionConfig, OrangeGateDetector
         import config as cfg
+        # GATE_HSV_* defaults target orange gates. On VQ1, retune with
+        # tools/hsv_tuner.py against a fresh capture and export
+        # GATE_HSV_LOWER / GATE_HSV_UPPER before trusting this arm.
         hsv_det = OrangeGateDetector(GateVisionConfig(
             hsv_ranges=((cfg.GATE_HSV_LOWER, cfg.GATE_HSV_UPPER),),
             min_contour_area=cfg.GATE_MIN_CONTOUR_AREA,
         ))
-        print('hsv detector ready')
+        print(
+            f'hsv detector ready  '
+            f'HSV=[{cfg.GATE_HSV_LOWER} .. {cfg.GATE_HSV_UPPER}]'
+        )
 
     yolo_det = None
     if not args.skip_yolo:

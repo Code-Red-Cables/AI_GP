@@ -26,8 +26,8 @@ torchvision
 # Gate-pose training (tools/train_gate_pose.py)
 pyyaml
 
-# Tests
-pytest>=8
+# GateNet (gatenet_handoff) four-corner inner-aperture overlay / backend.
+onnxruntime
 
 # Pilot gamepad teleop — tools/ only. The flight entry point (main.py) never
 # imports this; VADR-TS-001 7 makes human interaction during a timed run
