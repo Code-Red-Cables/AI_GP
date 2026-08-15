@@ -4792,14 +4792,6 @@ def run_coach(args) -> int:
     print('  TELEOP NOW when you see the policy drift.', flush=True)
     print('', flush=True)
 
-    if bool(getattr(args, 'no_sim_reset', False)):
-        print('[SIM] skip reset (--no-sim-reset)', flush=True)
-        time.sleep(1.0)
-    else:
-        print('[SIM] reset (command 31000) before arm...', flush=True)
-        controller.send_sim_reset()
-        time.sleep(max(0.5, float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5))))
-
     panel = None
     if bool(getattr(args, 'panel', False)):
         from obs_panel import ObservationPanel
@@ -4809,6 +4801,23 @@ def run_coach(args) -> int:
         )
         print('[COACH] input panel on (q or Esc in the window closes it)',
               flush=True)
+
+    def _pump_panel() -> None:
+        nonlocal panel
+        if panel is not None and not panel.show(shared_data):
+            panel = None
+
+    if bool(getattr(args, 'no_sim_reset', False)):
+        print('[SIM] skip reset (--no-sim-reset)', flush=True)
+        time.sleep(1.0)
+    else:
+        print('[SIM] reset (command 31000) before arm...', flush=True)
+        controller.send_sim_reset()
+        settle = max(0.5, float(getattr(config, 'SIM_RESET_SETTLE_S', 1.5)))
+        t_settle = time.monotonic() + settle
+        while time.monotonic() < t_settle:
+            _pump_panel()
+            time.sleep(0.02)
 
     hold_state: dict = {}
     attempt = {'n': 0}
@@ -4835,13 +4844,17 @@ def run_coach(args) -> int:
             det = shared_data.get('gate_detection') or {}
             if det.get('center_px') is not None:
                 break
+            _pump_panel()
             time.sleep(0.02)
         # Race clock, not a wall-clock guess: under slow-mo the two disagree by
         # the slow-mo factor and every attempt starts early.
-        if not _wait_for_race_go(shared_data, label='PAD'):
+        if not _wait_for_race_go(
+            shared_data, label='PAD', on_tick=_pump_panel,
+        ):
             _wait_aligned_to_countdown(
                 shared_data, t_reset, _countdown_hold_s(args),
                 label='PAD', need_vision=True, vision_grace_s=2.0,
+                on_tick=_pump_panel,
             )
         controller.arm()
         shared_data['flight_started'] = True
@@ -5250,6 +5263,7 @@ def _wait_for_race_go(
     *,
     timeout_s: float = 90.0,
     label: str = 'PAD',
+    on_tick=None,
 ) -> bool:
     """Block until the sim's race clock says GO, not until a wall-clock guess.
 
@@ -5267,6 +5281,11 @@ def _wait_for_race_go(
     sim still reports the *previous* race, whose start time is long past -- the
     test would pass instantly. Hence three phases: wait for the reset to land,
     wait for a countdown to be scheduled and still pending, then wait for GO.
+
+    At 1x the 1.5 s reset settle often skips the ``start == -1`` blip entirely
+    and we arrive already inside a fresh countdown (``boot < start``). That is
+    also "reset has landed" — waiting only for ``start < 0`` hung the coach
+    loop for 90 s and the panel never called ``imshow``.
     """
     deadline = time.monotonic() + float(timeout_s)
 
@@ -5280,11 +5299,22 @@ def _wait_for_race_go(
         except (TypeError, ValueError):
             return None, None
 
-    # Phase 1: the reset has landed when the previous race's start time clears.
+    def _tick() -> None:
+        if on_tick is not None:
+            on_tick()
+
+    # Phase 1: reset has landed. Either the previous start cleared, or a
+    # new countdown is already pending (the 1x case after settle).
     while time.monotonic() < deadline:
-        _boot, start = _pair()
+        boot, start = _pair()
         if start is not None and start < 0:
             break
+        if (
+            boot is not None and start is not None
+            and start >= 0 and boot < start
+        ):
+            break
+        _tick()
         time.sleep(0.02)
 
     # Phase 2: a countdown exists and has not fired yet.
@@ -5301,6 +5331,7 @@ def _wait_for_race_go(
             # Already past: no fresh countdown, fall through and fly.
             print(f'[{label}] no pending countdown — starting now', flush=True)
             return True
+        _tick()
         time.sleep(0.02)
 
     if not pending:
@@ -5314,6 +5345,7 @@ def _wait_for_race_go(
         if boot is not None and start is not None and boot >= start:
             print(f'[{label}] GO', flush=True)
             return True
+        _tick()
         time.sleep(0.01)
     print(f'[{label}] timed out waiting for GO', flush=True)
     return False
@@ -5327,6 +5359,7 @@ def _wait_aligned_to_countdown(
     label: str = 'PAD',
     need_vision: bool = True,
     vision_grace_s: float = 2.0,
+    on_tick=None,
 ) -> bool:
     """Wait until ``t0 + hold_s`` (from reset), optionally polling vision.
 
@@ -5342,6 +5375,8 @@ def _wait_aligned_to_countdown(
     )
     ready = False
     while True:
+        if on_tick is not None:
+            on_tick()
         if need_vision:
             dual = shared_data.get('dual_gate_pnp') or {}
             det = shared_data.get('gate_detection') or {}

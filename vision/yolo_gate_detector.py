@@ -40,13 +40,14 @@ class HybridGateConfig:
     inference_size: int = 640
     device: Optional[str] = None
     log_interval_s: float = 1.0
-    score_confidence_weight: float = 0.40
-    score_center_weight: float = 0.30
-    score_area_weight: float = 0.30
-    score_reference_area_ratio: float = 0.08
+    score_confidence_weight: float = 0.15
+    score_center_weight: float = 0.0
+    score_area_weight: float = 0.85
+    score_reference_area_ratio: float = 0.20
     target_association_center_span: float = 0.75
     target_association_min_area_ratio: float = 0.0
     target_association_max_area_ratio: float = math.inf
+    target_steal_area_ratio: float = 1.6
     minimum_opening_area_px: float = 45.0
     minimum_opening_side_px: float = 12.0
     minimum_opening_aspect: float = 0.45
@@ -270,6 +271,21 @@ def score_gate_candidate(
     )
 
 
+def _best_acquisition(
+    valid: Sequence[YoloGateBox],
+    frame_shape: tuple[int, ...],
+    config: HybridGateConfig,
+) -> YoloGateBox:
+    return max(
+        valid,
+        key=lambda item: (
+            score_gate_candidate(item, frame_shape, config),
+            item.area,
+            item.confidence,
+        ),
+    )
+
+
 def select_target_gate(
     detections: Sequence[YoloGateBox],
     previous_target: Optional[YoloGateBox],
@@ -293,20 +309,17 @@ def select_target_gate(
             continue
         valid.append(clipped)
     if not valid:
+        # A lone box that is clipped or just under the area floor is still
+        # a gate. Returning None published REJECTED while YOLO drew it.
+        if len(detections) == 1:
+            clipped, _ = _inside_box(detections[0], frame_shape)
+            if clipped.area > 0.0:
+                return clipped
         return None
     if previous_target is None or not lock_active:
-        # 0833: largest-area acquisition after a pass locked u≈579 edge
-        # junk while a better next gate sat near center. Prefer the
-        # composite center/area/confidence score; min-area filters already
-        # drop tiny speck gates.
-        return max(
-            valid,
-            key=lambda item: (
-                score_gate_candidate(item, frame_shape, config),
-                item.area,
-                item.confidence,
-            ),
-        )
+        # Acquisition is confidence + area only. Image-center bias was
+        # locking a small far gate over a large close one.
+        return _best_acquisition(valid, frame_shape, config)
 
     previous_span = max(
         previous_target.bbox[2] - previous_target.bbox[0],
@@ -355,7 +368,27 @@ def select_target_gate(
             + 0.02 * score_gate_candidate(detection, frame_shape, config)
         )
         matches.append((association, detection))
-    return max(matches, key=lambda item: item[0])[1] if matches else None
+    locked = max(matches, key=lambda item: item[0])[1] if matches else None
+    steal_ratio = float(
+        getattr(config, 'target_steal_area_ratio', 0.0) or 0.0
+    )
+    if steal_ratio > 1.0:
+        stealers = [
+            detection
+            for detection in valid
+            if detection.area >= steal_ratio * prev_area
+            and _bbox_iou(detection, previous_target) < 0.20
+        ]
+        if stealers and (
+            locked is None or locked.area < steal_ratio * prev_area
+        ):
+            return _best_acquisition(stealers, frame_shape, config)
+    if locked is not None:
+        return locked
+    # Association missed and nothing was large enough to steal. Returning
+    # None left YOLO boxes on the panel as REJECTED until a 2.5x closer
+    # gate appeared. Reacquire the best remaining box instead.
+    return _best_acquisition(valid, frame_shape, config)
 
 
 def crop_target_gate(

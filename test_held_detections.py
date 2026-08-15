@@ -143,11 +143,11 @@ class DeliveryRuleTests(unittest.TestCase):
 
 
 class ColourFallbackConfigTests(unittest.TestCase):
-    def test_colour_fallback_is_enabled(self):
-        self.assertTrue(config.GLOBAL_HSV_FALLBACK_ENABLED)
+    def test_colour_fallback_is_off(self):
+        self.assertFalse(config.GLOBAL_HSV_FALLBACK_ENABLED)
 
-    def test_colour_fallback_runs_during_lock(self):
-        self.assertTrue(config.GLOBAL_HSV_FALLBACK_DURING_LOCK)
+    def test_yolo_is_not_colour_gated(self):
+        self.assertFalse(config.YOLO_REQUIRE_HSV_CONFIRMATION)
 
     def test_colour_confidence_is_scaled_below_yolo(self):
         self.assertLess(config.GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE, 1.0)

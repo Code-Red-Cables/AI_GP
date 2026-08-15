@@ -57,6 +57,31 @@ class RaceGoTests(unittest.TestCase):
     def test_reports_failure_when_the_clock_never_appears(self):
         self.assertFalse(tf._wait_for_race_go({}, timeout_s=0.2))
 
+    def test_already_pending_countdown_after_1x_settle_still_reaches_go(self):
+        """1x settle often skips the start=-1 blip; boot < start is enough."""
+        shared = {'race_status': {'sim_boot_ms': 1500, 'race_start_ms': 3298}}
+
+        def advance():
+            time.sleep(0.05)
+            shared['race_status'] = {'sim_boot_ms': 3300, 'race_start_ms': 3298}
+
+        threading.Thread(target=advance, daemon=True).start()
+        self.assertTrue(tf._wait_for_race_go(shared, timeout_s=2.0))
+
+    def test_on_tick_runs_while_waiting(self):
+        shared = {'race_status': {'sim_boot_ms': 100, 'race_start_ms': 500}}
+        ticks = []
+
+        def advance():
+            time.sleep(0.08)
+            shared['race_status'] = {'sim_boot_ms': 600, 'race_start_ms': 500}
+
+        threading.Thread(target=advance, daemon=True).start()
+        self.assertTrue(tf._wait_for_race_go(
+            shared, timeout_s=2.0, on_tick=lambda: ticks.append(1),
+        ))
+        self.assertGreater(len(ticks), 0)
+
     def test_no_pending_countdown_returns_immediately(self):
         shared = {'race_status': {'sim_boot_ms': 100, 'race_start_ms': -1}}
 

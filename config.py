@@ -1122,7 +1122,7 @@ YOLO_NMS_IOU_THRESHOLD = float(
 )
 YOLO_TARGET_LOCK_SECONDS = float(
     # Backup window if persistent lock glitches; persistent owns approach.
-    os.environ.get('YOLO_TARGET_LOCK_SECONDS', '2.0')
+    os.environ.get('YOLO_TARGET_LOCK_SECONDS', '1.2')
 )
 YOLO_PERSISTENT_TARGET_LOCK = _env_bool(
     'YOLO_PERSISTENT_TARGET_LOCK', True
@@ -1138,6 +1138,13 @@ YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO = float(
     # Closing on a gate grows area fast; 2.2 dropped real matches → reacquire.
     os.environ.get('YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO', '4.0')
 )
+# While locked, a different box this many times larger is treated as a
+# nearer gate and may steal identity. Same-gate growth is protected by
+# IoU (steal requires IoU < 0.20), so 1.6 is enough to take a closer
+# instance without waiting until it fills the frame.
+YOLO_TARGET_STEAL_AREA_RATIO = float(
+    os.environ.get('YOLO_TARGET_STEAL_AREA_RATIO', '1.6')
+)
 YOLO_ACQUISITION_CONFIRMATION_FRAMES = int(
     # YOLO-only mode accepts the first pose instance above the confidence
     # threshold. At ~5 Hz inference, a second confirmation frame leaves
@@ -1148,14 +1155,17 @@ YOLO_ACQUISITION_CONFIRMATION_FRAMES = int(
 # very large partial YOLO box for a few frames.  It must not win the normal
 # "largest visible gate" acquisition policy over the smaller next gate.
 YOLO_POST_PASS_REJECTION_SECONDS = float(
-    # 0826: 1.6 s let the passed-gate remnant (area~110k) win right after
-    # the window closed. Keep rejecting oversized boxes longer.
-    os.environ.get('YOLO_POST_PASS_REJECTION_SECONDS', '6.00')
+    # Only used to prefer a smaller next gate over a huge remnant when
+    # both are visible. Sole boxes are never dropped. 2 s is enough for
+    # the remnant to leave; 6 s kept rejecting the approaching next gate
+    # once it grew past 12% of the frame.
+    os.environ.get('YOLO_POST_PASS_REJECTION_SECONDS', '2.00')
 )
 YOLO_POST_PASS_MAX_AREA_RATIO = float(
     os.environ.get('YOLO_POST_PASS_MAX_AREA_RATIO', '0.12')
 )
-# Vision steering uses the YOLO pose model only — no HSV gate filter / fallback.
+# YOLO boxes are not colour-gated. A leftover YOLO_REQUIRE_HSV_CONFIRMATION=1
+# in the environment used to turn this back on and drop real pose hits.
 YOLO_REQUIRE_HSV_CONFIRMATION = _env_bool(
     'YOLO_REQUIRE_HSV_CONFIRMATION', False
 )
@@ -1196,16 +1206,18 @@ YOLO_INFERENCE_SIZE = int(os.environ.get('YOLO_INFERENCE_SIZE', '640'))
 YOLO_DEVICE = os.environ.get('YOLO_DEVICE', '').strip() or None
 YOLO_LOG_INTERVAL_S = float(os.environ.get('YOLO_LOG_INTERVAL_S', '1.0'))
 YOLO_SCORE_CONFIDENCE_WEIGHT = float(
-    os.environ.get('YOLO_SCORE_CONFIDENCE_WEIGHT', '0.40')
+    os.environ.get('YOLO_SCORE_CONFIDENCE_WEIGHT', '0.15')
 )
 YOLO_SCORE_CENTER_WEIGHT = float(
-    os.environ.get('YOLO_SCORE_CENTER_WEIGHT', '0.55')
+    os.environ.get('YOLO_SCORE_CENTER_WEIGHT', '0.0')
 )
 YOLO_SCORE_AREA_WEIGHT = float(
-    os.environ.get('YOLO_SCORE_AREA_WEIGHT', '0.30')
+    os.environ.get('YOLO_SCORE_AREA_WEIGHT', '0.85')
 )
 YOLO_SCORE_REFERENCE_AREA_RATIO = float(
-    os.environ.get('YOLO_SCORE_REFERENCE_AREA_RATIO', '0.08')
+    # 0.08 saturated every mid-size box, so a 0.95 far speck beat a
+    # 0.50 close gate. Keep area meaningful up to ~20% of the frame.
+    os.environ.get('YOLO_SCORE_REFERENCE_AREA_RATIO', '0.20')
 )
 YOLO_HSV_BLUR_KERNEL = int(os.environ.get('YOLO_HSV_BLUR_KERNEL', '5'))
 YOLO_HSV_OPENING_KERNEL = int(
@@ -1228,7 +1240,7 @@ YOLO_HSV_CENTER_MAX_SHIFT_FRACTION = float(
 # reasonable second opinion even though its standalone true positive rate (0.46)
 # is below this detector's.
 GLOBAL_HSV_FALLBACK_ENABLED = _env_bool(
-    'GLOBAL_HSV_FALLBACK_ENABLED', True
+    'GLOBAL_HSV_FALLBACK_ENABLED', False
 )
 GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE = float(
     os.environ.get('GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE', '0.55')
@@ -1259,9 +1271,10 @@ GATENET_MODEL_PATH = os.environ.get(
     'GATENET_MODEL_PATH', 'gatenet_handoff/gatenet.onnx'
 )
 # Author's instruction: gate on the weakest per-corner peak, not the collapsed
-# confidence head. 0.80 is the README's recommended operating point.
+# confidence head. Their README recommends 0.80 (48.6% recall); we fly at 0.45
+# so more distant / partial gates survive.
 GATENET_SCORE_THRESHOLD = float(
-    os.environ.get('GATENET_SCORE_THRESHOLD', '0.80')
+    os.environ.get('GATENET_SCORE_THRESHOLD', '0.45')
 )
 # Two visible inner corners still give a bearing; PnP needs all four.
 GATENET_MIN_CORNERS = int(os.environ.get('GATENET_MIN_CORNERS', '2'))

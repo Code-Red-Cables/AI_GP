@@ -75,7 +75,7 @@ class GateNetResult:
     n_seen: int
     elapsed_ms: float
     found: bool
-    threshold: float = 0.80
+    threshold: float = 0.45
 
     @property
     def _seen_mask(self) -> np.ndarray:
@@ -104,7 +104,7 @@ class GateNetDetector:
         self,
         *,
         model_path: Optional[str] = None,
-        score_threshold: float = 0.80,
+        score_threshold: float = 0.45,
         min_corners: int = 2,
         providers: Optional[list[str]] = None,
     ):

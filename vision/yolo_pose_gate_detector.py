@@ -42,7 +42,7 @@ class PoseGateConfig:
     confidence_threshold: float = 0.25
     keypoint_confidence_threshold: float = 0.25
     nms_iou_threshold: float = 0.70
-    target_lock_seconds: float = 2.0
+    target_lock_seconds: float = 1.2
     persistent_target_lock: bool = True
     acquisition_confirmation_frames: int = 1
     require_hsv_confirmation: bool = False
@@ -63,13 +63,14 @@ class PoseGateConfig:
     inference_size: int = 640
     device: Optional[str] = None
     log_interval_s: float = 1.0
-    score_confidence_weight: float = 0.40
-    score_center_weight: float = 0.30
-    score_area_weight: float = 0.30
-    score_reference_area_ratio: float = 0.08
+    score_confidence_weight: float = 0.15
+    score_center_weight: float = 0.0
+    score_area_weight: float = 0.85
+    score_reference_area_ratio: float = 0.20
     target_association_center_span: float = 1.85
     target_association_min_area_ratio: float = 0.45
     target_association_max_area_ratio: float = 4.0
+    target_steal_area_ratio: float = 1.6
     post_pass_rejection_seconds: float = 0.0
     post_pass_max_area_ratio: float = 1.0
     hsv_blur_kernel: int = 5
@@ -1090,11 +1091,16 @@ class YoloPoseGateDetector:
             # 0902: next gate often ~650–2200 px right after punch; 700 still
             # dropped the bearing-side box so only right remnants remained.
             minimum_area = max(500.0, 0.002 * frame_area)
-            eligible_candidates = [
+            sized = [
                 candidate
                 for candidate in eligible_candidates
                 if minimum_area <= candidate.box.area <= maximum_area
             ]
+            # Drop a huge remnant only when a mid-size next gate exists.
+            # An empty sized list used to REJECT the only box in frame
+            # (high-conf close gate past 12% of the image, or a lone speck).
+            if sized:
+                eligible_candidates = sized
             # 0750: reject flat bottom-bar instances that steal lock at v≈330.
         frame_h = float(frame.shape[0])
         filtered = []

@@ -113,6 +113,53 @@ class TargetSelectionTests(unittest.TestCase):
 
         self.assertEqual(selected.bbox, detections[1].bbox)
 
+    def test_lock_is_stolen_by_a_much_larger_closer_gate(self):
+        previous = YoloGateBox((280, 150, 340, 210), 0.70)
+        detections = [
+            YoloGateBox((278, 148, 342, 212), 0.68),
+            YoloGateBox((80, 40, 400, 320), 0.88),
+        ]
+        selected = select_target_gate(
+            detections,
+            previous,
+            (360, 640, 3),
+            self.config,
+            lock_active=True,
+        )
+        self.assertEqual(selected.bbox, detections[1].bbox)
+
+    def test_lock_is_stolen_by_a_modestly_larger_closer_gate(self):
+        """1.6x + low IoU is a nearer instance, not same-gate growth."""
+        previous = YoloGateBox((280, 150, 340, 210), 0.70)  # 3600
+        detections = [
+            YoloGateBox((278, 148, 342, 212), 0.68),  # continuation
+            YoloGateBox((40, 80, 130, 148), 0.80),  # ~1.7x, no overlap
+        ]
+        selected = select_target_gate(
+            detections,
+            previous,
+            (360, 640, 3),
+            self.config,
+            lock_active=True,
+        )
+        self.assertEqual(selected.bbox, detections[1].bbox)
+
+    def test_lost_lock_falls_back_to_best_visible_gate(self):
+        """A missed association must still deliver a YOLO box."""
+        previous = YoloGateBox((600, 170, 640, 250), 0.89)
+        detections = [
+            YoloGateBox((80, 60, 200, 180), 0.85),
+        ]
+        selected = select_target_gate(
+            detections,
+            previous,
+            (360, 640, 3),
+            self.config,
+            lock_active=True,
+        )
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.bbox, detections[0].bbox)
+
     def test_lock_rejects_much_smaller_far_gate(self):
         """Scale gate always applies while locked (assist range-flip fix)."""
         previous = YoloGateBox((200, 120, 360, 280), 0.90)  # area ~25k
@@ -137,10 +184,10 @@ class TargetSelectionTests(unittest.TestCase):
         self.assertIsNotNone(selected)
         self.assertEqual(selected.bbox, detections[1].bbox)
 
-    def test_scoring_can_prefer_centered_confident_gate_over_larger_edge_box(self):
+    def test_scoring_prefers_a_large_close_gate_over_a_small_centered_one(self):
         detections = [
-            YoloGateBox((0, 5, 360, 355), 0.42),
-            YoloGateBox((245, 105, 395, 255), 0.94),
+            YoloGateBox((10, 20, 400, 340), 0.90),   # large, off-center
+            YoloGateBox((270, 140, 370, 220), 0.50),  # small, centered
         ]
 
         selected = select_target_gate(
@@ -151,11 +198,27 @@ class TargetSelectionTests(unittest.TestCase):
             lock_active=False,
         )
 
-        self.assertEqual(selected.bbox, detections[1].bbox)
+        self.assertEqual(selected.bbox, detections[0].bbox)
         self.assertGreater(
-            score_gate_candidate(detections[1], (360, 640, 3), self.config),
             score_gate_candidate(detections[0], (360, 640, 3), self.config),
+            score_gate_candidate(detections[1], (360, 640, 3), self.config),
         )
+
+    def test_scoring_prefers_a_large_close_gate_over_a_high_conf_far_one(self):
+        detections = [
+            YoloGateBox((40, 30, 360, 300), 0.50),   # close, large
+            YoloGateBox((280, 150, 340, 210), 0.95),  # far, tiny, high conf
+        ]
+
+        selected = select_target_gate(
+            detections,
+            None,
+            (360, 640, 3),
+            self.config,
+            lock_active=False,
+        )
+
+        self.assertEqual(selected.bbox, detections[0].bbox)
 
     def test_tiny_and_mostly_outside_boxes_are_rejected(self):
         config = HybridGateConfig(
@@ -176,6 +239,26 @@ class TargetSelectionTests(unittest.TestCase):
         )
 
         self.assertIsNone(selected)
+
+    def test_sole_clipped_box_is_still_selected(self):
+        config = HybridGateConfig(
+            minimum_gate_area_px=500.0,
+            maximum_outside_fraction=0.25,
+        )
+        detections = [
+            YoloGateBox((-80, 40, 200, 280), 0.92),
+        ]
+
+        selected = select_target_gate(
+            detections,
+            None,
+            (360, 640, 3),
+            config,
+            lock_active=False,
+        )
+
+        self.assertIsNotNone(selected)
+        self.assertGreater(selected.area, 0.0)
 
 
 class CropCornerTests(unittest.TestCase):

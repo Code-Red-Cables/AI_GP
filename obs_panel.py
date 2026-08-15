@@ -193,7 +193,7 @@ class ObservationPanel:
         corners = gn.get('corners_px') or ()
         scores = gn.get('scores') or ()
         names = gn.get('names') or ('TL', 'TR', 'BR', 'BL')
-        thresh = float(gn.get('threshold') or 0.80)
+        thresh = float(gn.get('threshold') or 0.45)
         drawn = 0
         pts_seen = []
         for i, corner in enumerate(corners):

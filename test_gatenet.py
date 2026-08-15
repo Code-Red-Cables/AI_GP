@@ -185,7 +185,7 @@ class ConfigTests(unittest.TestCase):
     def test_gatenet_config_keys_exist(self):
         import config
         self.assertTrue(hasattr(config, 'GATENET_ENABLED'))
-        self.assertTrue(hasattr(config, 'GATENET_SCORE_THRESHOLD'))
+        self.assertAlmostEqual(config.GATENET_SCORE_THRESHOLD, 0.45)
         self.assertTrue(hasattr(config, 'GATENET_MODEL_PATH'))
 
     def test_observe_only_defaults_off(self):

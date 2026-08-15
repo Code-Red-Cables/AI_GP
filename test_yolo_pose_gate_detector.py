@@ -308,7 +308,7 @@ def test_lock_reacquires_fast_same_scale_gate_after_edge_yaw():
     assert selected.box.source_index == 0
 
 
-def test_lock_does_not_reacquire_distant_different_scale_gate():
+def test_lost_lock_falls_back_to_visible_gate():
     previous = YoloGateBox((603, 172, 640, 251), 0.89)
     candidates = [
         _candidate(
@@ -328,11 +328,40 @@ def test_lock_does_not_reacquire_distant_different_scale_gate():
             target_association_center_span=1.85,
             target_association_min_area_ratio=0.45,
             target_association_max_area_ratio=2.20,
+            target_steal_area_ratio=0.0,
         ),
         lock_active=True,
     )
 
-    assert selected is None
+    assert selected is not None
+    assert selected.box.source_index == 0
+
+
+def test_a_much_larger_closer_gate_can_steal_the_lock():
+    previous = YoloGateBox((280, 150, 340, 210), 0.70)  # far ~3.6k
+    candidates = [
+        _candidate(
+            (280, 150, 340, 210),
+            0.70,
+            0,
+            ((285, 155), (335, 155), (285, 205), (335, 205)),
+        ),
+        _candidate(
+            (80, 40, 400, 320),
+            0.88,
+            1,
+            ((90, 50), (390, 50), (90, 310), (390, 310)),
+        ),
+    ]
+    selected = select_pose_target(
+        candidates,
+        previous,
+        (360, 640, 3),
+        PoseGateConfig(minimum_gate_area_px=100),
+        lock_active=True,
+    )
+    assert selected is not None
+    assert selected.box.source_index == 1
 
 
 def test_lock_keeps_growing_close_gate_and_rejects_far_sibling():
@@ -504,6 +533,28 @@ def test_post_pass_acquisition_rejects_oversized_gate_remnant():
     assert next_gate.center_px == (560.0, 160.0)
     assert after_guard.found
     assert after_guard.center_px == (215.0, 180.0)
+
+
+def test_post_pass_keeps_sole_oversized_box():
+    sole = _frame(
+        rows=((20, 10, 500, 340, 0.90, 0),),
+        points=(((40, 30), (480, 30), (40, 320), (480, 320)),),
+    )
+    detector = YoloPoseGateDetector(
+        PoseGateConfig(
+            minimum_gate_area_px=100,
+            post_pass_rejection_seconds=0.8,
+            post_pass_max_area_ratio=0.12,
+            log_interval_s=999,
+        ),
+        model=_FakeModel([sole]),
+    )
+    detector.begin_next_gate_acquisition(1.0)
+    result = detector.detect(
+        np.zeros((360, 640, 3), dtype=np.uint8), timestamp=1.1
+    )
+    assert result.found
+    assert result.center_px == (260.0, 175.0)
 
 
 def test_low_confidence_corner_uses_box_center_fallback():

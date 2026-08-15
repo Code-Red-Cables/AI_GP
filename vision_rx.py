@@ -145,6 +145,7 @@ def create_gate_detector():
             target_association_max_area_ratio=(
                 config.YOLO_TARGET_ASSOCIATION_MAX_AREA_RATIO
             ),
+            target_steal_area_ratio=config.YOLO_TARGET_STEAL_AREA_RATIO,
             acquisition_confirmation_frames=(
                 config.YOLO_ACQUISITION_CONFIRMATION_FRAMES
             ),
@@ -154,7 +155,7 @@ def create_gate_detector():
             post_pass_max_area_ratio=(
                 config.YOLO_POST_PASS_MAX_AREA_RATIO
             ),
-            require_hsv_confirmation=config.YOLO_REQUIRE_HSV_CONFIRMATION,
+            require_hsv_confirmation=False,
             hsv_ranges=hsv_ranges,
             hsv_min_orange_ratio=config.YOLO_HSV_MIN_ORANGE_RATIO,
             hsv_max_orange_ratio=config.YOLO_HSV_MAX_ORANGE_RATIO,
@@ -182,9 +183,7 @@ def create_gate_detector():
             hsv_center_max_shift_fraction=(
                 config.YOLO_HSV_CENTER_MAX_SHIFT_FRACTION
             ),
-            global_hsv_fallback_enabled=(
-                config.GLOBAL_HSV_FALLBACK_ENABLED
-            ),
+            global_hsv_fallback_enabled=False,
             global_hsv_fallback_confidence_scale=(
                 config.GLOBAL_HSV_FALLBACK_CONFIDENCE_SCALE
             ),
@@ -202,11 +201,7 @@ def create_gate_detector():
                 flush=True,
             )
         else:
-            hsv_mode = (
-                'hsv_confirm'
-                if config.YOLO_REQUIRE_HSV_CONFIRMATION
-                else 'yolo_only'
-            )
+            hsv_mode = 'yolo_only'
             print(
                 '[VISION] detector=yolo_pose '
                 f'model={pose_model_path} '
@@ -321,7 +316,7 @@ def _candidate_keypoints(pose_debug, center_px):
 def _gatenet_payload(res, frame_id: int, timestamp_ns: int) -> dict:
     """Shared dict the panel and logger both read."""
     names = ('TL', 'TR', 'BR', 'BL')
-    thresh = float(getattr(config, 'GATENET_SCORE_THRESHOLD', 0.80))
+    thresh = float(getattr(config, 'GATENET_SCORE_THRESHOLD', 0.45))
     corners = [
         [float(res.corners_px[i, 0]), float(res.corners_px[i, 1])]
         for i in range(4)
