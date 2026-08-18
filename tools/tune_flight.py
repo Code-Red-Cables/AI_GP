@@ -47,6 +47,10 @@ Subcommands, smallest blast radius first:
               main.py FLIGHT_MODE=assist). Prefer `python main.py` for
               full races; use this for short gain tweaks.
 
+  policy      Autonomous timed flyer. Policy owns the sticks from arm to
+              quit. No gamepad, no H/T. Same path as tools/run_policy.py.
+              Esc / Ctrl+C disarms.
+
   coach       HG-DAgger intervention harness. Policy flies; press H the
               instant it looks wrong (human takes the proven MANUAL stick);
               press T to return control. Every telem row is tagged with
@@ -88,6 +92,8 @@ imported, so the values under test are the ones the live planner would use:
   python tools/tune_flight.py acquire --seconds 8
   python tools/tune_flight.py manual --seconds 0
   python tools/tune_flight.py assist --seconds 30
+  python tools/tune_flight.py policy              # autonomous, no human input
+  python tools/tune_flight.py policy --panel
   python tools/tune_flight.py pilot
   python tools/tune_flight.py fly                 # stick only, no vision/assist
   python tools/tune_flight.py acro                # rate mode, no angle limits
@@ -512,6 +518,14 @@ def build_parser() -> argparse.ArgumentParser:
              'misses, under frames/run_<timestamp>/ for labelling',
     )
 
+    p_policy = sub.add_parser(
+        'policy',
+        help='autonomous policy flyer — no gamepad, no H/T (timed path)',
+    )
+    common(p_policy, 0.0)
+    from tools.run_policy import add_policy_flags
+    add_policy_flags(p_policy)
+
     p_pilot = sub.add_parser(
         'pilot',
         help='manual-first: T=auto on LOCK, H=human again (YOLO stays on)',
@@ -751,7 +765,7 @@ def export_gain_overrides(args) -> dict:
     if getattr(args, 'mode', None) in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive',
             'yaw-align', 'authority', 'manual', 'assist', 'coach',
-            'pilot', 'fly',
+            'policy', 'pilot', 'fly',
     ) or (
         getattr(args, 'mode', None) == 'localize'
         and bool(getattr(args, 'teleop', False))
@@ -759,7 +773,7 @@ def export_gain_overrides(args) -> dict:
         os.environ['TAKEOFF_DURATION_S'] = '0'
         applied['TAKEOFF_DURATION_S'] = 0.0
     if getattr(args, 'mode', None) in (
-            'acquire', 'manual', 'assist', 'coach', 'pilot', 'fly',
+            'acquire', 'manual', 'assist', 'coach', 'policy', 'pilot', 'fly',
     ):
         os.environ.setdefault('CRASH_USE_SIM_ODOMETRY', '0')
         applied.setdefault('CRASH_USE_SIM_ODOMETRY', 0.0)
@@ -768,6 +782,9 @@ def export_gain_overrides(args) -> dict:
         if not bool(getattr(args, 'pure', False)):
             os.environ['FLIGHT_MODE'] = 'assist'
             applied['FLIGHT_MODE'] = 'assist'
+    if getattr(args, 'mode', None) == 'policy':
+        from tools.run_policy import apply_flight_env
+        applied.update(apply_flight_env(args))
     if getattr(args, 'mode', None) == 'coach':
         which = str(getattr(args, 'planner', 'policy') or 'policy')
         os.environ['FLIGHT_MODE'] = which
@@ -7063,7 +7080,7 @@ def main() -> int:
         and args.mode in (
             'hover', 'step', 'lean-hover', 'crawl', 'drive', 'yaw-align',
             'authority', 'climb', 'acquire', 'manual', 'assist', 'coach',
-            'pilot', 'acro',
+            'policy', 'pilot', 'acro',
         )
     ) or (args.mode == 'localize' and bool(getattr(args, 'teleop', False))):
         _prewarm_yolo()
@@ -7093,6 +7110,9 @@ def main() -> int:
         return run_assist(args)
     if args.mode == 'coach':
         return run_coach(args)
+    if args.mode == 'policy':
+        from tools.run_policy import run_from_args
+        return run_from_args(args, prewarm=False)
     if args.mode in ('pilot', 'fly', 'acro'):
         return run_pilot(args)
     if args.mode == 'practice':

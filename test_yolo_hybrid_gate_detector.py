@@ -410,6 +410,21 @@ class HybridDetectorTests(unittest.TestCase):
                 self.config,
             )
 
+    def test_roboflow_project_class_name_is_accepted(self):
+        model = _FakeModel(
+            [[(10, 20, 110, 120, 0.8, 1)]],
+            names={0: "0", 1: "AIGP-8keypoints"},
+        )
+
+        detections = detect_gates_yolo(
+            np.zeros((180, 320, 3), dtype=np.uint8),
+            model,
+            self.config,
+        )
+
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(detections[0].class_id, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

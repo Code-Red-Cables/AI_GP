@@ -1,1382 +1,783 @@
     0.001  BOOT                            127.0.0.1:14550
-    0.049  HEARTBEAT                       system=1
-    0.050  VISION                          disabled
-    0.051  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.054  EKF                             imu_only
-    0.059  PLANNER                         assist_image mode=assist
-    0.087  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.120  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.155  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.189  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.226  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.260  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.294  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.329  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.364  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.400  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.433  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.469  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.504  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.538  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.572  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.608  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.643  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.678  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.712  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.746  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.782  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.817  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.851  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.886  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.922  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.956  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    0.991  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.025  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.062  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.096  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.129  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.164  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.200  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.235  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.269  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.303  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.339  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.374  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.409  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.443  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.480  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.513  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.548  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.583  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.618  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.652  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.687  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.721  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.757  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.793  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.826  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.861  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.896  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.931  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    1.966  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.000  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.035  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.070  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.106  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.140  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.175  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.209  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.244  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.278  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.315  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.349  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.384  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.417  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.453  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.489  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-    2.522  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-   25.435  GATE_PASSED                     gate=1  last_gate_time=1.232s
-   31.451  GATE_PASSED                     gate=2  last_gate_time=2.443s
-   35.462  GATE_PASSED                     gate=3  last_gate_time=3.257s
-   42.981  GATE_PASSED                     gate=4  last_gate_time=4.780s
-   51.755  GATE_PASSED                     gate=5  last_gate_time=6.502s
-   53.076  COLLISION                       Environment  threat=2  impulse=9.84kg·m/s
-   59.481  COLLISION                       Gate  threat=2  impulse=8.81kg·m/s
-   60.070  SIM_RESET                       pilot_pad_y
-   61.083  COLLISION                       Environment  threat=2  impulse=5.69kg·m/s
-   62.232  COLLISION                       Environment  threat=1  impulse=0.04kg·m/s
-   62.266  COLLISION                       Environment  threat=1  impulse=0.52kg·m/s
-   62.337  COLLISION                       Environment  threat=1  impulse=0.07kg·m/s
-   62.373  COLLISION                       Environment  threat=1  impulse=0.11kg·m/s
-   62.413  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-   84.759  COLLISION                       Gate  threat=1  impulse=0.45kg·m/s
-   84.794  COLLISION                       Gate  threat=2  impulse=11.46kg·m/s
-   85.087  GATE_PASSED                     gate=1  last_gate_time=1.210s
-   85.521  SIM_RESET                       pilot_pad_y
-   86.291  COLLISION                       Environment  threat=2  impulse=2.52kg·m/s
-   86.326  COLLISION                       Environment  threat=2  impulse=1.78kg·m/s
-   86.394  COLLISION                       Environment  threat=1  impulse=0.26kg·m/s
-   86.430  COLLISION                       Environment  threat=1  impulse=0.18kg·m/s
-   87.896  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  110.656  GATE_PASSED                     gate=1  last_gate_time=1.222s
-  117.923  GATE_PASSED                     gate=2  last_gate_time=2.678s
-  122.186  GATE_PASSED                     gate=3  last_gate_time=3.533s
-  127.702  GATE_PASSED                     gate=4  last_gate_time=4.630s
-  135.724  GATE_PASSED                     gate=5  last_gate_time=6.248s
-  137.469  COLLISION                       Environment  threat=1  impulse=0.38kg·m/s
-  137.504  COLLISION                       Environment  threat=2  impulse=3.32kg·m/s
-  147.290  SIM_RESET                       pilot_pad_y
-  147.391  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
-  147.427  COLLISION                       Environment  threat=2  impulse=2.72kg·m/s
-  147.427  COLLISION                       Gate  threat=2  impulse=8.40kg·m/s
-  147.462  COLLISION                       Environment  threat=1  impulse=0.60kg·m/s
-  149.663  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  172.815  GATE_PASSED                     gate=1  last_gate_time=1.321s
-  178.836  GATE_PASSED                     gate=2  last_gate_time=2.502s
-  182.097  GATE_PASSED                     gate=3  last_gate_time=3.183s
-  186.609  GATE_PASSED                     gate=4  last_gate_time=4.053s
-  192.876  GATE_PASSED                     gate=5  last_gate_time=5.318s
-  199.643  GATE_PASSED                     gate=6  last_gate_time=6.675s
-  204.908  GATE_PASSED                     gate=7  last_gate_time=7.721s
-  212.928  GATE_PASSED                     gate=8  last_gate_time=9.319s
-  217.191  GATE_PASSED                     gate=9  last_gate_time=10.197s
-  221.968  COLLISION                       Gate  threat=2  impulse=4.45kg·m/s
-  222.204  GATE_PASSED                     gate=10  last_gate_time=11.168s
-  228.720  GATE_PASSED                     gate=11  last_gate_time=12.499s
-  234.989  GATE_PASSED                     gate=12  last_gate_time=13.754s
-  241.504  GATE_PASSED                     gate=13  last_gate_time=15.064s
-  242.301  COLLISION                       Environment  threat=1  impulse=0.04kg·m/s
-  242.335  COLLISION                       Environment  threat=2  impulse=1.37kg·m/s
-  242.684  COLLISION                       Environment  threat=2  impulse=5.44kg·m/s
-  244.982  COLLISION                       Environment  threat=2  impulse=15.75kg·m/s
-  253.542  GATE_PASSED                     gate=14  last_gate_time=17.455s
-  259.056  GATE_PASSED                     gate=15  last_gate_time=18.552s
-  263.570  GATE_PASSED                     gate=16  last_gate_time=19.430s
-  267.613  COLLISION                       Gate  threat=2  impulse=3.15kg·m/s
-  267.828  GATE_PASSED                     gate=17  last_gate_time=20.297s
-  267.829  RACE_FINISH                     finish_time=20.297s
-  268.080  RACE_FINISH                     finish_time=20.297s
-  268.329  RACE_FINISH                     finish_time=20.297s
-  268.579  RACE_FINISH                     finish_time=20.297s
-  268.833  RACE_FINISH                     finish_time=20.297s
-  269.082  RACE_FINISH                     finish_time=20.297s
-  269.333  RACE_FINISH                     finish_time=20.297s
-  269.584  RACE_FINISH                     finish_time=20.297s
-  269.834  RACE_FINISH                     finish_time=20.297s
-  270.085  RACE_FINISH                     finish_time=20.297s
-  270.335  RACE_FINISH                     finish_time=20.297s
-  270.585  RACE_FINISH                     finish_time=20.297s
-  270.836  RACE_FINISH                     finish_time=20.297s
-  271.086  RACE_FINISH                     finish_time=20.297s
-  271.337  RACE_FINISH                     finish_time=20.297s
-  271.590  RACE_FINISH                     finish_time=20.297s
-  271.839  RACE_FINISH                     finish_time=20.297s
-  272.091  RACE_FINISH                     finish_time=20.297s
-  272.341  RACE_FINISH                     finish_time=20.297s
-  272.592  RACE_FINISH                     finish_time=20.297s
-  272.842  RACE_FINISH                     finish_time=20.297s
-  273.093  RACE_FINISH                     finish_time=20.297s
-  273.344  RACE_FINISH                     finish_time=20.297s
-  273.595  RACE_FINISH                     finish_time=20.297s
-  273.845  RACE_FINISH                     finish_time=20.297s
-  274.096  RACE_FINISH                     finish_time=20.297s
-  274.346  RACE_FINISH                     finish_time=20.297s
-  274.597  RACE_FINISH                     finish_time=20.297s
-  274.847  RACE_FINISH                     finish_time=20.297s
-  275.098  RACE_FINISH                     finish_time=20.297s
-  275.348  RACE_FINISH                     finish_time=20.297s
-  275.600  RACE_FINISH                     finish_time=20.297s
-  275.851  RACE_FINISH                     finish_time=20.297s
-  276.101  RACE_FINISH                     finish_time=20.297s
-  276.351  RACE_FINISH                     finish_time=20.297s
-  276.602  RACE_FINISH                     finish_time=20.297s
-  276.851  RACE_FINISH                     finish_time=20.297s
-  277.103  RACE_FINISH                     finish_time=20.297s
-  277.354  RACE_FINISH                     finish_time=20.297s
-  277.574  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  282.422  SIM_RESET                       pilot_pad_y
-  307.933  GATE_PASSED                     gate=1  last_gate_time=1.312s
-  314.197  GATE_PASSED                     gate=2  last_gate_time=2.563s
-  318.027  COLLISION                       Gate  threat=2  impulse=6.41kg·m/s
-  318.208  GATE_PASSED                     gate=3  last_gate_time=3.356s
-  323.561  COLLISION                       Gate  threat=2  impulse=5.02kg·m/s
-  323.597  COLLISION                       Gate  threat=2  impulse=1.22kg·m/s
-  324.052  SIM_RESET                       pilot_pad_y
-  326.387  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  349.035  GATE_PASSED                     gate=1  last_gate_time=1.190s
-  355.550  GATE_PASSED                     gate=2  last_gate_time=2.510s
-  360.060  GATE_PASSED                     gate=3  last_gate_time=3.408s
-  365.824  GATE_PASSED                     gate=4  last_gate_time=4.567s
-  371.591  GATE_PASSED                     gate=5  last_gate_time=5.698s
-  378.357  GATE_PASSED                     gate=6  last_gate_time=7.056s
-  382.620  GATE_PASSED                     gate=7  last_gate_time=7.936s
-  386.266  COLLISION                       Environment  threat=2  impulse=4.42kg·m/s
-  386.368  COLLISION                       Environment  threat=2  impulse=1.41kg·m/s
-  391.891  GATE_PASSED                     gate=8  last_gate_time=9.757s
-  396.401  GATE_PASSED                     gate=9  last_gate_time=10.668s
-  400.664  GATE_PASSED                     gate=10  last_gate_time=11.550s
-  404.423  GATE_PASSED                     gate=11  last_gate_time=12.258s
-  409.434  GATE_PASSED                     gate=12  last_gate_time=13.304s
-  410.497  COLLISION                       Environment  threat=2  impulse=1.73kg·m/s
-  410.566  COLLISION                       Environment  threat=1  impulse=0.77kg·m/s
-  410.671  COLLISION                       Environment  threat=1  impulse=0.14kg·m/s
-  410.705  COLLISION                       Environment  threat=1  impulse=0.03kg·m/s
-  417.959  GATE_PASSED                     gate=13  last_gate_time=15.008s
-  423.725  GATE_PASSED                     gate=14  last_gate_time=16.154s
-  428.738  GATE_PASSED                     gate=15  last_gate_time=17.132s
-  435.216  COLLISION                       Gate  threat=1  impulse=0.02kg·m/s
-  436.052  COLLISION                       Environment  threat=2  impulse=3.04kg·m/s
-  436.157  COLLISION                       Environment  threat=2  impulse=3.31kg·m/s
-  436.504  COLLISION                       Environment  threat=1  impulse=0.28kg·m/s
-  436.539  COLLISION                       Environment  threat=2  impulse=3.62kg·m/s
-  437.069  SIM_RESET                       pilot_pad_y
-  439.220  COLLISION                       Environment  threat=2  impulse=1.81kg·m/s
-  439.288  COLLISION                       Environment  threat=1  impulse=0.62kg·m/s
-  439.400  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  462.322  GATE_PASSED                     gate=1  last_gate_time=1.261s
-  468.088  GATE_PASSED                     gate=2  last_gate_time=2.405s
-  471.846  GATE_PASSED                     gate=3  last_gate_time=3.146s
-  476.091  COLLISION                       Gate  threat=1  impulse=0.12kg·m/s
-  476.126  COLLISION                       Gate  threat=2  impulse=10.31kg·m/s
-  476.787  COLLISION                       Gate  threat=2  impulse=1.03kg·m/s
-  476.891  COLLISION                       Gate  threat=1  impulse=0.18kg·m/s
-  476.927  COLLISION                       Gate  threat=1  impulse=0.30kg·m/s
-  476.961  COLLISION                       Gate  threat=1  impulse=0.24kg·m/s
-  476.996  COLLISION                       Gate  threat=1  impulse=0.20kg·m/s
-  477.029  COLLISION                       Gate  threat=1  impulse=0.17kg·m/s
-  477.066  COLLISION                       Gate  threat=1  impulse=0.16kg·m/s
-  477.100  COLLISION                       Gate  threat=1  impulse=0.11kg·m/s
-  477.134  COLLISION                       Gate  threat=1  impulse=0.11kg·m/s
-  477.168  COLLISION                       Gate  threat=1  impulse=0.12kg·m/s
-  477.204  COLLISION                       Gate  threat=1  impulse=0.12kg·m/s
-  477.240  COLLISION                       Gate  threat=1  impulse=0.13kg·m/s
-  477.273  COLLISION                       Gate  threat=1  impulse=0.16kg·m/s
-  477.308  COLLISION                       Gate  threat=1  impulse=0.17kg·m/s
-  477.344  COLLISION                       Gate  threat=1  impulse=0.17kg·m/s
-  477.379  COLLISION                       Gate  threat=1  impulse=0.16kg·m/s
-  477.413  COLLISION                       Gate  threat=1  impulse=0.15kg·m/s
-  477.449  COLLISION                       Gate  threat=1  impulse=0.12kg·m/s
-  477.466  SIM_RESET                       pilot_pad_y
-  477.483  COLLISION                       Gate  threat=1  impulse=0.09kg·m/s
-  477.518  COLLISION                       Gate  threat=1  impulse=0.17kg·m/s
-  479.786  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  498.188  SIM_RESET                       pilot_pad_y
-  523.477  GATE_PASSED                     gate=1  last_gate_time=1.293s
-  529.244  GATE_PASSED                     gate=2  last_gate_time=2.436s
-  532.751  GATE_PASSED                     gate=3  last_gate_time=3.128s
-  537.513  GATE_PASSED                     gate=4  last_gate_time=4.079s
-  544.030  GATE_PASSED                     gate=5  last_gate_time=5.372s
-  550.798  GATE_PASSED                     gate=6  last_gate_time=6.748s
-  556.315  GATE_PASSED                     gate=7  last_gate_time=7.817s
-  564.084  GATE_PASSED                     gate=8  last_gate_time=9.400s
-  568.344  GATE_PASSED                     gate=9  last_gate_time=10.221s
-  572.608  GATE_PASSED                     gate=10  last_gate_time=11.084s
-  576.367  GATE_PASSED                     gate=11  last_gate_time=11.821s
-  581.513  COLLISION                       Gate  threat=2  impulse=7.76kg·m/s
-  581.548  COLLISION                       Gate  threat=2  impulse=3.06kg·m/s
-  583.219  COLLISION                       Environment  threat=2  impulse=4.58kg·m/s
-  583.254  COLLISION                       Environment  threat=2  impulse=3.50kg·m/s
-  587.894  GATE_PASSED                     gate=12  last_gate_time=14.147s
-  588.930  COLLISION                       Environment  threat=1  impulse=0.31kg·m/s
-  588.964  COLLISION                       Environment  threat=1  impulse=0.11kg·m/s
-  588.998  COLLISION                       Environment  threat=1  impulse=0.03kg·m/s
-  589.033  COLLISION                       Environment  threat=1  impulse=0.04kg·m/s
-  589.069  COLLISION                       Environment  threat=1  impulse=0.05kg·m/s
-  589.103  COLLISION                       Environment  threat=1  impulse=0.05kg·m/s
-  589.137  COLLISION                       Environment  threat=1  impulse=0.04kg·m/s
-  589.174  COLLISION                       Environment  threat=1  impulse=0.03kg·m/s
-  589.208  COLLISION                       Environment  threat=1  impulse=0.02kg·m/s
-  594.912  GATE_PASSED                     gate=13  last_gate_time=15.558s
-  603.184  GATE_PASSED                     gate=14  last_gate_time=17.196s
-  607.697  GATE_PASSED                     gate=15  last_gate_time=18.107s
-  611.907  COLLISION                       Gate  threat=2  impulse=8.07kg·m/s
-  611.942  COLLISION                       Gate  threat=1  impulse=0.13kg·m/s
-  613.597  SIM_RESET                       pilot_pad_y
-  615.917  GATE_PASSED                     gate=0  last_gate_time=-0.000s
-  638.785  GATE_PASSED                     gate=1  last_gate_time=1.243s
-  645.807  GATE_PASSED                     gate=2  last_gate_time=2.658s
-  649.314  GATE_PASSED                     gate=3  last_gate_time=3.373s
-  654.825  GATE_PASSED                     gate=4  last_gate_time=4.450s
-  661.088  GATE_PASSED                     gate=5  last_gate_time=5.731s
-  669.110  GATE_PASSED                     gate=6  last_gate_time=7.290s
-  674.126  GATE_PASSED                     gate=7  last_gate_time=8.295s
-  681.646  GATE_PASSED                     gate=8  last_gate_time=9.799s
-  685.908  GATE_PASSED                     gate=9  last_gate_time=10.669s
-  690.419  GATE_PASSED                     gate=10  last_gate_time=11.571s
-  694.428  GATE_PASSED                     gate=11  last_gate_time=12.378s
-  701.198  GATE_PASSED                     gate=12  last_gate_time=13.751s
-  706.963  GATE_PASSED                     gate=13  last_gate_time=14.872s
-  712.726  GATE_PASSED                     gate=14  last_gate_time=16.045s
-  716.739  GATE_PASSED                     gate=15  last_gate_time=16.824s
-  721.751  GATE_PASSED                     gate=16  last_gate_time=17.848s
-  727.513  GATE_PASSED                     gate=17  last_gate_time=18.979s
-  727.513  RACE_FINISH                     finish_time=18.979s
-  727.764  RACE_FINISH                     finish_time=18.979s
-  728.014  RACE_FINISH                     finish_time=18.979s
-  728.266  RACE_FINISH                     finish_time=18.979s
-  728.518  RACE_FINISH                     finish_time=18.979s
-  728.768  RACE_FINISH                     finish_time=18.979s
-  729.018  RACE_FINISH                     finish_time=18.979s
-  729.269  RACE_FINISH                     finish_time=18.979s
-  729.521  RACE_FINISH                     finish_time=18.979s
-  729.771  RACE_FINISH                     finish_time=18.979s
-  730.023  RACE_FINISH                     finish_time=18.979s
-  730.272  RACE_FINISH                     finish_time=18.979s
-  730.525  RACE_FINISH                     finish_time=18.979s
-  730.774  RACE_FINISH                     finish_time=18.979s
-  731.025  RACE_FINISH                     finish_time=18.979s
-  731.277  RACE_FINISH                     finish_time=18.979s
-  731.528  RACE_FINISH                     finish_time=18.979s
-  731.778  RACE_FINISH                     finish_time=18.979s
-  732.028  RACE_FINISH                     finish_time=18.979s
-  732.281  RACE_FINISH                     finish_time=18.979s
-  732.530  RACE_FINISH                     finish_time=18.979s
-  732.783  RACE_FINISH                     finish_time=18.979s
-  733.031  RACE_FINISH                     finish_time=18.979s
-  733.283  RACE_FINISH                     finish_time=18.979s
-  733.532  RACE_FINISH                     finish_time=18.979s
-  733.782  RACE_FINISH                     finish_time=18.979s
-  734.032  RACE_FINISH                     finish_time=18.979s
-  734.284  RACE_FINISH                     finish_time=18.979s
-  734.534  RACE_FINISH                     finish_time=18.979s
-  734.785  RACE_FINISH                     finish_time=18.979s
-  735.035  RACE_FINISH                     finish_time=18.979s
-  735.287  RACE_FINISH                     finish_time=18.979s
-  735.537  RACE_FINISH                     finish_time=18.979s
-  735.789  RACE_FINISH                     finish_time=18.979s
-  736.038  RACE_FINISH                     finish_time=18.979s
-  736.289  RACE_FINISH                     finish_time=18.979s
-  736.542  RACE_FINISH                     finish_time=18.979s
-  736.792  RACE_FINISH                     finish_time=18.979s
-  737.044  RACE_FINISH                     finish_time=18.979s
-  737.293  RACE_FINISH                     finish_time=18.979s
-  737.544  RACE_FINISH                     finish_time=18.979s
-  737.794  RACE_FINISH                     finish_time=18.979s
-  738.046  RACE_FINISH                     finish_time=18.979s
-  738.297  RACE_FINISH                     finish_time=18.979s
-  738.548  RACE_FINISH                     finish_time=18.979s
-  738.797  RACE_FINISH                     finish_time=18.979s
-  739.048  RACE_FINISH                     finish_time=18.979s
-  739.298  RACE_FINISH                     finish_time=18.979s
-  739.549  RACE_FINISH                     finish_time=18.979s
-  739.800  RACE_FINISH                     finish_time=18.979s
-  740.050  RACE_FINISH                     finish_time=18.979s
-  740.301  RACE_FINISH                     finish_time=18.979s
-  740.552  RACE_FINISH                     finish_time=18.979s
-  740.801  RACE_FINISH                     finish_time=18.979s
-  741.052  RACE_FINISH                     finish_time=18.979s
-  741.304  RACE_FINISH                     finish_time=18.979s
-  741.554  RACE_FINISH                     finish_time=18.979s
-  741.806  RACE_FINISH                     finish_time=18.979s
-  742.056  RACE_FINISH                     finish_time=18.979s
-  742.308  RACE_FINISH                     finish_time=18.979s
-  742.558  RACE_FINISH                     finish_time=18.979s
-  742.808  RACE_FINISH                     finish_time=18.979s
-  743.060  RACE_FINISH                     finish_time=18.979s
-  743.312  RACE_FINISH                     finish_time=18.979s
-  743.561  RACE_FINISH                     finish_time=18.979s
-  743.811  RACE_FINISH                     finish_time=18.979s
-  744.062  RACE_FINISH                     finish_time=18.979s
-  744.314  RACE_FINISH                     finish_time=18.979s
-  744.564  RACE_FINISH                     finish_time=18.979s
-  744.815  RACE_FINISH                     finish_time=18.979s
-  745.064  RACE_FINISH                     finish_time=18.979s
-  745.315  RACE_FINISH                     finish_time=18.979s
-  745.566  RACE_FINISH                     finish_time=18.979s
-  745.817  RACE_FINISH                     finish_time=18.979s
-  746.069  RACE_FINISH                     finish_time=18.979s
-  746.318  RACE_FINISH                     finish_time=18.979s
-  746.569  RACE_FINISH                     finish_time=18.979s
-  746.819  RACE_FINISH                     finish_time=18.979s
-  747.071  RACE_FINISH                     finish_time=18.979s
-  747.320  RACE_FINISH                     finish_time=18.979s
-  747.571  RACE_FINISH                     finish_time=18.979s
-  747.821  RACE_FINISH                     finish_time=18.979s
-  748.073  RACE_FINISH                     finish_time=18.979s
-  748.324  RACE_FINISH                     finish_time=18.979s
-  748.572  RACE_FINISH                     finish_time=18.979s
-  748.823  RACE_FINISH                     finish_time=18.979s
-  749.074  RACE_FINISH                     finish_time=18.979s
-  749.325  RACE_FINISH                     finish_time=18.979s
-  749.575  RACE_FINISH                     finish_time=18.979s
-  749.826  RACE_FINISH                     finish_time=18.979s
-  750.077  RACE_FINISH                     finish_time=18.979s
-  750.327  RACE_FINISH                     finish_time=18.979s
-  750.578  RACE_FINISH                     finish_time=18.979s
-  750.828  RACE_FINISH                     finish_time=18.979s
-  751.080  RACE_FINISH                     finish_time=18.979s
-  751.329  RACE_FINISH                     finish_time=18.979s
-  751.581  RACE_FINISH                     finish_time=18.979s
-  751.831  RACE_FINISH                     finish_time=18.979s
-  752.081  RACE_FINISH                     finish_time=18.979s
-  752.333  RACE_FINISH                     finish_time=18.979s
-  752.583  RACE_FINISH                     finish_time=18.979s
-  752.833  RACE_FINISH                     finish_time=18.979s
-  753.085  RACE_FINISH                     finish_time=18.979s
-  753.334  RACE_FINISH                     finish_time=18.979s
-  753.585  RACE_FINISH                     finish_time=18.979s
-  753.836  RACE_FINISH                     finish_time=18.979s
-  754.087  RACE_FINISH                     finish_time=18.979s
-  754.338  RACE_FINISH                     finish_time=18.979s
-  754.587  RACE_FINISH                     finish_time=18.979s
-  754.840  RACE_FINISH                     finish_time=18.979s
-  755.089  RACE_FINISH                     finish_time=18.979s
-  755.339  RACE_FINISH                     finish_time=18.979s
-  755.591  RACE_FINISH                     finish_time=18.979s
-  755.841  RACE_FINISH                     finish_time=18.979s
-  756.093  RACE_FINISH                     finish_time=18.979s
-  756.343  RACE_FINISH                     finish_time=18.979s
-  756.593  RACE_FINISH                     finish_time=18.979s
-  756.844  RACE_FINISH                     finish_time=18.979s
-  757.095  RACE_FINISH                     finish_time=18.979s
-  757.347  RACE_FINISH                     finish_time=18.979s
-  757.597  RACE_FINISH                     finish_time=18.979s
-  757.846  RACE_FINISH                     finish_time=18.979s
-  758.098  RACE_FINISH                     finish_time=18.979s
-  758.349  RACE_FINISH                     finish_time=18.979s
-  758.600  RACE_FINISH                     finish_time=18.979s
-  758.850  RACE_FINISH                     finish_time=18.979s
-  759.100  RACE_FINISH                     finish_time=18.979s
-  759.350  RACE_FINISH                     finish_time=18.979s
-  759.602  RACE_FINISH                     finish_time=18.979s
-  759.852  RACE_FINISH                     finish_time=18.979s
-  760.104  RACE_FINISH                     finish_time=18.979s
-  760.355  RACE_FINISH                     finish_time=18.979s
-  760.604  RACE_FINISH                     finish_time=18.979s
-  760.856  RACE_FINISH                     finish_time=18.979s
-  761.105  RACE_FINISH                     finish_time=18.979s
-  761.356  RACE_FINISH                     finish_time=18.979s
-  761.606  RACE_FINISH                     finish_time=18.979s
-  761.857  RACE_FINISH                     finish_time=18.979s
-  762.109  RACE_FINISH                     finish_time=18.979s
-  762.359  RACE_FINISH                     finish_time=18.979s
-  762.608  RACE_FINISH                     finish_time=18.979s
-  762.861  RACE_FINISH                     finish_time=18.979s
-  763.111  RACE_FINISH                     finish_time=18.979s
-  763.362  RACE_FINISH                     finish_time=18.979s
-  763.613  RACE_FINISH                     finish_time=18.979s
-  763.864  RACE_FINISH                     finish_time=18.979s
-  764.113  RACE_FINISH                     finish_time=18.979s
-  764.364  RACE_FINISH                     finish_time=18.979s
-  764.617  RACE_FINISH                     finish_time=18.979s
-  764.867  RACE_FINISH                     finish_time=18.979s
-  765.117  RACE_FINISH                     finish_time=18.979s
-  765.368  RACE_FINISH                     finish_time=18.979s
-  765.618  RACE_FINISH                     finish_time=18.979s
-  765.867  RACE_FINISH                     finish_time=18.979s
-  766.118  RACE_FINISH                     finish_time=18.979s
-  766.369  RACE_FINISH                     finish_time=18.979s
-  766.620  RACE_FINISH                     finish_time=18.979s
-  766.871  RACE_FINISH                     finish_time=18.979s
-  767.122  RACE_FINISH                     finish_time=18.979s
-  767.372  RACE_FINISH                     finish_time=18.979s
-  767.623  RACE_FINISH                     finish_time=18.979s
-  767.874  RACE_FINISH                     finish_time=18.979s
-  768.124  RACE_FINISH                     finish_time=18.979s
-  768.374  RACE_FINISH                     finish_time=18.979s
-  768.628  RACE_FINISH                     finish_time=18.979s
-  768.877  RACE_FINISH                     finish_time=18.979s
-  769.128  RACE_FINISH                     finish_time=18.979s
-  769.379  RACE_FINISH                     finish_time=18.979s
-  769.629  RACE_FINISH                     finish_time=18.979s
-  769.880  RACE_FINISH                     finish_time=18.979s
-  770.132  RACE_FINISH                     finish_time=18.979s
-  770.382  RACE_FINISH                     finish_time=18.979s
-  770.633  RACE_FINISH                     finish_time=18.979s
-  770.883  RACE_FINISH                     finish_time=18.979s
-  771.134  RACE_FINISH                     finish_time=18.979s
-  771.384  RACE_FINISH                     finish_time=18.979s
-  771.635  RACE_FINISH                     finish_time=18.979s
-  771.887  RACE_FINISH                     finish_time=18.979s
-  772.136  RACE_FINISH                     finish_time=18.979s
-  772.387  RACE_FINISH                     finish_time=18.979s
-  772.638  RACE_FINISH                     finish_time=18.979s
-  772.888  RACE_FINISH                     finish_time=18.979s
-  773.139  RACE_FINISH                     finish_time=18.979s
-  773.391  RACE_FINISH                     finish_time=18.979s
-  773.642  RACE_FINISH                     finish_time=18.979s
-  773.891  RACE_FINISH                     finish_time=18.979s
-  774.142  RACE_FINISH                     finish_time=18.979s
-  774.393  RACE_FINISH                     finish_time=18.979s
-  774.643  RACE_FINISH                     finish_time=18.979s
-  774.895  RACE_FINISH                     finish_time=18.979s
-  775.145  RACE_FINISH                     finish_time=18.979s
-  775.396  RACE_FINISH                     finish_time=18.979s
-  775.648  RACE_FINISH                     finish_time=18.979s
-  775.897  RACE_FINISH                     finish_time=18.979s
-  776.148  RACE_FINISH                     finish_time=18.979s
-  776.398  RACE_FINISH                     finish_time=18.979s
-  776.649  RACE_FINISH                     finish_time=18.979s
-  776.900  RACE_FINISH                     finish_time=18.979s
-  777.151  RACE_FINISH                     finish_time=18.979s
-  777.401  RACE_FINISH                     finish_time=18.979s
-  777.652  RACE_FINISH                     finish_time=18.979s
-  777.902  RACE_FINISH                     finish_time=18.979s
-  778.153  RACE_FINISH                     finish_time=18.979s
-  778.403  RACE_FINISH                     finish_time=18.979s
-  778.654  RACE_FINISH                     finish_time=18.979s
-  778.904  RACE_FINISH                     finish_time=18.979s
-  779.155  RACE_FINISH                     finish_time=18.979s
-  779.405  RACE_FINISH                     finish_time=18.979s
-  779.656  RACE_FINISH                     finish_time=18.979s
-  779.907  RACE_FINISH                     finish_time=18.979s
-  780.158  RACE_FINISH                     finish_time=18.979s
-  780.407  RACE_FINISH                     finish_time=18.979s
-  780.658  RACE_FINISH                     finish_time=18.979s
-  780.910  RACE_FINISH                     finish_time=18.979s
-  781.159  RACE_FINISH                     finish_time=18.979s
-  781.410  RACE_FINISH                     finish_time=18.979s
-  781.660  RACE_FINISH                     finish_time=18.979s
-  781.912  RACE_FINISH                     finish_time=18.979s
-  782.164  RACE_FINISH                     finish_time=18.979s
-  782.413  RACE_FINISH                     finish_time=18.979s
-  782.665  RACE_FINISH                     finish_time=18.979s
-  782.915  RACE_FINISH                     finish_time=18.979s
-  783.165  RACE_FINISH                     finish_time=18.979s
-  783.416  RACE_FINISH                     finish_time=18.979s
-  783.666  RACE_FINISH                     finish_time=18.979s
-  783.918  RACE_FINISH                     finish_time=18.979s
-  784.168  RACE_FINISH                     finish_time=18.979s
-  784.419  RACE_FINISH                     finish_time=18.979s
-  784.669  RACE_FINISH                     finish_time=18.979s
-  784.919  RACE_FINISH                     finish_time=18.979s
-  785.170  RACE_FINISH                     finish_time=18.979s
-  785.422  RACE_FINISH                     finish_time=18.979s
-  785.671  RACE_FINISH                     finish_time=18.979s
-  785.923  RACE_FINISH                     finish_time=18.979s
-  786.175  RACE_FINISH                     finish_time=18.979s
-  786.425  RACE_FINISH                     finish_time=18.979s
-  786.675  RACE_FINISH                     finish_time=18.979s
-  786.926  RACE_FINISH                     finish_time=18.979s
-  787.177  RACE_FINISH                     finish_time=18.979s
-  787.428  RACE_FINISH                     finish_time=18.979s
-  787.678  RACE_FINISH                     finish_time=18.979s
-  787.930  RACE_FINISH                     finish_time=18.979s
-  788.180  RACE_FINISH                     finish_time=18.979s
-  788.431  RACE_FINISH                     finish_time=18.979s
-  788.681  RACE_FINISH                     finish_time=18.979s
-  788.933  RACE_FINISH                     finish_time=18.979s
-  789.185  RACE_FINISH                     finish_time=18.979s
-  789.434  RACE_FINISH                     finish_time=18.979s
-  789.684  RACE_FINISH                     finish_time=18.979s
-  789.938  RACE_FINISH                     finish_time=18.979s
-  790.187  RACE_FINISH                     finish_time=18.979s
-  790.438  RACE_FINISH                     finish_time=18.979s
-  790.688  RACE_FINISH                     finish_time=18.979s
-  790.939  RACE_FINISH                     finish_time=18.979s
-  791.190  RACE_FINISH                     finish_time=18.979s
-  791.440  RACE_FINISH                     finish_time=18.979s
-  791.690  RACE_FINISH                     finish_time=18.979s
-  791.940  RACE_FINISH                     finish_time=18.979s
-  792.192  RACE_FINISH                     finish_time=18.979s
-  792.442  RACE_FINISH                     finish_time=18.979s
-  792.695  RACE_FINISH                     finish_time=18.979s
-  792.945  RACE_FINISH                     finish_time=18.979s
-  793.196  RACE_FINISH                     finish_time=18.979s
-  793.446  RACE_FINISH                     finish_time=18.979s
-  793.697  RACE_FINISH                     finish_time=18.979s
-  793.947  RACE_FINISH                     finish_time=18.979s
-  794.199  RACE_FINISH                     finish_time=18.979s
-  794.448  RACE_FINISH                     finish_time=18.979s
-  794.699  RACE_FINISH                     finish_time=18.979s
-  794.949  RACE_FINISH                     finish_time=18.979s
-  795.200  RACE_FINISH                     finish_time=18.979s
-  795.451  RACE_FINISH                     finish_time=18.979s
-  795.701  RACE_FINISH                     finish_time=18.979s
-  795.952  RACE_FINISH                     finish_time=18.979s
-  796.202  RACE_FINISH                     finish_time=18.979s
-  796.452  RACE_FINISH                     finish_time=18.979s
-  796.702  RACE_FINISH                     finish_time=18.979s
-  796.953  RACE_FINISH                     finish_time=18.979s
-  797.205  RACE_FINISH                     finish_time=18.979s
-  797.454  RACE_FINISH                     finish_time=18.979s
-  797.704  RACE_FINISH                     finish_time=18.979s
-  797.956  RACE_FINISH                     finish_time=18.979s
-  798.206  RACE_FINISH                     finish_time=18.979s
-  798.456  RACE_FINISH                     finish_time=18.979s
-  798.707  RACE_FINISH                     finish_time=18.979s
-  798.957  RACE_FINISH                     finish_time=18.979s
-  799.210  RACE_FINISH                     finish_time=18.979s
-  799.461  RACE_FINISH                     finish_time=18.979s
-  799.712  RACE_FINISH                     finish_time=18.979s
-  799.962  RACE_FINISH                     finish_time=18.979s
-  800.213  RACE_FINISH                     finish_time=18.979s
-  800.466  RACE_FINISH                     finish_time=18.979s
-  800.714  RACE_FINISH                     finish_time=18.979s
-  800.965  RACE_FINISH                     finish_time=18.979s
-  801.216  RACE_FINISH                     finish_time=18.979s
-  801.466  RACE_FINISH                     finish_time=18.979s
-  801.718  RACE_FINISH                     finish_time=18.979s
-  801.968  RACE_FINISH                     finish_time=18.979s
-  802.219  RACE_FINISH                     finish_time=18.979s
-  802.469  RACE_FINISH                     finish_time=18.979s
-  802.720  RACE_FINISH                     finish_time=18.979s
-  802.971  RACE_FINISH                     finish_time=18.979s
-  803.221  RACE_FINISH                     finish_time=18.979s
-  803.473  RACE_FINISH                     finish_time=18.979s
-  803.724  RACE_FINISH                     finish_time=18.979s
-  803.974  RACE_FINISH                     finish_time=18.979s
-  804.224  RACE_FINISH                     finish_time=18.979s
-  804.476  RACE_FINISH                     finish_time=18.979s
-  804.725  RACE_FINISH                     finish_time=18.979s
-  804.976  RACE_FINISH                     finish_time=18.979s
-  805.228  RACE_FINISH                     finish_time=18.979s
-  805.477  RACE_FINISH                     finish_time=18.979s
-  805.729  RACE_FINISH                     finish_time=18.979s
-  805.981  RACE_FINISH                     finish_time=18.979s
-  806.230  RACE_FINISH                     finish_time=18.979s
-  806.481  RACE_FINISH                     finish_time=18.979s
-  806.733  RACE_FINISH                     finish_time=18.979s
-  806.984  RACE_FINISH                     finish_time=18.979s
-  807.233  RACE_FINISH                     finish_time=18.979s
-  807.484  RACE_FINISH                     finish_time=18.979s
-  807.734  RACE_FINISH                     finish_time=18.979s
-  807.985  RACE_FINISH                     finish_time=18.979s
-  808.236  RACE_FINISH                     finish_time=18.979s
-  808.488  RACE_FINISH                     finish_time=18.979s
-  808.737  RACE_FINISH                     finish_time=18.979s
-  808.988  RACE_FINISH                     finish_time=18.979s
-  809.239  RACE_FINISH                     finish_time=18.979s
-  809.489  RACE_FINISH                     finish_time=18.979s
-  809.739  RACE_FINISH                     finish_time=18.979s
-  809.992  RACE_FINISH                     finish_time=18.979s
-  810.243  RACE_FINISH                     finish_time=18.979s
-  810.492  RACE_FINISH                     finish_time=18.979s
-  810.742  RACE_FINISH                     finish_time=18.979s
-  810.994  RACE_FINISH                     finish_time=18.979s
-  811.244  RACE_FINISH                     finish_time=18.979s
-  811.495  RACE_FINISH                     finish_time=18.979s
-  811.746  RACE_FINISH                     finish_time=18.979s
-  811.995  RACE_FINISH                     finish_time=18.979s
-  812.246  RACE_FINISH                     finish_time=18.979s
-  812.497  RACE_FINISH                     finish_time=18.979s
-  812.748  RACE_FINISH                     finish_time=18.979s
-  812.999  RACE_FINISH                     finish_time=18.979s
-  813.249  RACE_FINISH                     finish_time=18.979s
-  813.500  RACE_FINISH                     finish_time=18.979s
-  813.750  RACE_FINISH                     finish_time=18.979s
-  814.002  RACE_FINISH                     finish_time=18.979s
-  814.252  RACE_FINISH                     finish_time=18.979s
-  814.503  RACE_FINISH                     finish_time=18.979s
-  814.753  RACE_FINISH                     finish_time=18.979s
-  815.004  RACE_FINISH                     finish_time=18.979s
-  815.255  RACE_FINISH                     finish_time=18.979s
-  815.506  RACE_FINISH                     finish_time=18.979s
-  815.757  RACE_FINISH                     finish_time=18.979s
-  816.008  RACE_FINISH                     finish_time=18.979s
-  816.257  RACE_FINISH                     finish_time=18.979s
-  816.509  RACE_FINISH                     finish_time=18.979s
-  816.761  RACE_FINISH                     finish_time=18.979s
-  817.010  RACE_FINISH                     finish_time=18.979s
-  817.260  RACE_FINISH                     finish_time=18.979s
-  817.513  RACE_FINISH                     finish_time=18.979s
-  817.762  RACE_FINISH                     finish_time=18.979s
-  818.014  RACE_FINISH                     finish_time=18.979s
-  818.264  RACE_FINISH                     finish_time=18.979s
-  818.513  RACE_FINISH                     finish_time=18.979s
-  818.765  RACE_FINISH                     finish_time=18.979s
-  819.015  RACE_FINISH                     finish_time=18.979s
-  819.266  RACE_FINISH                     finish_time=18.979s
-  819.519  RACE_FINISH                     finish_time=18.979s
-  819.768  RACE_FINISH                     finish_time=18.979s
-  820.021  RACE_FINISH                     finish_time=18.979s
-  820.270  RACE_FINISH                     finish_time=18.979s
-  820.521  RACE_FINISH                     finish_time=18.979s
-  820.772  RACE_FINISH                     finish_time=18.979s
-  821.022  RACE_FINISH                     finish_time=18.979s
-  821.272  RACE_FINISH                     finish_time=18.979s
-  821.524  RACE_FINISH                     finish_time=18.979s
-  821.774  RACE_FINISH                     finish_time=18.979s
-  822.027  RACE_FINISH                     finish_time=18.979s
-  822.276  RACE_FINISH                     finish_time=18.979s
-  822.527  RACE_FINISH                     finish_time=18.979s
-  822.778  RACE_FINISH                     finish_time=18.979s
-  823.028  RACE_FINISH                     finish_time=18.979s
-  823.278  RACE_FINISH                     finish_time=18.979s
-  823.529  RACE_FINISH                     finish_time=18.979s
-  823.781  RACE_FINISH                     finish_time=18.979s
-  824.032  RACE_FINISH                     finish_time=18.979s
-  824.281  RACE_FINISH                     finish_time=18.979s
-  824.532  RACE_FINISH                     finish_time=18.979s
-  824.783  RACE_FINISH                     finish_time=18.979s
-  825.034  RACE_FINISH                     finish_time=18.979s
-  825.284  RACE_FINISH                     finish_time=18.979s
-  825.534  RACE_FINISH                     finish_time=18.979s
-  825.785  RACE_FINISH                     finish_time=18.979s
-  826.037  RACE_FINISH                     finish_time=18.979s
-  826.286  RACE_FINISH                     finish_time=18.979s
-  826.538  RACE_FINISH                     finish_time=18.979s
-  826.788  RACE_FINISH                     finish_time=18.979s
-  827.039  RACE_FINISH                     finish_time=18.979s
-  827.290  RACE_FINISH                     finish_time=18.979s
-  827.541  RACE_FINISH                     finish_time=18.979s
-  827.793  RACE_FINISH                     finish_time=18.979s
-  828.043  RACE_FINISH                     finish_time=18.979s
-  828.294  RACE_FINISH                     finish_time=18.979s
-  828.547  RACE_FINISH                     finish_time=18.979s
-  828.796  RACE_FINISH                     finish_time=18.979s
-  829.049  RACE_FINISH                     finish_time=18.979s
-  829.298  RACE_FINISH                     finish_time=18.979s
-  829.549  RACE_FINISH                     finish_time=18.979s
-  829.799  RACE_FINISH                     finish_time=18.979s
-  830.050  RACE_FINISH                     finish_time=18.979s
-  830.302  RACE_FINISH                     finish_time=18.979s
-  830.551  RACE_FINISH                     finish_time=18.979s
-  830.803  RACE_FINISH                     finish_time=18.979s
-  831.055  RACE_FINISH                     finish_time=18.979s
-  831.305  RACE_FINISH                     finish_time=18.979s
-  831.554  RACE_FINISH                     finish_time=18.979s
-  831.805  RACE_FINISH                     finish_time=18.979s
-  832.057  RACE_FINISH                     finish_time=18.979s
-  832.307  RACE_FINISH                     finish_time=18.979s
-  832.557  RACE_FINISH                     finish_time=18.979s
-  832.807  RACE_FINISH                     finish_time=18.979s
-  833.059  RACE_FINISH                     finish_time=18.979s
-  833.310  RACE_FINISH                     finish_time=18.979s
-  833.560  RACE_FINISH                     finish_time=18.979s
-  833.811  RACE_FINISH                     finish_time=18.979s
-  834.061  RACE_FINISH                     finish_time=18.979s
-  834.312  RACE_FINISH                     finish_time=18.979s
-  834.563  RACE_FINISH                     finish_time=18.979s
-  834.813  RACE_FINISH                     finish_time=18.979s
-  835.065  RACE_FINISH                     finish_time=18.979s
-  835.314  RACE_FINISH                     finish_time=18.979s
-  835.565  RACE_FINISH                     finish_time=18.979s
-  835.816  RACE_FINISH                     finish_time=18.979s
-  836.067  RACE_FINISH                     finish_time=18.979s
-  836.318  RACE_FINISH                     finish_time=18.979s
-  836.569  RACE_FINISH                     finish_time=18.979s
-  836.820  RACE_FINISH                     finish_time=18.979s
-  837.071  RACE_FINISH                     finish_time=18.979s
-  837.321  RACE_FINISH                     finish_time=18.979s
-  837.570  RACE_FINISH                     finish_time=18.979s
-  837.822  RACE_FINISH                     finish_time=18.979s
-  838.073  RACE_FINISH                     finish_time=18.979s
-  838.322  RACE_FINISH                     finish_time=18.979s
-  838.573  RACE_FINISH                     finish_time=18.979s
-  838.824  RACE_FINISH                     finish_time=18.979s
-  839.074  RACE_FINISH                     finish_time=18.979s
-  839.325  RACE_FINISH                     finish_time=18.979s
-  839.576  RACE_FINISH                     finish_time=18.979s
-  839.826  RACE_FINISH                     finish_time=18.979s
-  840.077  RACE_FINISH                     finish_time=18.979s
-  840.329  RACE_FINISH                     finish_time=18.979s
-  840.578  RACE_FINISH                     finish_time=18.979s
-  840.829  RACE_FINISH                     finish_time=18.979s
-  841.080  RACE_FINISH                     finish_time=18.979s
-  841.330  RACE_FINISH                     finish_time=18.979s
-  841.581  RACE_FINISH                     finish_time=18.979s
-  841.832  RACE_FINISH                     finish_time=18.979s
-  842.084  RACE_FINISH                     finish_time=18.979s
-  842.333  RACE_FINISH                     finish_time=18.979s
-  842.584  RACE_FINISH                     finish_time=18.979s
-  842.836  RACE_FINISH                     finish_time=18.979s
-  843.087  RACE_FINISH                     finish_time=18.979s
-  843.336  RACE_FINISH                     finish_time=18.979s
-  843.587  RACE_FINISH                     finish_time=18.979s
-  843.838  RACE_FINISH                     finish_time=18.979s
-  844.090  RACE_FINISH                     finish_time=18.979s
-  844.340  RACE_FINISH                     finish_time=18.979s
-  844.593  RACE_FINISH                     finish_time=18.979s
-  844.843  RACE_FINISH                     finish_time=18.979s
-  845.094  RACE_FINISH                     finish_time=18.979s
-  845.345  RACE_FINISH                     finish_time=18.979s
-  845.595  RACE_FINISH                     finish_time=18.979s
-  845.846  RACE_FINISH                     finish_time=18.979s
-  846.097  RACE_FINISH                     finish_time=18.979s
-  846.349  RACE_FINISH                     finish_time=18.979s
-  846.599  RACE_FINISH                     finish_time=18.979s
-  846.849  RACE_FINISH                     finish_time=18.979s
-  847.101  RACE_FINISH                     finish_time=18.979s
-  847.350  RACE_FINISH                     finish_time=18.979s
-  847.602  RACE_FINISH                     finish_time=18.979s
-  847.852  RACE_FINISH                     finish_time=18.979s
-  848.102  RACE_FINISH                     finish_time=18.979s
-  848.353  RACE_FINISH                     finish_time=18.979s
-  848.604  RACE_FINISH                     finish_time=18.979s
-  848.856  RACE_FINISH                     finish_time=18.979s
-  849.106  RACE_FINISH                     finish_time=18.979s
-  849.357  RACE_FINISH                     finish_time=18.979s
-  849.607  RACE_FINISH                     finish_time=18.979s
-  849.858  RACE_FINISH                     finish_time=18.979s
-  850.110  RACE_FINISH                     finish_time=18.979s
-  850.360  RACE_FINISH                     finish_time=18.979s
-  850.610  RACE_FINISH                     finish_time=18.979s
-  850.861  RACE_FINISH                     finish_time=18.979s
-  851.113  RACE_FINISH                     finish_time=18.979s
-  851.364  RACE_FINISH                     finish_time=18.979s
-  851.615  RACE_FINISH                     finish_time=18.979s
-  851.865  RACE_FINISH                     finish_time=18.979s
-  852.115  RACE_FINISH                     finish_time=18.979s
-  852.366  RACE_FINISH                     finish_time=18.979s
-  852.619  RACE_FINISH                     finish_time=18.979s
-  852.868  RACE_FINISH                     finish_time=18.979s
-  853.119  RACE_FINISH                     finish_time=18.979s
-  853.370  RACE_FINISH                     finish_time=18.979s
-  853.620  RACE_FINISH                     finish_time=18.979s
-  853.872  RACE_FINISH                     finish_time=18.979s
-  854.121  RACE_FINISH                     finish_time=18.979s
-  854.374  RACE_FINISH                     finish_time=18.979s
-  854.624  RACE_FINISH                     finish_time=18.979s
-  854.875  RACE_FINISH                     finish_time=18.979s
-  855.127  RACE_FINISH                     finish_time=18.979s
-  855.375  RACE_FINISH                     finish_time=18.979s
-  855.625  RACE_FINISH                     finish_time=18.979s
-  855.876  RACE_FINISH                     finish_time=18.979s
-  856.126  RACE_FINISH                     finish_time=18.979s
-  856.377  RACE_FINISH                     finish_time=18.979s
-  856.628  RACE_FINISH                     finish_time=18.979s
-  856.878  RACE_FINISH                     finish_time=18.979s
-  857.131  RACE_FINISH                     finish_time=18.979s
-  857.380  RACE_FINISH                     finish_time=18.979s
-  857.631  RACE_FINISH                     finish_time=18.979s
-  857.881  RACE_FINISH                     finish_time=18.979s
-  858.132  RACE_FINISH                     finish_time=18.979s
-  858.383  RACE_FINISH                     finish_time=18.979s
-  858.634  RACE_FINISH                     finish_time=18.979s
-  858.883  RACE_FINISH                     finish_time=18.979s
-  859.135  RACE_FINISH                     finish_time=18.979s
-  859.384  RACE_FINISH                     finish_time=18.979s
-  859.634  RACE_FINISH                     finish_time=18.979s
-  859.886  RACE_FINISH                     finish_time=18.979s
-  860.136  RACE_FINISH                     finish_time=18.979s
-  860.387  RACE_FINISH                     finish_time=18.979s
-  860.637  RACE_FINISH                     finish_time=18.979s
-  860.887  RACE_FINISH                     finish_time=18.979s
-  861.139  RACE_FINISH                     finish_time=18.979s
-  861.389  RACE_FINISH                     finish_time=18.979s
-  861.638  RACE_FINISH                     finish_time=18.979s
-  861.889  RACE_FINISH                     finish_time=18.979s
-  862.141  RACE_FINISH                     finish_time=18.979s
-  862.390  RACE_FINISH                     finish_time=18.979s
-  862.642  RACE_FINISH                     finish_time=18.979s
-  862.892  RACE_FINISH                     finish_time=18.979s
-  863.144  RACE_FINISH                     finish_time=18.979s
-  863.394  RACE_FINISH                     finish_time=18.979s
-  863.644  RACE_FINISH                     finish_time=18.979s
-  863.894  RACE_FINISH                     finish_time=18.979s
-  864.145  RACE_FINISH                     finish_time=18.979s
-  864.394  RACE_FINISH                     finish_time=18.979s
-  864.646  RACE_FINISH                     finish_time=18.979s
-  864.894  RACE_FINISH                     finish_time=18.979s
-  865.146  RACE_FINISH                     finish_time=18.979s
-  865.397  RACE_FINISH                     finish_time=18.979s
-  865.648  RACE_FINISH                     finish_time=18.979s
-  865.898  RACE_FINISH                     finish_time=18.979s
-  866.149  RACE_FINISH                     finish_time=18.979s
-  866.400  RACE_FINISH                     finish_time=18.979s
-  866.650  RACE_FINISH                     finish_time=18.979s
-  866.900  RACE_FINISH                     finish_time=18.979s
-  867.151  RACE_FINISH                     finish_time=18.979s
-  867.402  RACE_FINISH                     finish_time=18.979s
-  867.654  RACE_FINISH                     finish_time=18.979s
-  867.907  RACE_FINISH                     finish_time=18.979s
-  868.157  RACE_FINISH                     finish_time=18.979s
-  868.408  RACE_FINISH                     finish_time=18.979s
-  868.657  RACE_FINISH                     finish_time=18.979s
-  868.909  RACE_FINISH                     finish_time=18.979s
-  869.159  RACE_FINISH                     finish_time=18.979s
-  869.409  RACE_FINISH                     finish_time=18.979s
-  869.660  RACE_FINISH                     finish_time=18.979s
-  869.910  RACE_FINISH                     finish_time=18.979s
-  870.160  RACE_FINISH                     finish_time=18.979s
-  870.410  RACE_FINISH                     finish_time=18.979s
-  870.661  RACE_FINISH                     finish_time=18.979s
-  870.913  RACE_FINISH                     finish_time=18.979s
-  871.162  RACE_FINISH                     finish_time=18.979s
-  871.415  RACE_FINISH                     finish_time=18.979s
-  871.663  RACE_FINISH                     finish_time=18.979s
-  871.915  RACE_FINISH                     finish_time=18.979s
-  872.164  RACE_FINISH                     finish_time=18.979s
-  872.417  RACE_FINISH                     finish_time=18.979s
-  872.667  RACE_FINISH                     finish_time=18.979s
-  872.917  RACE_FINISH                     finish_time=18.979s
-  873.166  RACE_FINISH                     finish_time=18.979s
-  873.418  RACE_FINISH                     finish_time=18.979s
-  873.670  RACE_FINISH                     finish_time=18.979s
-  873.922  RACE_FINISH                     finish_time=18.979s
-  874.171  RACE_FINISH                     finish_time=18.979s
-  874.423  RACE_FINISH                     finish_time=18.979s
-  874.673  RACE_FINISH                     finish_time=18.979s
-  874.924  RACE_FINISH                     finish_time=18.979s
-  875.174  RACE_FINISH                     finish_time=18.979s
-  875.427  RACE_FINISH                     finish_time=18.979s
-  875.676  RACE_FINISH                     finish_time=18.979s
-  875.929  RACE_FINISH                     finish_time=18.979s
-  876.180  RACE_FINISH                     finish_time=18.979s
-  876.430  RACE_FINISH                     finish_time=18.979s
-  876.682  RACE_FINISH                     finish_time=18.979s
-  876.932  RACE_FINISH                     finish_time=18.979s
-  877.183  RACE_FINISH                     finish_time=18.979s
-  877.433  RACE_FINISH                     finish_time=18.979s
-  877.683  RACE_FINISH                     finish_time=18.979s
-  877.934  RACE_FINISH                     finish_time=18.979s
-  878.186  RACE_FINISH                     finish_time=18.979s
-  878.437  RACE_FINISH                     finish_time=18.979s
-  878.686  RACE_FINISH                     finish_time=18.979s
-  878.939  RACE_FINISH                     finish_time=18.979s
-  879.189  RACE_FINISH                     finish_time=18.979s
-  879.438  RACE_FINISH                     finish_time=18.979s
-  879.690  RACE_FINISH                     finish_time=18.979s
-  879.941  RACE_FINISH                     finish_time=18.979s
-  880.191  RACE_FINISH                     finish_time=18.979s
-  880.442  RACE_FINISH                     finish_time=18.979s
-  880.691  RACE_FINISH                     finish_time=18.979s
-  880.943  RACE_FINISH                     finish_time=18.979s
-  881.194  RACE_FINISH                     finish_time=18.979s
-  881.443  RACE_FINISH                     finish_time=18.979s
-  881.694  RACE_FINISH                     finish_time=18.979s
-  881.944  RACE_FINISH                     finish_time=18.979s
-  882.197  RACE_FINISH                     finish_time=18.979s
-  882.446  RACE_FINISH                     finish_time=18.979s
-  882.697  RACE_FINISH                     finish_time=18.979s
-  882.948  RACE_FINISH                     finish_time=18.979s
-  883.199  RACE_FINISH                     finish_time=18.979s
-  883.449  RACE_FINISH                     finish_time=18.979s
-  883.699  RACE_FINISH                     finish_time=18.979s
-  883.951  RACE_FINISH                     finish_time=18.979s
-  884.200  RACE_FINISH                     finish_time=18.979s
-  884.451  RACE_FINISH                     finish_time=18.979s
-  884.703  RACE_FINISH                     finish_time=18.979s
-  884.954  RACE_FINISH                     finish_time=18.979s
-  885.204  RACE_FINISH                     finish_time=18.979s
-  885.454  RACE_FINISH                     finish_time=18.979s
-  885.705  RACE_FINISH                     finish_time=18.979s
-  885.955  RACE_FINISH                     finish_time=18.979s
-  886.206  RACE_FINISH                     finish_time=18.979s
-  886.456  RACE_FINISH                     finish_time=18.979s
-  886.707  RACE_FINISH                     finish_time=18.979s
-  886.960  RACE_FINISH                     finish_time=18.979s
-  887.209  RACE_FINISH                     finish_time=18.979s
-  887.460  RACE_FINISH                     finish_time=18.979s
-  887.710  RACE_FINISH                     finish_time=18.979s
-  887.962  RACE_FINISH                     finish_time=18.979s
-  888.212  RACE_FINISH                     finish_time=18.979s
-  888.463  RACE_FINISH                     finish_time=18.979s
-  888.712  RACE_FINISH                     finish_time=18.979s
-  888.962  RACE_FINISH                     finish_time=18.979s
-  889.213  RACE_FINISH                     finish_time=18.979s
-  889.465  RACE_FINISH                     finish_time=18.979s
-  889.717  RACE_FINISH                     finish_time=18.979s
-  889.967  RACE_FINISH                     finish_time=18.979s
-  890.219  RACE_FINISH                     finish_time=18.979s
-  890.468  RACE_FINISH                     finish_time=18.979s
-  890.718  RACE_FINISH                     finish_time=18.979s
-  890.970  RACE_FINISH                     finish_time=18.979s
-  891.220  RACE_FINISH                     finish_time=18.979s
-  891.470  RACE_FINISH                     finish_time=18.979s
-  891.721  RACE_FINISH                     finish_time=18.979s
-  891.971  RACE_FINISH                     finish_time=18.979s
-  892.221  RACE_FINISH                     finish_time=18.979s
-  892.472  RACE_FINISH                     finish_time=18.979s
-  892.724  RACE_FINISH                     finish_time=18.979s
-  892.973  RACE_FINISH                     finish_time=18.979s
-  893.225  RACE_FINISH                     finish_time=18.979s
-  893.475  RACE_FINISH                     finish_time=18.979s
-  893.726  RACE_FINISH                     finish_time=18.979s
-  893.976  RACE_FINISH                     finish_time=18.979s
-  894.226  RACE_FINISH                     finish_time=18.979s
-  894.477  RACE_FINISH                     finish_time=18.979s
-  894.726  RACE_FINISH                     finish_time=18.979s
-  894.977  RACE_FINISH                     finish_time=18.979s
-  895.228  RACE_FINISH                     finish_time=18.979s
-  895.479  RACE_FINISH                     finish_time=18.979s
-  895.730  RACE_FINISH                     finish_time=18.979s
-  895.980  RACE_FINISH                     finish_time=18.979s
-  896.232  RACE_FINISH                     finish_time=18.979s
-  896.483  RACE_FINISH                     finish_time=18.979s
-  896.732  RACE_FINISH                     finish_time=18.979s
-  896.982  RACE_FINISH                     finish_time=18.979s
-  897.234  RACE_FINISH                     finish_time=18.979s
-  897.484  RACE_FINISH                     finish_time=18.979s
-  897.735  RACE_FINISH                     finish_time=18.979s
-  897.985  RACE_FINISH                     finish_time=18.979s
-  898.235  RACE_FINISH                     finish_time=18.979s
-  898.487  RACE_FINISH                     finish_time=18.979s
-  898.737  RACE_FINISH                     finish_time=18.979s
-  898.989  RACE_FINISH                     finish_time=18.979s
-  899.239  RACE_FINISH                     finish_time=18.979s
-  899.489  RACE_FINISH                     finish_time=18.979s
-  899.740  RACE_FINISH                     finish_time=18.979s
-  899.991  RACE_FINISH                     finish_time=18.979s
-  900.242  RACE_FINISH                     finish_time=18.979s
-  900.493  RACE_FINISH                     finish_time=18.979s
-  900.743  RACE_FINISH                     finish_time=18.979s
-  900.994  RACE_FINISH                     finish_time=18.979s
-  901.243  RACE_FINISH                     finish_time=18.979s
-  901.494  RACE_FINISH                     finish_time=18.979s
-  901.745  RACE_FINISH                     finish_time=18.979s
-  901.997  RACE_FINISH                     finish_time=18.979s
-  902.246  RACE_FINISH                     finish_time=18.979s
-  902.497  RACE_FINISH                     finish_time=18.979s
-  902.747  RACE_FINISH                     finish_time=18.979s
-  902.997  RACE_FINISH                     finish_time=18.979s
-  903.249  RACE_FINISH                     finish_time=18.979s
-  903.500  RACE_FINISH                     finish_time=18.979s
-  903.751  RACE_FINISH                     finish_time=18.979s
-  904.002  RACE_FINISH                     finish_time=18.979s
-  904.252  RACE_FINISH                     finish_time=18.979s
-  904.502  RACE_FINISH                     finish_time=18.979s
-  904.752  RACE_FINISH                     finish_time=18.979s
-  905.004  RACE_FINISH                     finish_time=18.979s
-  905.254  RACE_FINISH                     finish_time=18.979s
-  905.505  RACE_FINISH                     finish_time=18.979s
-  905.757  RACE_FINISH                     finish_time=18.979s
-  906.006  RACE_FINISH                     finish_time=18.979s
-  906.258  RACE_FINISH                     finish_time=18.979s
-  906.509  RACE_FINISH                     finish_time=18.979s
-  906.759  RACE_FINISH                     finish_time=18.979s
-  907.009  RACE_FINISH                     finish_time=18.979s
-  907.259  RACE_FINISH                     finish_time=18.979s
-  907.509  RACE_FINISH                     finish_time=18.979s
-  907.759  RACE_FINISH                     finish_time=18.979s
-  908.011  RACE_FINISH                     finish_time=18.979s
-  908.260  RACE_FINISH                     finish_time=18.979s
-  908.512  RACE_FINISH                     finish_time=18.979s
-  908.760  RACE_FINISH                     finish_time=18.979s
-  909.010  RACE_FINISH                     finish_time=18.979s
-  909.261  RACE_FINISH                     finish_time=18.979s
-  909.512  RACE_FINISH                     finish_time=18.979s
-  909.762  RACE_FINISH                     finish_time=18.979s
-  910.014  RACE_FINISH                     finish_time=18.979s
-  910.264  RACE_FINISH                     finish_time=18.979s
-  910.514  RACE_FINISH                     finish_time=18.979s
-  910.764  RACE_FINISH                     finish_time=18.979s
-  911.015  RACE_FINISH                     finish_time=18.979s
-  911.267  RACE_FINISH                     finish_time=18.979s
-  911.517  RACE_FINISH                     finish_time=18.979s
-  911.767  RACE_FINISH                     finish_time=18.979s
-  912.018  RACE_FINISH                     finish_time=18.979s
-  912.270  RACE_FINISH                     finish_time=18.979s
-  912.520  RACE_FINISH                     finish_time=18.979s
-  912.772  RACE_FINISH                     finish_time=18.979s
-  913.024  RACE_FINISH                     finish_time=18.979s
-  913.274  RACE_FINISH                     finish_time=18.979s
-  913.524  RACE_FINISH                     finish_time=18.979s
-  913.773  RACE_FINISH                     finish_time=18.979s
-  914.024  RACE_FINISH                     finish_time=18.979s
-  914.275  RACE_FINISH                     finish_time=18.979s
-  914.525  RACE_FINISH                     finish_time=18.979s
-  914.776  RACE_FINISH                     finish_time=18.979s
-  915.028  RACE_FINISH                     finish_time=18.979s
-  915.277  RACE_FINISH                     finish_time=18.979s
-  915.529  RACE_FINISH                     finish_time=18.979s
-  915.779  RACE_FINISH                     finish_time=18.979s
-  916.031  RACE_FINISH                     finish_time=18.979s
-  916.281  RACE_FINISH                     finish_time=18.979s
-  916.532  RACE_FINISH                     finish_time=18.979s
-  916.782  RACE_FINISH                     finish_time=18.979s
-  917.033  RACE_FINISH                     finish_time=18.979s
-  917.284  RACE_FINISH                     finish_time=18.979s
-  917.533  RACE_FINISH                     finish_time=18.979s
-  917.785  RACE_FINISH                     finish_time=18.979s
-  918.034  RACE_FINISH                     finish_time=18.979s
-  918.285  RACE_FINISH                     finish_time=18.979s
-  918.537  RACE_FINISH                     finish_time=18.979s
-  918.786  RACE_FINISH                     finish_time=18.979s
-  919.037  RACE_FINISH                     finish_time=18.979s
-  919.288  RACE_FINISH                     finish_time=18.979s
-  919.538  RACE_FINISH                     finish_time=18.979s
-  919.789  RACE_FINISH                     finish_time=18.979s
-  920.041  RACE_FINISH                     finish_time=18.979s
-  920.291  RACE_FINISH                     finish_time=18.979s
-  920.543  RACE_FINISH                     finish_time=18.979s
-  920.792  RACE_FINISH                     finish_time=18.979s
-  921.042  RACE_FINISH                     finish_time=18.979s
-  921.292  RACE_FINISH                     finish_time=18.979s
-  921.544  RACE_FINISH                     finish_time=18.979s
-  921.794  RACE_FINISH                     finish_time=18.979s
-  922.043  RACE_FINISH                     finish_time=18.979s
-  922.294  RACE_FINISH                     finish_time=18.979s
-  922.544  RACE_FINISH                     finish_time=18.979s
-  922.796  RACE_FINISH                     finish_time=18.979s
-  923.047  RACE_FINISH                     finish_time=18.979s
-  923.297  RACE_FINISH                     finish_time=18.979s
-  923.549  RACE_FINISH                     finish_time=18.979s
-  923.800  RACE_FINISH                     finish_time=18.979s
-  924.050  RACE_FINISH                     finish_time=18.979s
-  924.303  RACE_FINISH                     finish_time=18.979s
-  924.553  RACE_FINISH                     finish_time=18.979s
-  924.802  RACE_FINISH                     finish_time=18.979s
-  925.053  RACE_FINISH                     finish_time=18.979s
-  925.305  RACE_FINISH                     finish_time=18.979s
-  925.555  RACE_FINISH                     finish_time=18.979s
-  925.804  RACE_FINISH                     finish_time=18.979s
-  926.055  RACE_FINISH                     finish_time=18.979s
-  926.306  RACE_FINISH                     finish_time=18.979s
-  926.557  RACE_FINISH                     finish_time=18.979s
-  926.807  RACE_FINISH                     finish_time=18.979s
-  927.056  RACE_FINISH                     finish_time=18.979s
-  927.307  RACE_FINISH                     finish_time=18.979s
-  927.560  RACE_FINISH                     finish_time=18.979s
-  927.810  RACE_FINISH                     finish_time=18.979s
-  928.062  RACE_FINISH                     finish_time=18.979s
-  928.311  RACE_FINISH                     finish_time=18.979s
-  928.561  RACE_FINISH                     finish_time=18.979s
-  928.813  RACE_FINISH                     finish_time=18.979s
-  929.064  RACE_FINISH                     finish_time=18.979s
-  929.313  RACE_FINISH                     finish_time=18.979s
-  929.565  RACE_FINISH                     finish_time=18.979s
-  929.814  RACE_FINISH                     finish_time=18.979s
-  930.066  RACE_FINISH                     finish_time=18.979s
-  930.317  RACE_FINISH                     finish_time=18.979s
-  930.568  RACE_FINISH                     finish_time=18.979s
-  930.816  RACE_FINISH                     finish_time=18.979s
-  931.068  RACE_FINISH                     finish_time=18.979s
-  931.318  RACE_FINISH                     finish_time=18.979s
-  931.568  RACE_FINISH                     finish_time=18.979s
-  931.819  RACE_FINISH                     finish_time=18.979s
-  932.070  RACE_FINISH                     finish_time=18.979s
-  932.321  RACE_FINISH                     finish_time=18.979s
-  932.572  RACE_FINISH                     finish_time=18.979s
-  932.822  RACE_FINISH                     finish_time=18.979s
-  933.073  RACE_FINISH                     finish_time=18.979s
-  933.324  RACE_FINISH                     finish_time=18.979s
-  933.573  RACE_FINISH                     finish_time=18.979s
-  933.824  RACE_FINISH                     finish_time=18.979s
-  934.075  RACE_FINISH                     finish_time=18.979s
-  934.327  RACE_FINISH                     finish_time=18.979s
-  934.576  RACE_FINISH                     finish_time=18.979s
-  934.827  RACE_FINISH                     finish_time=18.979s
-  935.078  RACE_FINISH                     finish_time=18.979s
-  935.326  RACE_FINISH                     finish_time=18.979s
-  935.580  RACE_FINISH                     finish_time=18.979s
-  935.829  RACE_FINISH                     finish_time=18.979s
-  936.080  RACE_FINISH                     finish_time=18.979s
-  936.329  RACE_FINISH                     finish_time=18.979s
-  936.580  RACE_FINISH                     finish_time=18.979s
-  936.832  RACE_FINISH                     finish_time=18.979s
-  937.083  RACE_FINISH                     finish_time=18.979s
-  937.333  RACE_FINISH                     finish_time=18.979s
-  937.583  RACE_FINISH                     finish_time=18.979s
-  937.834  RACE_FINISH                     finish_time=18.979s
-  938.086  RACE_FINISH                     finish_time=18.979s
-  938.337  RACE_FINISH                     finish_time=18.979s
-  938.586  RACE_FINISH                     finish_time=18.979s
-  938.836  RACE_FINISH                     finish_time=18.979s
-  939.086  RACE_FINISH                     finish_time=18.979s
-  939.338  RACE_FINISH                     finish_time=18.979s
-  939.590  RACE_FINISH                     finish_time=18.979s
-  939.839  RACE_FINISH                     finish_time=18.979s
-  940.091  RACE_FINISH                     finish_time=18.979s
-  940.340  RACE_FINISH                     finish_time=18.979s
-  940.592  RACE_FINISH                     finish_time=18.979s
-  940.841  RACE_FINISH                     finish_time=18.979s
-  941.094  RACE_FINISH                     finish_time=18.979s
-  941.344  RACE_FINISH                     finish_time=18.979s
-  941.594  RACE_FINISH                     finish_time=18.979s
-  941.844  RACE_FINISH                     finish_time=18.979s
-  942.095  RACE_FINISH                     finish_time=18.979s
-  942.346  RACE_FINISH                     finish_time=18.979s
-  942.596  RACE_FINISH                     finish_time=18.979s
-  942.849  RACE_FINISH                     finish_time=18.979s
-  943.099  RACE_FINISH                     finish_time=18.979s
-  943.350  RACE_FINISH                     finish_time=18.979s
-  943.599  RACE_FINISH                     finish_time=18.979s
-  943.851  RACE_FINISH                     finish_time=18.979s
-  944.101  RACE_FINISH                     finish_time=18.979s
-  944.352  RACE_FINISH                     finish_time=18.979s
-  944.603  RACE_FINISH                     finish_time=18.979s
-  944.852  RACE_FINISH                     finish_time=18.979s
-  945.103  RACE_FINISH                     finish_time=18.979s
-  945.353  RACE_FINISH                     finish_time=18.979s
-  945.604  RACE_FINISH                     finish_time=18.979s
-  945.853  RACE_FINISH                     finish_time=18.979s
-  946.104  RACE_FINISH                     finish_time=18.979s
-  946.356  RACE_FINISH                     finish_time=18.979s
-  946.606  RACE_FINISH                     finish_time=18.979s
-  946.859  RACE_FINISH                     finish_time=18.979s
-  947.109  RACE_FINISH                     finish_time=18.979s
-  947.361  RACE_FINISH                     finish_time=18.979s
-  947.610  RACE_FINISH                     finish_time=18.979s
-  947.861  RACE_FINISH                     finish_time=18.979s
-  948.113  RACE_FINISH                     finish_time=18.979s
-  948.364  RACE_FINISH                     finish_time=18.979s
-  948.614  RACE_FINISH                     finish_time=18.979s
-  948.864  RACE_FINISH                     finish_time=18.979s
-  949.115  RACE_FINISH                     finish_time=18.979s
-  949.365  RACE_FINISH                     finish_time=18.979s
-  949.615  RACE_FINISH                     finish_time=18.979s
-  949.867  RACE_FINISH                     finish_time=18.979s
-  950.118  RACE_FINISH                     finish_time=18.979s
-  950.368  RACE_FINISH                     finish_time=18.979s
-  950.619  RACE_FINISH                     finish_time=18.979s
-  950.870  RACE_FINISH                     finish_time=18.979s
-  951.120  RACE_FINISH                     finish_time=18.979s
-  951.371  RACE_FINISH                     finish_time=18.979s
-  951.623  RACE_FINISH                     finish_time=18.979s
-  951.875  RACE_FINISH                     finish_time=18.979s
-  952.124  RACE_FINISH                     finish_time=18.979s
-  952.376  RACE_FINISH                     finish_time=18.979s
-  952.625  RACE_FINISH                     finish_time=18.979s
-  952.877  RACE_FINISH                     finish_time=18.979s
-  953.128  RACE_FINISH                     finish_time=18.979s
-  953.377  RACE_FINISH                     finish_time=18.979s
-  953.629  RACE_FINISH                     finish_time=18.979s
-  953.879  RACE_FINISH                     finish_time=18.979s
-  954.130  RACE_FINISH                     finish_time=18.979s
-  954.380  RACE_FINISH                     finish_time=18.979s
-  954.630  RACE_FINISH                     finish_time=18.979s
-  954.882  RACE_FINISH                     finish_time=18.979s
-  955.131  RACE_FINISH                     finish_time=18.979s
-  955.382  RACE_FINISH                     finish_time=18.979s
-  955.633  RACE_FINISH                     finish_time=18.979s
-  955.884  RACE_FINISH                     finish_time=18.979s
-  956.135  RACE_FINISH                     finish_time=18.979s
-  956.386  RACE_FINISH                     finish_time=18.979s
-  956.637  RACE_FINISH                     finish_time=18.979s
-  956.886  RACE_FINISH                     finish_time=18.979s
-  957.137  RACE_FINISH                     finish_time=18.979s
-  957.389  RACE_FINISH                     finish_time=18.979s
-  957.641  RACE_FINISH                     finish_time=18.979s
-  957.892  RACE_FINISH                     finish_time=18.979s
-  958.143  RACE_FINISH                     finish_time=18.979s
-  958.393  RACE_FINISH                     finish_time=18.979s
-  958.644  RACE_FINISH                     finish_time=18.979s
-  958.894  RACE_FINISH                     finish_time=18.979s
-  959.143  RACE_FINISH                     finish_time=18.979s
-  959.394  RACE_FINISH                     finish_time=18.979s
-  959.645  RACE_FINISH                     finish_time=18.979s
-  959.896  RACE_FINISH                     finish_time=18.979s
-  960.146  RACE_FINISH                     finish_time=18.979s
-  960.397  RACE_FINISH                     finish_time=18.979s
-  960.648  RACE_FINISH                     finish_time=18.979s
-  960.900  RACE_FINISH                     finish_time=18.979s
-  961.149  RACE_FINISH                     finish_time=18.979s
-  961.401  RACE_FINISH                     finish_time=18.979s
-  961.651  RACE_FINISH                     finish_time=18.979s
-  961.901  RACE_FINISH                     finish_time=18.979s
-  962.151  RACE_FINISH                     finish_time=18.979s
-  962.403  RACE_FINISH                     finish_time=18.979s
-  962.652  RACE_FINISH                     finish_time=18.979s
-  962.904  RACE_FINISH                     finish_time=18.979s
-  963.155  RACE_FINISH                     finish_time=18.979s
-  963.405  RACE_FINISH                     finish_time=18.979s
-  963.657  RACE_FINISH                     finish_time=18.979s
-  963.907  RACE_FINISH                     finish_time=18.979s
-  964.157  RACE_FINISH                     finish_time=18.979s
-  964.408  RACE_FINISH                     finish_time=18.979s
-  964.658  RACE_FINISH                     finish_time=18.979s
-  964.909  RACE_FINISH                     finish_time=18.979s
-  965.158  RACE_FINISH                     finish_time=18.979s
-  965.409  RACE_FINISH                     finish_time=18.979s
-  965.661  RACE_FINISH                     finish_time=18.979s
-  965.912  RACE_FINISH                     finish_time=18.979s
-  966.162  RACE_FINISH                     finish_time=18.979s
-  966.414  RACE_FINISH                     finish_time=18.979s
-  966.665  RACE_FINISH                     finish_time=18.979s
-  966.915  RACE_FINISH                     finish_time=18.979s
-  967.166  RACE_FINISH                     finish_time=18.979s
-  967.419  RACE_FINISH                     finish_time=18.979s
-  967.668  RACE_FINISH                     finish_time=18.979s
-  967.920  RACE_FINISH                     finish_time=18.979s
-  968.172  RACE_FINISH                     finish_time=18.979s
-  968.422  RACE_FINISH                     finish_time=18.979s
-  968.673  RACE_FINISH                     finish_time=18.979s
-  968.922  RACE_FINISH                     finish_time=18.979s
-  969.174  RACE_FINISH                     finish_time=18.979s
-  969.425  RACE_FINISH                     finish_time=18.979s
-  969.676  RACE_FINISH                     finish_time=18.979s
-  969.926  RACE_FINISH                     finish_time=18.979s
-  970.177  RACE_FINISH                     finish_time=18.979s
-  970.429  RACE_FINISH                     finish_time=18.979s
-  970.678  RACE_FINISH                     finish_time=18.979s
-  970.929  RACE_FINISH                     finish_time=18.979s
-  971.181  RACE_FINISH                     finish_time=18.979s
-  971.430  RACE_FINISH                     finish_time=18.979s
-  971.682  RACE_FINISH                     finish_time=18.979s
-  971.932  RACE_FINISH                     finish_time=18.979s
-  972.184  RACE_FINISH                     finish_time=18.979s
-  972.434  RACE_FINISH                     finish_time=18.979s
-  972.684  RACE_FINISH                     finish_time=18.979s
-  972.934  RACE_FINISH                     finish_time=18.979s
-  973.185  RACE_FINISH                     finish_time=18.979s
-  973.434  RACE_FINISH                     finish_time=18.979s
-  973.687  RACE_FINISH                     finish_time=18.979s
-  973.938  RACE_FINISH                     finish_time=18.979s
-  974.189  RACE_FINISH                     finish_time=18.979s
-  974.439  RACE_FINISH                     finish_time=18.979s
-  974.691  RACE_FINISH                     finish_time=18.979s
-  974.941  RACE_FINISH                     finish_time=18.979s
-  975.193  RACE_FINISH                     finish_time=18.979s
-  975.444  RACE_FINISH                     finish_time=18.979s
-  975.695  RACE_FINISH                     finish_time=18.979s
-  975.944  RACE_FINISH                     finish_time=18.979s
-  976.194  RACE_FINISH                     finish_time=18.979s
-  976.446  RACE_FINISH                     finish_time=18.979s
-  976.696  RACE_FINISH                     finish_time=18.979s
-  976.946  RACE_FINISH                     finish_time=18.979s
-  977.198  RACE_FINISH                     finish_time=18.979s
-  977.448  RACE_FINISH                     finish_time=18.979s
-  977.698  RACE_FINISH                     finish_time=18.979s
-  977.948  RACE_FINISH                     finish_time=18.979s
-  978.200  RACE_FINISH                     finish_time=18.979s
-  978.451  RACE_FINISH                     finish_time=18.979s
-  978.700  RACE_FINISH                     finish_time=18.979s
-  978.952  RACE_FINISH                     finish_time=18.979s
-  979.203  RACE_FINISH                     finish_time=18.979s
-  979.452  RACE_FINISH                     finish_time=18.979s
-  979.704  RACE_FINISH                     finish_time=18.979s
-  979.953  RACE_FINISH                     finish_time=18.979s
-  980.204  RACE_FINISH                     finish_time=18.979s
-  980.456  RACE_FINISH                     finish_time=18.979s
-  980.708  RACE_FINISH                     finish_time=18.979s
-  980.958  RACE_FINISH                     finish_time=18.979s
-  981.209  RACE_FINISH                     finish_time=18.979s
-  981.459  RACE_FINISH                     finish_time=18.979s
-  981.711  RACE_FINISH                     finish_time=18.979s
-  981.960  RACE_FINISH                     finish_time=18.979s
-  982.210  RACE_FINISH                     finish_time=18.979s
-  982.463  RACE_FINISH                     finish_time=18.979s
-  982.713  RACE_FINISH                     finish_time=18.979s
-  982.963  RACE_FINISH                     finish_time=18.979s
-  983.214  RACE_FINISH                     finish_time=18.979s
-  983.465  RACE_FINISH                     finish_time=18.979s
-  983.715  RACE_FINISH                     finish_time=18.979s
-  983.965  RACE_FINISH                     finish_time=18.979s
-  984.216  RACE_FINISH                     finish_time=18.979s
-  984.468  RACE_FINISH                     finish_time=18.979s
-  984.718  RACE_FINISH                     finish_time=18.979s
-  984.968  RACE_FINISH                     finish_time=18.979s
-  985.219  RACE_FINISH                     finish_time=18.979s
-  985.471  RACE_FINISH                     finish_time=18.979s
-  985.721  RACE_FINISH                     finish_time=18.979s
-  985.972  RACE_FINISH                     finish_time=18.979s
-  986.222  RACE_FINISH                     finish_time=18.979s
-  986.473  RACE_FINISH                     finish_time=18.979s
-  986.724  RACE_FINISH                     finish_time=18.979s
-  986.975  RACE_FINISH                     finish_time=18.979s
-  987.227  RACE_FINISH                     finish_time=18.979s
-  987.477  RACE_FINISH                     finish_time=18.979s
-  987.728  RACE_FINISH                     finish_time=18.979s
-  987.978  RACE_FINISH                     finish_time=18.979s
-  988.228  RACE_FINISH                     finish_time=18.979s
-  988.479  RACE_FINISH                     finish_time=18.979s
-  988.731  RACE_FINISH                     finish_time=18.979s
-  988.984  RACE_FINISH                     finish_time=18.979s
-  989.233  RACE_FINISH                     finish_time=18.979s
-  989.484  RACE_FINISH                     finish_time=18.979s
-  989.735  RACE_FINISH                     finish_time=18.979s
-  989.986  RACE_FINISH                     finish_time=18.979s
-  990.238  RACE_FINISH                     finish_time=18.979s
-  990.488  RACE_FINISH                     finish_time=18.979s
-  990.737  RACE_FINISH                     finish_time=18.979s
-  990.988  RACE_FINISH                     finish_time=18.979s
-  991.239  RACE_FINISH                     finish_time=18.979s
-  991.489  RACE_FINISH                     finish_time=18.979s
-  991.741  RACE_FINISH                     finish_time=18.979s
-  991.991  RACE_FINISH                     finish_time=18.979s
-  992.242  RACE_FINISH                     finish_time=18.979s
-  992.494  RACE_FINISH                     finish_time=18.979s
-  992.744  RACE_FINISH                     finish_time=18.979s
-  992.993  RACE_FINISH                     finish_time=18.979s
-  993.244  RACE_FINISH                     finish_time=18.979s
-  993.494  RACE_FINISH                     finish_time=18.979s
-  993.744  RACE_FINISH                     finish_time=18.979s
-  993.995  RACE_FINISH                     finish_time=18.979s
-  994.245  RACE_FINISH                     finish_time=18.979s
-  994.497  RACE_FINISH                     finish_time=18.979s
-  994.746  RACE_FINISH                     finish_time=18.979s
-  994.998  RACE_FINISH                     finish_time=18.979s
-  995.248  RACE_FINISH                     finish_time=18.979s
-  995.500  RACE_FINISH                     finish_time=18.979s
-  995.749  RACE_FINISH                     finish_time=18.979s
-  996.000  RACE_FINISH                     finish_time=18.979s
-  996.251  RACE_FINISH                     finish_time=18.979s
-  996.503  RACE_FINISH                     finish_time=18.979s
-  996.753  RACE_FINISH                     finish_time=18.979s
-  997.003  RACE_FINISH                     finish_time=18.979s
-  997.255  RACE_FINISH                     finish_time=18.979s
-  997.505  RACE_FINISH                     finish_time=18.979s
-  997.755  RACE_FINISH                     finish_time=18.979s
-  998.005  RACE_FINISH                     finish_time=18.979s
-  998.255  RACE_FINISH                     finish_time=18.979s
-  998.506  RACE_FINISH                     finish_time=18.979s
-  998.757  RACE_FINISH                     finish_time=18.979s
-  999.008  RACE_FINISH                     finish_time=18.979s
-  999.259  RACE_FINISH                     finish_time=18.979s
-  999.509  RACE_FINISH                     finish_time=18.979s
-  999.761  RACE_FINISH                     finish_time=18.979s
- 1000.012  RACE_FINISH                     finish_time=18.979s
- 1000.263  RACE_FINISH                     finish_time=18.979s
- 1000.511  RACE_FINISH                     finish_time=18.979s
+    0.001  CONFIG                          FLIGHT_MODE=policy
+    0.002  CONFIG                          CONTROL_HZ=99
+    0.002  CONFIG                          HOVER_THRUST=0.255
+    0.002  CONFIG                          GATE_DETECTOR_BACKEND=yolo_pose
+    0.003  CONFIG                          YOLO_INFERENCE_SIZE=640
+    0.003  CONFIG                          ASSIST_LEAN_DEG=10.0
+    0.004  CONFIG                          ASSIST_ROLL_SCALE=0.45
+    0.004  CONFIG                          ASSIST_FWD_FRAC=0.9
+    0.004  CONFIG                          ASSIST_COAST_ROLL_NX=0.1
+    0.005  CONFIG                          ASSIST_COAST_ROLL_FRAC=0.5
+    0.007  CONFIG                          ASSIST_NY_AIM=0.12
+    0.007  CONFIG                          ASSIST_COMMIT_HOLD_S=4.0
+    0.007  CONFIG                          ASSIST_YAW_ALIGN_MAX_DEG=0.0
+    0.007  CONFIG                          ASSIST_CENTERLINE_YAW_KP=0.0
+    0.008  CONFIG                          ASSIST_YAW_FRAME_NX=0.55
+    0.008  CONFIG                          ASSIST_YAW_FRAME_MAX_DEG=40.0
+    0.008  CONFIG                          ASSIST_SIM_CLOCK=False
+    0.010  CONFIG                          MAX_RATE_RAD_S=1.05
+    0.010  CONFIG                          RATE_SIGN_ROLL=1.0
+    0.010  CONFIG                          RATE_SIGN_PITCH=-1.0
+    0.011  CONFIG                          RATE_SIGN_YAW=1.0
+    0.011  CONFIG                          torch=2.13.0+cu126 device=NVIDIA GeForce RTX 4070 Laptop GPU
+    0.038  HEARTBEAT                       system=1
+    0.344  EKF                             imu_only
+    0.366  PLANNER                         policy(hg-dagger) mode=policy
+    0.489  VISION_STATE                    DUAL_PNP
+   19.503  COACH                           attempt=1 mode=human
+   20.437  VISION_STATE                    SEARCH
+   21.968  VISION_STATE                    DUAL_PNP
+   22.455  VISION_STATE                    SEARCH
+   23.609  VISION_STATE                    DUAL_PNP
+   25.008  GATE_PASSED                     gate=1  last_gate_time=1.120s
+   25.088  COURSE_BEARING                  h=+0.19 v=-0.20 range=8.0m src=secondary_pose
+   25.090  KALMAN_PASS                     active=1
+   25.302  NEAREST_TWO                     approach=11.2m contact_h=-0.11 contact_v=-0.11 contact_r=16.0m src=image
+   25.639  NEAREST_TWO                     approach=10.4m contact_h=-0.09 contact_v=+0.03 contact_r=17.1m src=image
+   26.115  NEAREST_TWO                     approach=9.4m contact_h=-0.21 contact_v=+0.11 contact_r=14.1m src=image
+   26.298  NEAREST_TWO                     approach=9.6m contact_h=-0.16 contact_v=+0.10 contact_r=16.7m src=image
+   30.771  GATE_PASSED                     gate=2  last_gate_time=2.271s
+   30.933  COURSE_BEARING                  h=+0.28 v=-0.35 range=5.2m src=gate2_body
+   30.937  KALMAN_PASS                     active=2
+   33.289  VISION_STATE                    SEARCH
+   33.531  GATE_PASSED                     gate=3  last_gate_time=2.812s
+   33.614  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   33.615  KALMAN_PASS                     active=3
+   33.949  NEAREST_TWO                     approach=5.5m contact_h=+0.88 contact_v=-0.35 contact_r=8.6m src=image
+   33.951  VISION_STATE                    DUAL_PNP
+   37.289  GATE_PASSED                     gate=4  last_gate_time=3.569s
+   37.444  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   37.445  KALMAN_PASS                     active=4
+   37.475  VISION_STATE                    SEARCH
+   37.634  VISION_STATE                    DUAL_PNP
+   37.779  VISION_STATE                    SEARCH
+   39.278  VISION_STATE                    DUAL_PNP
+   42.809  NEAREST_TWO                     approach=2.3m contact_h=-0.62 contact_v=-0.05 contact_r=3.5m src=image
+   43.307  GATE_PASSED                     gate=5  last_gate_time=4.760s
+   43.433  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   43.433  KALMAN_PASS                     active=5
+   46.273  NEAREST_TWO                     approach=5.9m contact_h=-0.70 contact_v=-0.01 contact_r=7.9m src=image
+   49.000  COLLISION                       Gate  threat=2  impulse=4.09kg·m/s
+   49.137  VISION_STATE                    SEARCH
+   49.321  GATE_PASSED                     gate=6  last_gate_time=5.956s
+   49.424  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   49.424  KALMAN_PASS                     active=6
+   50.276  VISION_STATE                    DUAL_PNP
+   53.130  VISION_STATE                    SEARCH
+   53.618  NEAREST_TWO                     approach=3.3m contact_h=+0.57 contact_v=-0.09 contact_r=3.4m src=image
+   54.583  GATE_PASSED                     gate=7  last_gate_time=7.011s
+   54.609  COURSE_BEARING                  h=+0.45 v=-0.09 range=3.4m src=image remaining=0
+   54.610  KALMAN_PASS                     active=7
+   55.484  VISION_STATE                    DUAL_PNP
+   57.799  NEAREST_TWO                     approach=6.1m contact_h=-0.30 contact_v=-0.35 contact_r=8.3m src=image
+   61.353  GATE_PASSED                     gate=8  last_gate_time=8.372s
+   61.434  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   61.435  KALMAN_PASS                     active=8
+   64.862  GATE_PASSED                     gate=9  last_gate_time=9.066s
+   64.950  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   64.950  KALMAN_PASS                     active=9
+   68.375  GATE_PASSED                     gate=10  last_gate_time=9.801s
+   68.436  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   68.437  KALMAN_PASS                     active=10
+   68.459  VISION_STATE                    SEARCH
+   69.638  NEAREST_TWO                     approach=3.8m contact_h=+0.23 contact_v=-0.35 contact_r=8.1m src=image
+   70.125  VISION_STATE                    DUAL_PNP
+   71.381  GATE_PASSED                     gate=11  last_gate_time=10.362s
+   71.425  COURSE_BEARING                  h=+0.45 v=+0.00 range=3.7m src=image remaining=1
+   71.425  KALMAN_PASS                     active=11
+   71.451  VISION_STATE                    SEARCH
+   71.790  VISION_STATE                    DUAL_PNP
+   75.795  NEAREST_TWO                     approach=2.5m contact_h=-0.74 contact_v=+0.45 contact_r=7.9m src=image
+   76.144  GATE_PASSED                     gate=12  last_gate_time=11.312s
+   76.266  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   76.267  KALMAN_PASS                     active=12
+   80.299  NEAREST_TWO                     approach=2.6m contact_h=-0.54 contact_v=-0.01 contact_r=3.2m src=image
+   80.407  GATE_PASSED                     gate=13  last_gate_time=12.197s
+   80.445  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   80.445  KALMAN_PASS                     active=13
+   80.469  VISION_STATE                    SEARCH
+   81.121  NEAREST_TWO                     approach=11.2m contact_h=+0.80 contact_v=-0.35 contact_r=13.6m src=image
+   81.122  VISION_STATE                    DUAL_PNP
+   82.976  NEAREST_TWO                     approach=3.6m contact_h=-0.36 contact_v=-0.35 contact_r=8.3m src=image
+   86.173  GATE_PASSED                     gate=14  last_gate_time=13.322s
+   86.259  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+   86.259  KALMAN_PASS                     active=14
+   86.298  VISION_STATE                    SEARCH
+   86.628  NEAREST_TWO                     approach=6.6m contact_h=+0.14 contact_v=-0.29 contact_r=18.0m src=image
+   87.301  VISION_STATE                    DUAL_PNP
+   90.800  VISION_STATE                    SEARCH
+   91.057  COLLISION                       Gate  threat=2  impulse=7.62kg·m/s
+   91.112  NEAREST_TWO                     approach=4.4m contact_h=-0.65 contact_v=-0.35 contact_r=12.3m src=image
+   91.126  COLLISION                       Gate  threat=2  impulse=1.03kg·m/s
+   91.373  COLLISION                       Gate  threat=2  impulse=1.02kg·m/s
+   91.545  COLLISION                       Gate  threat=2  impulse=1.35kg·m/s
+   91.578  COLLISION                       Gate  threat=2  impulse=1.12kg·m/s
+   92.450  COLLISION                       Gate  threat=1  impulse=0.31kg·m/s
+   92.484  COLLISION                       Gate  threat=1  impulse=0.28kg·m/s
+   92.519  COLLISION                       Gate  threat=1  impulse=0.13kg·m/s
+   92.553  COLLISION                       Gate  threat=1  impulse=0.10kg·m/s
+   92.589  COLLISION                       Gate  threat=1  impulse=0.11kg·m/s
+   92.624  COLLISION                       Gate  threat=1  impulse=0.11kg·m/s
+   92.659  COLLISION                       Gate  threat=1  impulse=0.07kg·m/s
+   92.692  COLLISION                       Gate  threat=1  impulse=0.07kg·m/s
+   94.753  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+   94.949  VISION_STATE                    DUAL_PNP
+  110.947  COACH                           attempt=2 mode=human
+  117.322  COACH                           attempt=3 mode=human
+  132.441  VISION_STATE                    SEARCH
+  138.790  VISION_STATE                    DUAL_PNP
+  155.124  COACH                           attempt=4 mode=human
+  155.936  VISION_STATE                    SEARCH
+  156.291  NEAREST_TWO                     approach=7.6m contact_h=-0.04 contact_v=+0.45 contact_r=9.9m src=image
+  160.117  VISION_STATE                    DUAL_PNP
+  160.372  GATE_PASSED                     gate=1  last_gate_time=1.034s
+  160.453  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  160.453  KALMAN_PASS                     active=1
+  160.791  NEAREST_TWO                     approach=9.9m contact_h=-0.23 contact_v=-0.35 contact_r=13.0m src=image
+  161.446  NEAREST_TWO                     approach=8.1m contact_h=-0.44 contact_v=-0.06 contact_r=16.4m src=image
+  162.940  NEAREST_TWO                     approach=12.0m contact_h=-0.77 contact_v=+0.08 contact_r=14.2m src=image
+  163.778  NEAREST_TWO                     approach=7.1m contact_h=-0.43 contact_v=-0.35 contact_r=11.9m src=image
+  165.639  GATE_PASSED                     gate=2  last_gate_time=2.109s
+  165.777  COURSE_BEARING                  h=+0.28 v=-0.20 range=3.8m src=image remaining=0
+  165.780  KALMAN_PASS                     active=2
+  165.804  VISION_STATE                    SEARCH
+  168.396  GATE_PASSED                     gate=3  last_gate_time=2.653s
+  168.426  COURSE_BEARING                  h=+0.28 v=-0.20 range=3.8m src=image remaining=0
+  168.428  KALMAN_PASS                     active=3
+  168.620  VISION_STATE                    DUAL_PNP
+  168.790  NEAREST_TWO                     approach=5.3m contact_h=+0.22 contact_v=-0.35 contact_r=3.8m src=image
+  171.609  NEAREST_TWO                     approach=2.3m contact_h=-0.05 contact_v=+0.12 contact_r=2.7m src=image
+  171.783  VISION_STATE                    SEARCH
+  171.908  GATE_PASSED                     gate=4  last_gate_time=3.339s
+  171.937  COURSE_BEARING                  h=+0.28 v=+0.05 range=2.7m src=image remaining=1
+  171.940  KALMAN_PASS                     active=4
+  172.444  VISION_STATE                    DUAL_PNP
+  173.278  VISION_STATE                    SEARCH
+  176.799  VISION_STATE                    DUAL_PNP
+  176.921  GATE_PASSED                     gate=5  last_gate_time=4.356s
+  176.952  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  176.952  KALMAN_PASS                     active=5
+  180.633  NEAREST_TWO                     approach=4.1m contact_h=-0.60 contact_v=-0.35 contact_r=4.8m src=image
+  182.186  GATE_PASSED                     gate=6  last_gate_time=5.408s
+  182.278  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  182.282  KALMAN_PASS                     active=6
+  182.299  VISION_STATE                    SEARCH
+  182.441  VISION_STATE                    DUAL_PNP
+  182.783  VISION_STATE                    SEARCH
+  182.959  VISION_STATE                    DUAL_PNP
+  185.787  NEAREST_TWO                     approach=4.7m contact_h=+0.58 contact_v=+0.45 contact_r=5.7m src=image
+  186.125  VISION_STATE                    SEARCH
+  186.199  GATE_PASSED                     gate=7  last_gate_time=6.171s
+  186.283  COURSE_BEARING                  h=+0.45 v=+0.05 range=5.7m src=image remaining=0
+  186.283  KALMAN_PASS                     active=7
+  190.446  VISION_STATE                    DUAL_PNP
+  190.967  NEAREST_TWO                     approach=2.4m contact_h=-0.23 contact_v=-0.35 contact_r=9.2m src=image
+  191.713  GATE_PASSED                     gate=8  last_gate_time=7.273s
+  191.785  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  191.786  KALMAN_PASS                     active=8
+  194.449  NEAREST_TWO                     approach=2.6m contact_h=+0.45 contact_v=+0.00 contact_r=2.9m src=image
+  194.725  GATE_PASSED                     gate=9  last_gate_time=7.923s
+  194.778  COURSE_BEARING                  h=+0.45 v=+0.00 range=2.9m src=image remaining=0
+  194.778  KALMAN_PASS                     active=9
+  198.485  GATE_PASSED                     gate=10  last_gate_time=8.631s
+  198.607  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  198.607  KALMAN_PASS                     active=10
+  198.628  VISION_STATE                    SEARCH
+  200.619  NEAREST_TWO                     approach=2.5m contact_h=+0.76 contact_v=-0.06 contact_r=4.4m src=image
+  200.622  VISION_STATE                    DUAL_PNP
+  201.129  VISION_STATE                    SEARCH
+  201.240  GATE_PASSED                     gate=11  last_gate_time=9.202s
+  201.252  COURSE_BEARING                  h=+0.45 v=-0.06 range=4.4m src=image remaining=0
+  201.252  KALMAN_PASS                     active=11
+  204.626  NEAREST_TWO                     approach=3.9m contact_h=-0.74 contact_v=-0.28 contact_r=4.8m src=image
+  205.500  GATE_PASSED                     gate=12  last_gate_time=10.080s
+  205.607  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  205.608  KALMAN_PASS                     active=12
+  206.469  VISION_STATE                    DUAL_PNP
+  211.306  NEAREST_TWO                     approach=2.6m contact_h=+0.02 contact_v=-0.23 contact_r=11.5m src=image
+  211.772  GATE_PASSED                     gate=13  last_gate_time=11.321s
+  211.944  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  211.945  KALMAN_PASS                     active=13
+  212.280  NEAREST_TWO                     approach=7.5m contact_h=+0.38 contact_v=+0.13 contact_r=9.5m src=image
+  212.622  NEAREST_TWO                     approach=9.3m contact_h=+0.91 contact_v=+0.45 contact_r=13.6m src=image
+  214.959  NEAREST_TWO                     approach=3.1m contact_h=-0.71 contact_v=+0.21 contact_r=4.4m src=image
+  216.536  GATE_PASSED                     gate=14  last_gate_time=12.287s
+  216.609  COURSE_BEARING                  h=+0.45 v=+0.00 range=3.6m src=image remaining=0
+  216.610  KALMAN_PASS                     active=14
+  218.441  NEAREST_TWO                     approach=5.4m contact_h=+0.03 contact_v=-0.35 contact_r=16.2m src=image
+  220.798  GATE_PASSED                     gate=15  last_gate_time=13.136s
+  220.927  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  220.927  KALMAN_PASS                     active=15
+  221.116  VISION_STATE                    SEARCH
+  222.803  VISION_STATE                    DUAL_PNP
+  224.285  NEAREST_TWO                     approach=2.8m contact_h=+0.47 contact_v=+0.29 contact_r=3.4m src=image
+  224.575  COLLISION                       Gate  threat=2  impulse=15.20kg·m/s
+  224.634  VISION_STATE                    SEARCH
+  225.168  COLLISION                       Gate  threat=2  impulse=8.39kg·m/s
+  225.202  COLLISION                       Gate  threat=1  impulse=0.18kg·m/s
+  225.237  COLLISION                       Gate  threat=2  impulse=1.98kg·m/s
+  226.061  GATE_PASSED                     gate=16  last_gate_time=14.159s
+  226.112  COURSE_BEARING                  h=+0.47 v=+0.05 range=3.4m src=image remaining=0
+  226.112  KALMAN_PASS                     active=16
+  232.097  COLLISION                       Gate  threat=2  impulse=12.25kg·m/s
+  232.131  COLLISION                       Gate  threat=2  impulse=1.73kg·m/s
+  235.295  NEAREST_TWO                     approach=3.0m contact_h=-0.53 contact_v=+0.24 contact_r=3.6m src=image
+  235.409  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  235.473  VISION_STATE                    DUAL_PNP
+  252.134  COACH                           attempt=5 mode=human
+  252.794  VISION_STATE                    SEARCH
+  252.939  NEAREST_TWO                     approach=6.1m contact_h=-0.02 contact_v=+0.45 contact_r=10.3m src=image
+  255.135  VISION_STATE                    DUAL_PNP
+  255.615  VISION_STATE                    SEARCH
+  257.125  VISION_STATE                    DUAL_PNP
+  257.388  GATE_PASSED                     gate=1  last_gate_time=1.052s
+  257.448  COURSE_BEARING                  h=+0.12 v=-0.20 range=7.8m src=secondary_pose
+  257.448  KALMAN_PASS                     active=1
+  257.467  VISION_STATE                    SEARCH
+  257.611  VISION_STATE                    DUAL_PNP
+  258.615  NEAREST_TWO                     approach=11.5m contact_h=-0.51 contact_v=-0.35 contact_r=15.7m src=image
+  261.899  GATE_PASSED                     gate=2  last_gate_time=1.981s
+  261.938  COURSE_BEARING                  h=+0.28 v=+0.00 range=3.4m src=image remaining=0
+  261.946  KALMAN_PASS                     active=2
+  261.978  VISION_STATE                    SEARCH
+  264.156  GATE_PASSED                     gate=3  last_gate_time=2.442s
+  264.270  COURSE_BEARING                  h=+0.28 v=+0.00 range=3.4m src=image remaining=0
+  264.271  KALMAN_PASS                     active=3
+  264.464  VISION_STATE                    DUAL_PNP
+  264.779  NEAREST_TWO                     approach=5.2m contact_h=+0.60 contact_v=-0.35 contact_r=15.9m src=image
+  267.456  VISION_STATE                    SEARCH
+  267.665  GATE_PASSED                     gate=4  last_gate_time=3.106s
+  267.757  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  267.757  KALMAN_PASS                     active=4
+  272.297  NEAREST_TWO                     approach=2.2m contact_h=-0.64 contact_v=+0.01 contact_r=3.5m src=image
+  272.679  GATE_PASSED                     gate=5  last_gate_time=4.109s
+  272.772  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  272.772  KALMAN_PASS                     active=5
+  272.795  VISION_STATE                    DUAL_PNP
+  274.942  NEAREST_TWO                     approach=6.7m contact_h=-0.30 contact_v=-0.35 contact_r=7.3m src=image
+  277.799  VISION_STATE                    SEARCH
+  277.944  GATE_PASSED                     gate=6  last_gate_time=5.177s
+  278.093  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  278.093  KALMAN_PASS                     active=6
+  278.288  VISION_STATE                    DUAL_PNP
+  281.286  NEAREST_TWO                     approach=2.2m contact_h=-0.23 contact_v=+0.01 contact_r=2.4m src=image
+  281.626  VISION_STATE                    SEARCH
+  281.700  GATE_PASSED                     gate=7  last_gate_time=5.930s
+  281.785  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  281.786  KALMAN_PASS                     active=7
+  286.464  GATE_PASSED                     gate=8  last_gate_time=6.906s
+  286.585  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  286.587  KALMAN_PASS                     active=8
+  286.783  VISION_STATE                    DUAL_PNP
+  289.473  GATE_PASSED                     gate=9  last_gate_time=7.475s
+  289.617  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  289.618  KALMAN_PASS                     active=9
+  292.283  NEAREST_TWO                     approach=2.2m contact_h=+0.75 contact_v=+0.01 contact_r=4.2m src=image
+  292.731  GATE_PASSED                     gate=10  last_gate_time=8.158s
+  292.786  COURSE_BEARING                  h=+0.45 v=+0.01 range=4.2m src=image remaining=0
+  292.786  KALMAN_PASS                     active=10
+  292.809  VISION_STATE                    SEARCH
+  293.466  NEAREST_TWO                     approach=5.8m contact_h=+0.24 contact_v=-0.18 contact_r=12.3m src=image
+  293.785  VISION_STATE                    DUAL_PNP
+  295.989  GATE_PASSED                     gate=11  last_gate_time=8.787s
+  296.093  COURSE_BEARING                  h=+0.45 v=-0.08 range=4.8m src=image remaining=0
+  296.094  KALMAN_PASS                     active=11
+  296.116  VISION_STATE                    SEARCH
+  297.608  VISION_STATE                    DUAL_PNP
+  300.113  NEAREST_TWO                     approach=2.4m contact_h=-0.21 contact_v=-0.09 contact_r=2.5m src=image
+  300.501  GATE_PASSED                     gate=12  last_gate_time=9.702s
+  300.619  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  300.620  KALMAN_PASS                     active=12
+  300.644  VISION_STATE                    SEARCH
+  300.780  VISION_STATE                    DUAL_PNP
+  300.946  VISION_STATE                    SEARCH
+  301.126  NEAREST_TWO                     approach=10.5m contact_h=+0.37 contact_v=-0.35 contact_r=16.8m src=image
+  301.128  VISION_STATE                    DUAL_PNP
+  303.635  NEAREST_TWO                     approach=5.9m contact_h=+0.90 contact_v=+0.45 contact_r=17.3m src=image
+  304.952  NEAREST_TWO                     approach=2.3m contact_h=-0.52 contact_v=+0.01 contact_r=3.0m src=image
+  305.262  GATE_PASSED                     gate=13  last_gate_time=10.633s
+  305.291  COURSE_BEARING                  h=+0.65 v=+0.05 range=3.5m src=secondary_pose
+  305.295  KALMAN_PASS                     active=13
+  305.325  NEAREST_TWO                     approach=9.4m contact_h=+0.77 contact_v=+0.45 contact_r=10.8m src=image
+  309.445  VISION_STATE                    SEARCH
+  309.525  GATE_PASSED                     gate=14  last_gate_time=11.490s
+  309.602  COURSE_BEARING                  h=+0.45 v=+0.05 range=3.7m src=image remaining=0
+  309.603  KALMAN_PASS                     active=14
+  309.797  VISION_STATE                    DUAL_PNP
+  310.277  VISION_STATE                    SEARCH
+  310.635  VISION_STATE                    DUAL_PNP
+  312.622  NEAREST_TWO                     approach=2.3m contact_h=-0.31 contact_v=-0.35 contact_r=9.8m src=image
+  313.032  GATE_PASSED                     gate=15  last_gate_time=12.184s
+  313.118  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  313.119  KALMAN_PASS                     active=15
+  314.456  VISION_STATE                    SEARCH
+  316.386  COLLISION                       Gate  threat=2  impulse=15.51kg·m/s
+  318.114  VISION_STATE                    DUAL_PNP
+  318.296  NEAREST_TWO                     approach=11.0m contact_h=-0.64 contact_v=+0.03 contact_r=13.8m src=image
+  318.779  VISION_STATE                    SEARCH
+  319.553  COLLISION                       Environment  threat=2  impulse=3.96kg·m/s
+  319.624  COLLISION                       Environment  threat=2  impulse=1.19kg·m/s
+  319.693  COLLISION                       Environment  threat=2  impulse=1.40kg·m/s
+  319.867  COLLISION                       Environment  threat=1  impulse=0.42kg·m/s
+  319.902  COLLISION                       Environment  threat=1  impulse=0.04kg·m/s
+  319.937  COLLISION                       Environment  threat=1  impulse=0.72kg·m/s
+  319.967  VISION_STATE                    DUAL_PNP
+  319.971  COLLISION                       Environment  threat=1  impulse=0.34kg·m/s
+  320.008  COLLISION                       Environment  threat=1  impulse=0.17kg·m/s
+  320.049  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  336.602  COACH                           attempt=6 mode=human
+  337.787  VISION_STATE                    SEARCH
+  340.606  VISION_STATE                    DUAL_PNP
+  341.861  GATE_PASSED                     gate=1  last_gate_time=1.039s
+  341.947  COURSE_BEARING                  h=+0.36 v=-0.20 range=7.8m src=secondary_pose
+  341.948  KALMAN_PASS                     active=1
+  342.630  NEAREST_TWO                     approach=9.9m contact_h=-0.17 contact_v=-0.16 contact_r=15.8m src=image
+  343.113  NEAREST_TWO                     approach=8.4m contact_h=-0.26 contact_v=-0.10 contact_r=17.8m src=image
+  343.289  NEAREST_TWO                     approach=8.3m contact_h=-0.28 contact_v=-0.08 contact_r=13.7m src=image
+  343.649  NEAREST_TWO                     approach=7.4m contact_h=-0.29 contact_v=-0.08 contact_r=11.3m src=image
+  344.472  VISION_STATE                    SEARCH
+  345.270  VISION_STATE                    DUAL_PNP
+  345.626  NEAREST_TWO                     approach=4.1m contact_h=+0.79 contact_v=+0.00 contact_r=4.5m src=image
+  346.432  COLLISION                       Gate  threat=2  impulse=16.75kg·m/s
+  346.630  VISION_STATE                    SEARCH
+  346.872  GATE_PASSED                     gate=2  last_gate_time=2.016s
+  346.926  COURSE_BEARING                  h=+0.45 v=+0.00 range=4.5m src=image remaining=1
+  346.926  KALMAN_PASS                     active=2
+  347.964  COLLISION                       Environment  threat=2  impulse=4.52kg·m/s
+  347.999  COLLISION                       Environment  threat=1  impulse=0.84kg·m/s
+  348.302  VISION_STATE                    DUAL_PNP
+  348.765  COLLISION                       Environment  threat=2  impulse=3.22kg·m/s
+  348.800  COLLISION                       Environment  threat=2  impulse=1.60kg·m/s
+  348.834  COLLISION                       Environment  threat=2  impulse=2.09kg·m/s
+  348.904  COLLISION                       Environment  threat=2  impulse=1.01kg·m/s
+  348.939  COLLISION                       Environment  threat=1  impulse=0.55kg·m/s
+  348.957  VISION_STATE                    SEARCH
+  349.322  COLLISION                       Environment  threat=1  impulse=0.11kg·m/s
+  349.357  COLLISION                       Environment  threat=1  impulse=0.08kg·m/s
+  349.398  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  349.454  VISION_STATE                    DUAL_PNP
+  365.929  COACH                           attempt=7 mode=human
+  366.786  VISION_STATE                    SEARCH
+  369.300  VISION_STATE                    DUAL_PNP
+  371.440  GATE_PASSED                     gate=1  last_gate_time=1.073s
+  371.625  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  371.626  KALMAN_PASS                     active=1
+  371.648  VISION_STATE                    SEARCH
+  371.804  NEAREST_TWO                     approach=9.4m contact_h=-0.24 contact_v=-0.35 contact_r=13.5m src=image
+  371.806  VISION_STATE                    DUAL_PNP
+  372.467  NEAREST_TWO                     approach=8.0m contact_h=-0.41 contact_v=-0.35 contact_r=14.8m src=image
+  373.441  NEAREST_TWO                     approach=6.1m contact_h=-0.27 contact_v=-0.35 contact_r=10.5m src=image
+  375.283  NEAREST_TWO                     approach=4.9m contact_h=+0.19 contact_v=-0.35 contact_r=5.8m src=image
+  376.454  GATE_PASSED                     gate=2  last_gate_time=2.066s
+  376.588  COURSE_BEARING                  h=+0.32 v=+0.05 range=2.8m src=image remaining=1
+  376.588  KALMAN_PASS                     active=2
+  376.613  VISION_STATE                    SEARCH
+  378.628  VISION_STATE                    DUAL_PNP
+  378.709  GATE_PASSED                     gate=3  last_gate_time=2.532s
+  378.785  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  378.786  KALMAN_PASS                     active=3
+  378.817  VISION_STATE                    SEARCH
+  379.292  VISION_STATE                    DUAL_PNP
+  380.612  NEAREST_TWO                     approach=4.2m contact_h=+0.54 contact_v=-0.35 contact_r=5.5m src=image
+  381.972  GATE_PASSED                     gate=4  last_gate_time=3.198s
+  382.086  COURSE_BEARING                  h=+0.45 v=+0.02 range=5.0m src=image remaining=0
+  382.086  KALMAN_PASS                     active=4
+  382.276  VISION_STATE                    SEARCH
+  386.639  NEAREST_TWO                     approach=3.1m contact_h=+0.71 contact_v=+0.05 contact_r=4.0m src=image
+  386.818  COLLISION                       Gate  threat=2  impulse=19.29kg·m/s
+  388.176  COLLISION                       Environment  threat=2  impulse=8.29kg·m/s
+  389.748  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  389.801  VISION_STATE                    DUAL_PNP
+  406.278  COACH                           attempt=8 mode=human
+  407.275  VISION_STATE                    SEARCH
+  409.608  VISION_STATE                    DUAL_PNP
+  411.285  VISION_STATE                    SEARCH
+  411.544  GATE_PASSED                     gate=1  last_gate_time=1.007s
+  411.614  COURSE_BEARING                  h=+0.70 v=+0.05 range=4.0m src=image remaining=0
+  411.615  KALMAN_PASS                     active=1
+  412.121  VISION_STATE                    DUAL_PNP
+  412.604  NEAREST_TWO                     approach=9.8m contact_h=-0.74 contact_v=-0.35 contact_r=12.2m src=image
+  413.968  NEAREST_TWO                     approach=8.2m contact_h=-0.90 contact_v=-0.14 contact_r=14.4m src=image
+  415.802  GATE_PASSED                     gate=2  last_gate_time=1.890s
+  415.930  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  415.932  KALMAN_PASS                     active=2
+  415.953  VISION_STATE                    SEARCH
+  416.614  VISION_STATE                    DUAL_PNP
+  417.809  GATE_PASSED                     gate=3  last_gate_time=2.295s
+  417.949  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  417.949  KALMAN_PASS                     active=3
+  417.970  VISION_STATE                    SEARCH
+  419.610  NEAREST_TWO                     approach=7.4m contact_h=+0.93 contact_v=-0.21 contact_r=18.0m src=image
+  420.444  VISION_STATE                    DUAL_PNP
+  421.600  COLLISION                       Environment  threat=2  impulse=8.43kg·m/s
+  421.802  VISION_STATE                    SEARCH
+  422.305  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  422.462  VISION_STATE                    DUAL_PNP
+  438.879  COACH                           attempt=9 mode=human
+  441.114  VISION_STATE                    SEARCH
+  442.967  VISION_STATE                    DUAL_PNP
+  444.956  NEAREST_TWO                     approach=2.1m contact_h=-0.59 contact_v=+0.02 contact_r=3.3m src=image
+  445.378  GATE_PASSED                     gate=1  last_gate_time=1.274s
+  445.420  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  445.423  KALMAN_PASS                     active=1
+  445.460  NEAREST_TWO                     approach=11.5m contact_h=-0.19 contact_v=-0.35 contact_r=15.3m src=image
+  445.462  VISION_STATE                    SEARCH
+  445.802  VISION_STATE                    DUAL_PNP
+  450.139  GATE_PASSED                     gate=2  last_gate_time=2.234s
+  450.259  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  450.260  KALMAN_PASS                     active=2
+  450.282  VISION_STATE                    SEARCH
+  452.647  GATE_PASSED                     gate=3  last_gate_time=2.733s
+  452.765  COURSE_BEARING                  h=+0.65 v=-0.20 range=5.5m src=secondary_pose
+  452.765  KALMAN_PASS                     active=3
+  454.945  VISION_STATE                    DUAL_PNP
+  455.782  VISION_STATE                    SEARCH
+  455.908  GATE_PASSED                     gate=4  last_gate_time=3.384s
+  455.939  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  455.940  KALMAN_PASS                     active=4
+  460.675  GATE_PASSED                     gate=5  last_gate_time=4.342s
+  460.773  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  460.774  KALMAN_PASS                     active=5
+  460.971  VISION_STATE                    DUAL_PNP
+  463.617  NEAREST_TWO                     approach=5.8m contact_h=-0.92 contact_v=-0.35 contact_r=14.3m src=image
+  465.453  VISION_STATE                    SEARCH
+  465.688  GATE_PASSED                     gate=6  last_gate_time=5.335s
+  465.750  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  465.753  KALMAN_PASS                     active=6
+  465.771  VISION_STATE                    DUAL_PNP
+  469.463  NEAREST_TWO                     approach=2.5m contact_h=-0.46 contact_v=+0.45 contact_r=5.3m src=image
+  469.630  VISION_STATE                    SEARCH
+  469.699  GATE_PASSED                     gate=7  last_gate_time=6.171s
+  469.755  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  469.760  KALMAN_PASS                     active=7
+  472.946  VISION_STATE                    DUAL_PNP
+  475.215  GATE_PASSED                     gate=8  last_gate_time=7.276s
+  475.257  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  475.257  KALMAN_PASS                     active=8
+  476.944  NEAREST_TWO                     approach=6.2m contact_h=-0.73 contact_v=-0.34 contact_r=16.6m src=image
+  478.472  GATE_PASSED                     gate=9  last_gate_time=7.929s
+  478.599  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  478.600  KALMAN_PASS                     active=9
+  478.618  VISION_STATE                    SEARCH
+  479.287  VISION_STATE                    DUAL_PNP
+  480.946  VISION_STATE                    SEARCH
+  481.985  GATE_PASSED                     gate=10  last_gate_time=8.635s
+  482.115  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  482.115  KALMAN_PASS                     active=10
+  482.139  VISION_STATE                    DUAL_PNP
+  482.452  NEAREST_TWO                     approach=4.4m contact_h=+0.78 contact_v=-0.29 contact_r=5.5m src=image
+  484.992  GATE_PASSED                     gate=11  last_gate_time=9.201s
+  485.108  COURSE_BEARING                  h=+0.50 v=-0.20 range=5.5m src=image remaining=0
+  485.110  KALMAN_PASS                     active=11
+  485.126  VISION_STATE                    SEARCH
+  489.387  COLLISION                       Gate  threat=2  impulse=15.82kg·m/s
+  491.544  COLLISION                       Environment  threat=2  impulse=3.92kg·m/s
+  491.581  COLLISION                       Environment  threat=2  impulse=2.57kg·m/s
+  491.614  COLLISION                       Environment  threat=2  impulse=2.71kg·m/s
+  491.616  COLLISION                       Environment  threat=1  impulse=0.61kg·m/s
+  491.650  COLLISION                       Environment  threat=1  impulse=0.15kg·m/s
+  491.684  COLLISION                       Environment  threat=2  impulse=1.78kg·m/s
+  491.719  COLLISION                       Environment  threat=1  impulse=0.05kg·m/s
+  491.754  COLLISION                       Environment  threat=1  impulse=0.57kg·m/s
+  491.789  COLLISION                       Environment  threat=2  impulse=1.10kg·m/s
+  491.790  COLLISION                       Environment  threat=1  impulse=0.62kg·m/s
+  491.824  COLLISION                       Environment  threat=1  impulse=0.07kg·m/s
+  491.893  COLLISION                       Environment  threat=1  impulse=0.00kg·m/s
+  491.928  COLLISION                       Environment  threat=1  impulse=0.08kg·m/s
+  491.963  COLLISION                       Environment  threat=1  impulse=0.35kg·m/s
+  491.964  COLLISION                       Environment  threat=1  impulse=0.05kg·m/s
+  491.998  COLLISION                       Environment  threat=1  impulse=0.31kg·m/s
+  491.999  COLLISION                       Environment  threat=1  impulse=0.35kg·m/s
+  492.032  COLLISION                       Environment  threat=1  impulse=0.28kg·m/s
+  492.033  COLLISION                       Environment  threat=1  impulse=0.29kg·m/s
+  492.067  COLLISION                       Environment  threat=1  impulse=0.13kg·m/s
+  492.103  COLLISION                       Environment  threat=1  impulse=0.12kg·m/s
+  492.137  COLLISION                       Environment  threat=1  impulse=0.13kg·m/s
+  492.171  COLLISION                       Environment  threat=1  impulse=0.32kg·m/s
+  492.171  COLLISION                       Environment  threat=1  impulse=0.43kg·m/s
+  492.208  COLLISION                       Environment  threat=1  impulse=0.31kg·m/s
+  492.242  COLLISION                       Environment  threat=1  impulse=0.12kg·m/s
+  492.281  GATE_PASSED                     gate=0  last_gate_time=-0.000s
+  492.444  VISION_STATE                    DUAL_PNP
+  508.806  COACH                           attempt=10 mode=human
+  509.599  VISION_STATE                    SEARCH
+  509.774  NEAREST_TWO                     approach=7.7m contact_h=-0.01 contact_v=+0.45 contact_r=10.1m src=image
+  509.951  NEAREST_TWO                     approach=8.1m contact_h=+0.01 contact_v=+0.45 contact_r=9.4m src=image
+  511.457  VISION_STATE                    DUAL_PNP
+  511.968  VISION_STATE                    SEARCH
+  513.966  VISION_STATE                    DUAL_PNP
+  514.070  GATE_PASSED                     gate=1  last_gate_time=1.044s
+  514.109  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  514.109  KALMAN_PASS                     active=1
+  514.306  NEAREST_TWO                     approach=10.2m contact_h=-0.34 contact_v=-0.35 contact_r=13.0m src=image
+  514.628  NEAREST_TWO                     approach=8.5m contact_h=-0.46 contact_v=-0.09 contact_r=16.6m src=image
+  516.775  NEAREST_TWO                     approach=9.1m contact_h=-0.57 contact_v=+0.03 contact_r=15.9m src=image
+  518.134  NEAREST_TWO                     approach=3.2m contact_h=+0.39 contact_v=-0.35 contact_r=8.1m src=image
+  519.087  GATE_PASSED                     gate=2  last_gate_time=2.046s
+  519.088  COURSE_BEARING                  h=+0.28 v=+0.05 range=3.1m src=image remaining=0
+  519.089  KALMAN_PASS                     active=2
+  519.106  VISION_STATE                    SEARCH
+  521.592  GATE_PASSED                     gate=3  last_gate_time=2.550s
+  521.595  COURSE_BEARING                  h=+0.28 v=+0.05 range=3.1m src=image remaining=0
+  521.597  KALMAN_PASS                     active=3
+  521.968  VISION_STATE                    DUAL_PNP
+  522.622  NEAREST_TWO                     approach=5.1m contact_h=+0.28 contact_v=+0.38 contact_r=3.1m src=image
+  524.956  VISION_STATE                    SEARCH
+  525.099  GATE_PASSED                     gate=4  last_gate_time=3.231s
+  525.111  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  525.112  KALMAN_PASS                     active=4
+  528.965  VISION_STATE                    DUAL_PNP
+  529.860  GATE_PASSED                     gate=5  last_gate_time=4.197s
+  529.952  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  529.953  KALMAN_PASS                     active=5
+  534.944  VISION_STATE                    SEARCH
+  535.123  GATE_PASSED                     gate=6  last_gate_time=5.228s
+  535.280  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  535.280  KALMAN_PASS                     active=6
+  535.624  VISION_STATE                    DUAL_PNP
+  538.127  NEAREST_TWO                     approach=2.2m contact_h=+0.22 contact_v=+0.00 contact_r=3.2m src=image
+  538.383  GATE_PASSED                     gate=7  last_gate_time=5.920s
+  538.448  COURSE_BEARING                  h=+0.22 v=+0.00 range=3.2m src=image remaining=1
+  538.449  KALMAN_PASS                     active=7
+  538.467  VISION_STATE                    SEARCH
+  540.630  NEAREST_TWO                     approach=4.9m contact_h=-0.75 contact_v=+0.18 contact_r=16.2m src=image
+  541.469  VISION_STATE                    DUAL_PNP
+  542.897  GATE_PASSED                     gate=8  last_gate_time=6.807s
+  542.937  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  542.938  KALMAN_PASS                     active=8
+  543.276  NEAREST_TWO                     approach=7.2m contact_h=-0.36 contact_v=-0.35 contact_r=14.6m src=image
+  546.408  GATE_PASSED                     gate=9  last_gate_time=7.490s
+  546.421  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  546.422  KALMAN_PASS                     active=9
+  549.468  NEAREST_TWO                     approach=3.1m contact_h=+0.51 contact_v=-0.33 contact_r=3.7m src=image
+  550.418  GATE_PASSED                     gate=10  last_gate_time=8.301s
+  550.425  COURSE_BEARING                  h=+0.45 v=-0.20 range=3.7m src=image remaining=0
+  550.426  KALMAN_PASS                     active=10
+  550.448  VISION_STATE                    SEARCH
+  551.802  VISION_STATE                    DUAL_PNP
+  552.955  NEAREST_TWO                     approach=2.4m contact_h=-0.37 contact_v=-0.15 contact_r=2.9m src=image
+  553.427  GATE_PASSED                     gate=11  last_gate_time=8.926s
+  553.436  VISION_STATE                    SEARCH
+  553.591  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  553.597  KALMAN_PASS                     active=11
+  556.607  VISION_STATE                    DUAL_PNP
+  558.139  NEAREST_TWO                     approach=2.3m contact_h=-0.45 contact_v=-0.00 contact_r=2.8m src=image
+  558.439  GATE_PASSED                     gate=12  last_gate_time=9.904s
+  558.605  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  558.606  KALMAN_PASS                     active=12
+  560.123  NEAREST_TWO                     approach=7.5m contact_h=+0.79 contact_v=+0.45 contact_r=17.8m src=image
+  563.202  GATE_PASSED                     gate=13  last_gate_time=10.857s
+  563.271  COURSE_BEARING                  h=+0.28 v=-0.03 range=2.3m src=image remaining=0
+  563.271  KALMAN_PASS                     active=13
+  563.295  NEAREST_TWO                     approach=11.8m contact_h=+0.73 contact_v=-0.11 contact_r=13.6m src=image
+  566.626  VISION_STATE                    SEARCH
+  566.960  GATE_PASSED                     gate=14  last_gate_time=11.612s
+  567.100  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  567.100  KALMAN_PASS                     active=14
+  567.958  VISION_STATE                    DUAL_PNP
+  569.632  NEAREST_TWO                     approach=4.0m contact_h=-0.07 contact_v=-0.35 contact_r=9.3m src=image
+  570.782  NEAREST_TWO                     approach=2.3m contact_h=-0.48 contact_v=+0.45 contact_r=5.0m src=image
+  570.969  GATE_PASSED                     gate=15  last_gate_time=12.419s
+  571.104  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  571.104  KALMAN_PASS                     active=15
+  571.291  VISION_STATE                    SEARCH
+  572.135  VISION_STATE                    DUAL_PNP
+  574.612  NEAREST_TWO                     approach=2.2m contact_h=-0.88 contact_v=-0.02 contact_r=6.2m src=image
+  574.776  VISION_STATE                    SEARCH
+  574.980  GATE_PASSED                     gate=16  last_gate_time=13.202s
+  575.107  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  575.108  KALMAN_PASS                     active=16
+  575.793  VISION_STATE                    DUAL_PNP
+  576.132  VISION_STATE                    SEARCH
+  578.990  GATE_PASSED                     gate=17  last_gate_time=14.036s
+  578.991  RACE_FINISH                     finish_time=14.036s
+  579.112  COURSE_BEARING                  h=+0.28 v=-0.06 range=8.0m src=default_right
+  579.112  KALMAN_PASS                     active=17
+  579.239  RACE_FINISH                     finish_time=14.036s
+  579.491  RACE_FINISH                     finish_time=14.036s
+  579.740  RACE_FINISH                     finish_time=14.036s
+  579.991  RACE_FINISH                     finish_time=14.036s
+  580.242  RACE_FINISH                     finish_time=14.036s
+  580.492  RACE_FINISH                     finish_time=14.036s
+  580.745  RACE_FINISH                     finish_time=14.036s
+  580.994  RACE_FINISH                     finish_time=14.036s
+  581.247  RACE_FINISH                     finish_time=14.036s
+  581.496  RACE_FINISH                     finish_time=14.036s
+  581.748  RACE_FINISH                     finish_time=14.036s
+  581.997  RACE_FINISH                     finish_time=14.036s
+  582.248  RACE_FINISH                     finish_time=14.036s
+  582.499  RACE_FINISH                     finish_time=14.036s
+  582.749  RACE_FINISH                     finish_time=14.036s
+  582.999  RACE_FINISH                     finish_time=14.036s
+  583.250  RACE_FINISH                     finish_time=14.036s
+  583.501  RACE_FINISH                     finish_time=14.036s
+  583.751  RACE_FINISH                     finish_time=14.036s
+  584.002  RACE_FINISH                     finish_time=14.036s
+  584.252  RACE_FINISH                     finish_time=14.036s
+  584.503  RACE_FINISH                     finish_time=14.036s
+  584.752  RACE_FINISH                     finish_time=14.036s
+  585.004  RACE_FINISH                     finish_time=14.036s
+  585.256  RACE_FINISH                     finish_time=14.036s
+  585.506  RACE_FINISH                     finish_time=14.036s
+  585.756  RACE_FINISH                     finish_time=14.036s
+  586.007  RACE_FINISH                     finish_time=14.036s
+  586.258  RACE_FINISH                     finish_time=14.036s
+  586.507  RACE_FINISH                     finish_time=14.036s
+  586.759  RACE_FINISH                     finish_time=14.036s
+  587.010  RACE_FINISH                     finish_time=14.036s
+  587.259  RACE_FINISH                     finish_time=14.036s
+  587.511  RACE_FINISH                     finish_time=14.036s
+  587.760  RACE_FINISH                     finish_time=14.036s
+  588.011  RACE_FINISH                     finish_time=14.036s
+  588.262  RACE_FINISH                     finish_time=14.036s
+  588.512  RACE_FINISH                     finish_time=14.036s
+  588.763  RACE_FINISH                     finish_time=14.036s
+  589.012  RACE_FINISH                     finish_time=14.036s
+  589.264  RACE_FINISH                     finish_time=14.036s
+  589.514  RACE_FINISH                     finish_time=14.036s
+  589.765  RACE_FINISH                     finish_time=14.036s
+  590.015  RACE_FINISH                     finish_time=14.036s
+  590.265  RACE_FINISH                     finish_time=14.036s
+  590.516  RACE_FINISH                     finish_time=14.036s
+  590.768  RACE_FINISH                     finish_time=14.036s
+  591.018  RACE_FINISH                     finish_time=14.036s
+  591.269  RACE_FINISH                     finish_time=14.036s
+  591.521  RACE_FINISH                     finish_time=14.036s
+  591.771  RACE_FINISH                     finish_time=14.036s
+  592.021  RACE_FINISH                     finish_time=14.036s
+  592.273  RACE_FINISH                     finish_time=14.036s
+  592.524  RACE_FINISH                     finish_time=14.036s
+  592.773  RACE_FINISH                     finish_time=14.036s
+  593.024  RACE_FINISH                     finish_time=14.036s
+  593.276  RACE_FINISH                     finish_time=14.036s
+  593.527  RACE_FINISH                     finish_time=14.036s
+  593.776  RACE_FINISH                     finish_time=14.036s
+  594.028  RACE_FINISH                     finish_time=14.036s
+  594.280  RACE_FINISH                     finish_time=14.036s
+  594.529  RACE_FINISH                     finish_time=14.036s
+  594.782  RACE_FINISH                     finish_time=14.036s
+  595.031  RACE_FINISH                     finish_time=14.036s
+  595.283  RACE_FINISH                     finish_time=14.036s
+  595.533  RACE_FINISH                     finish_time=14.036s
+  595.784  RACE_FINISH                     finish_time=14.036s
+  596.033  RACE_FINISH                     finish_time=14.036s
+  596.285  RACE_FINISH                     finish_time=14.036s
+  596.536  RACE_FINISH                     finish_time=14.036s
+  596.786  RACE_FINISH                     finish_time=14.036s
+  597.037  RACE_FINISH                     finish_time=14.036s
+  597.287  RACE_FINISH                     finish_time=14.036s
+  597.538  RACE_FINISH                     finish_time=14.036s
+  597.788  RACE_FINISH                     finish_time=14.036s
+  598.039  RACE_FINISH                     finish_time=14.036s
+  598.290  RACE_FINISH                     finish_time=14.036s
+  598.540  RACE_FINISH                     finish_time=14.036s
+  598.792  RACE_FINISH                     finish_time=14.036s
+  599.042  RACE_FINISH                     finish_time=14.036s
+  599.292  RACE_FINISH                     finish_time=14.036s
+  599.543  RACE_FINISH                     finish_time=14.036s
+  599.793  RACE_FINISH                     finish_time=14.036s
+  600.044  RACE_FINISH                     finish_time=14.036s
+  600.295  RACE_FINISH                     finish_time=14.036s
+  600.544  RACE_FINISH                     finish_time=14.036s
+  600.796  RACE_FINISH                     finish_time=14.036s
+  601.045  RACE_FINISH                     finish_time=14.036s
+  601.297  RACE_FINISH                     finish_time=14.036s
+  601.547  RACE_FINISH                     finish_time=14.036s
+  601.797  RACE_FINISH                     finish_time=14.036s
+  602.048  RACE_FINISH                     finish_time=14.036s
+  602.298  RACE_FINISH                     finish_time=14.036s
+  602.549  RACE_FINISH                     finish_time=14.036s
+  602.799  RACE_FINISH                     finish_time=14.036s
+  603.050  RACE_FINISH                     finish_time=14.036s
+  603.301  RACE_FINISH                     finish_time=14.036s
+  603.554  RACE_FINISH                     finish_time=14.036s
+  603.802  RACE_FINISH                     finish_time=14.036s
+  604.053  RACE_FINISH                     finish_time=14.036s
+  604.304  RACE_FINISH                     finish_time=14.036s
+  604.554  RACE_FINISH                     finish_time=14.036s
+  604.807  RACE_FINISH                     finish_time=14.036s
+  605.058  RACE_FINISH                     finish_time=14.036s
+  605.308  RACE_FINISH                     finish_time=14.036s
+  605.560  RACE_FINISH                     finish_time=14.036s
+  605.810  RACE_FINISH                     finish_time=14.036s
+  606.060  RACE_FINISH                     finish_time=14.036s
+  606.310  RACE_FINISH                     finish_time=14.036s
+  606.561  RACE_FINISH                     finish_time=14.036s
+  606.812  RACE_FINISH                     finish_time=14.036s
+  607.063  RACE_FINISH                     finish_time=14.036s
+  607.315  RACE_FINISH                     finish_time=14.036s
+  607.565  RACE_FINISH                     finish_time=14.036s
+  607.816  RACE_FINISH                     finish_time=14.036s
+  608.067  RACE_FINISH                     finish_time=14.036s
+  608.318  RACE_FINISH                     finish_time=14.036s
+  608.567  RACE_FINISH                     finish_time=14.036s
+  608.818  RACE_FINISH                     finish_time=14.036s
+  609.068  RACE_FINISH                     finish_time=14.036s
+  609.320  RACE_FINISH                     finish_time=14.036s
+  609.570  RACE_FINISH                     finish_time=14.036s
+  609.820  RACE_FINISH                     finish_time=14.036s
+  610.072  RACE_FINISH                     finish_time=14.036s
+  610.321  RACE_FINISH                     finish_time=14.036s
+  610.573  RACE_FINISH                     finish_time=14.036s
+  610.823  RACE_FINISH                     finish_time=14.036s
+  611.073  RACE_FINISH                     finish_time=14.036s
+  611.323  RACE_FINISH                     finish_time=14.036s
+  611.574  RACE_FINISH                     finish_time=14.036s
+  611.825  RACE_FINISH                     finish_time=14.036s
+  612.076  RACE_FINISH                     finish_time=14.036s
+  612.326  RACE_FINISH                     finish_time=14.036s
+  612.576  RACE_FINISH                     finish_time=14.036s
+  612.826  RACE_FINISH                     finish_time=14.036s
+  613.078  RACE_FINISH                     finish_time=14.036s
+  613.329  RACE_FINISH                     finish_time=14.036s
+  613.579  RACE_FINISH                     finish_time=14.036s
+  613.830  RACE_FINISH                     finish_time=14.036s
+  614.081  RACE_FINISH                     finish_time=14.036s
+  614.331  RACE_FINISH                     finish_time=14.036s
+  614.581  RACE_FINISH                     finish_time=14.036s
+  614.832  RACE_FINISH                     finish_time=14.036s
+  615.082  RACE_FINISH                     finish_time=14.036s
+  615.333  RACE_FINISH                     finish_time=14.036s
+  615.582  RACE_FINISH                     finish_time=14.036s
+  615.833  RACE_FINISH                     finish_time=14.036s
+  616.085  RACE_FINISH                     finish_time=14.036s
+  616.334  RACE_FINISH                     finish_time=14.036s
+  616.585  RACE_FINISH                     finish_time=14.036s
+  616.835  RACE_FINISH                     finish_time=14.036s
+  617.086  RACE_FINISH                     finish_time=14.036s
+  617.336  RACE_FINISH                     finish_time=14.036s
+  617.587  RACE_FINISH                     finish_time=14.036s
+  617.836  RACE_FINISH                     finish_time=14.036s
+  618.088  RACE_FINISH                     finish_time=14.036s
+  618.340  RACE_FINISH                     finish_time=14.036s
+  618.589  RACE_FINISH                     finish_time=14.036s
+  618.840  RACE_FINISH                     finish_time=14.036s
+  619.092  RACE_FINISH                     finish_time=14.036s
+  619.342  RACE_FINISH                     finish_time=14.036s
+  619.594  RACE_FINISH                     finish_time=14.036s
+  619.845  RACE_FINISH                     finish_time=14.036s
+  620.095  RACE_FINISH                     finish_time=14.036s
+  620.344  RACE_FINISH                     finish_time=14.036s
+  620.594  RACE_FINISH                     finish_time=14.036s
+  620.845  RACE_FINISH                     finish_time=14.036s
+  621.097  RACE_FINISH                     finish_time=14.036s
+  621.348  RACE_FINISH                     finish_time=14.036s
+  621.598  RACE_FINISH                     finish_time=14.036s
+  621.847  RACE_FINISH                     finish_time=14.036s
+  622.100  RACE_FINISH                     finish_time=14.036s
+  622.351  RACE_FINISH                     finish_time=14.036s
+  622.601  RACE_FINISH                     finish_time=14.036s
+  622.852  RACE_FINISH                     finish_time=14.036s
+  623.101  RACE_FINISH                     finish_time=14.036s
+  623.354  RACE_FINISH                     finish_time=14.036s
+  623.605  RACE_FINISH                     finish_time=14.036s
+  623.853  RACE_FINISH                     finish_time=14.036s
+  624.105  RACE_FINISH                     finish_time=14.036s
+  624.355  RACE_FINISH                     finish_time=14.036s
+  624.605  RACE_FINISH                     finish_time=14.036s
+  624.855  RACE_FINISH                     finish_time=14.036s
+  625.107  RACE_FINISH                     finish_time=14.036s
+  625.357  RACE_FINISH                     finish_time=14.036s
+  625.610  RACE_FINISH                     finish_time=14.036s
+  625.860  RACE_FINISH                     finish_time=14.036s

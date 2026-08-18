@@ -150,6 +150,43 @@ class PlannerIntegrationTests(unittest.TestCase):
             self.assertEqual(len(planner._buf), 0)
             self.assertEqual(len(planner._plans), 0)
 
+    def test_new_lock_snaps_visual_and_keeps_imu(self):
+        from race_obs import STATE_END, VISUAL_END
+        from policy_planner import PolicyPlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _checkpoint(Path(tmp), context=True, chunk=3)
+            planner = PolicyPlanner(str(path))
+            for i in range(6):
+                shared = _shared(gate=3)
+                shared['highres_imu'] = {
+                    'xgyro': 0.1 * i, 'ygyro': 0.0, 'zgyro': 0.0,
+                }
+                shared['gate_detection']['keypoints_px'] = [
+                    (80.0, 80.0) for _ in range(8)
+                ]
+                planner.compute_target(shared)
+            gyros_before = [fr[VISUAL_END + 2] for fr in planner._buf]
+            self.assertGreater(len(set(round(g, 6) for g in gyros_before)), 1)
+
+            shared = _shared(gate=4)
+            shared['highres_imu'] = {'xgyro': 1.5, 'ygyro': 0.0, 'zgyro': 0.0}
+            shared['gate_detection']['keypoints_px'] = [
+                (400.0, 180.0) for _ in range(8)
+            ]
+            planner.compute_target(shared)
+            self.assertTrue(shared['policy_obs']['visual_snap'])
+            self.assertEqual(len(planner._plans), 1)
+            hist = list(planner._buf)
+            new_vis = hist[-1][:VISUAL_END]
+            new_ctx = hist[-1][STATE_END:]
+            for fr in hist[:-1]:
+                self.assertEqual(fr[:VISUAL_END], new_vis)
+                self.assertEqual(fr[STATE_END:], new_ctx)
+            # IMU tape is still the per-frame gyro, not the new lock's.
+            for fr, g in zip(hist[:-1], gyros_before):
+                self.assertAlmostEqual(fr[VISUAL_END + 2], g, places=5)
+
 
 if __name__ == '__main__':
     unittest.main()

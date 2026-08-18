@@ -67,6 +67,17 @@ STATE_CHANNELS = ('roll', 'pitch', 'gx', 'gy', 'gz')
 FEATURE_NAMES: tuple[str, ...] = CORNER_CHANNELS + VIS_CHANNELS + STATE_CHANNELS
 FEATURE_DIM = len(FEATURE_NAMES)
 
+# Observation layout. Visual target (corners + visibility + optional one-hot)
+# can snap on a new lock; IMU (roll/pitch/gyro) must not.
+VISUAL_END = 2 * KEYPOINT_COUNT + KEYPOINT_COUNT  # 24
+STATE_END = VISUAL_END + len(STATE_CHANNELS)  # 29
+# A new lock is a centre jump of this many normalised pixels, a reacquire
+# after unseen, or an active_gate one-hot change. Tracking jitter is smaller.
+SNAP_VISUAL = os.environ.get('OBS_SNAP_VISUAL', '1').strip().lower() not in (
+    '0', 'false', 'no',
+)
+SNAP_CENTER_DIST = float(os.environ.get('OBS_SNAP_CENTER_DIST', '0.20'))
+
 # ---- optional course context ------------------------------------------------
 # Which gate the sim says we are flying to, one-hot, plus fractional progress
 # through the lap. Both come from race_status, which is ordinary onboard
@@ -86,6 +97,75 @@ FEATURE_DIM_CTX = len(FEATURE_NAMES_CTX)
 
 def feature_dim(with_context: bool = False) -> int:
     return FEATURE_DIM_CTX if with_context else FEATURE_DIM
+
+
+def _as_seq(obs) -> list[float]:
+    return list(obs)
+
+
+def visible_center(obs) -> Optional[tuple[float, float]]:
+    """Mean (u, v) of visible corners, or None if the gate is unseen."""
+    seq = _as_seq(obs)
+    us: list[float] = []
+    vs: list[float] = []
+    for i in range(KEYPOINT_COUNT):
+        if seq[2 * KEYPOINT_COUNT + i] > 0.0:
+            us.append(seq[2 * i])
+            vs.append(seq[2 * i + 1])
+    if not us:
+        return None
+    return (sum(us) / len(us), sum(vs) / len(vs))
+
+
+def context_gate(obs) -> Optional[int]:
+    """Argmax of the active_gate one-hot, or None if context is absent/empty."""
+    seq = _as_seq(obs)
+    if len(seq) < STATE_END + N_GATES:
+        return None
+    onehot = seq[STATE_END: STATE_END + N_GATES]
+    if not any(v > 0.0 for v in onehot):
+        return None
+    return max(range(N_GATES), key=lambda i: onehot[i])
+
+
+def visual_target_changed(
+    prev,
+    curr,
+    *,
+    center_dist: float = SNAP_CENTER_DIST,
+) -> bool:
+    """True when ``curr`` is a new visual/scorekeeper target vs ``prev``.
+
+    IMU-only motion does not count. Losing the gate (seen → unseen) does not
+    count: that would paint sentinels over the last good view.
+    """
+    g0, g1 = context_gate(prev), context_gate(curr)
+    if g0 is not None and g1 is not None and g0 != g1:
+        return True
+    c0, c1 = visible_center(prev), visible_center(curr)
+    if c0 is None and c1 is not None:
+        return True
+    if c0 is not None and c1 is not None:
+        du = c0[0] - c1[0]
+        dv = c0[1] - c1[1]
+        if math.hypot(du, dv) >= float(center_dist):
+            return True
+    return False
+
+
+def apply_visual_snap(frames, source) -> None:
+    """Copy keypoints, visibility, and context from ``source`` onto ``frames``.
+
+    Leaves roll / pitch / gyro on each frame untouched. In-place. ``frames``
+    is an iterable of mutable 1-d sequences (lists or ndarray rows).
+    """
+    src = _as_seq(source)
+    vis = src[:VISUAL_END]
+    ctx = src[STATE_END:] if len(src) > STATE_END else None
+    for fr in frames:
+        fr[:VISUAL_END] = vis
+        if ctx is not None and len(fr) > STATE_END:
+            fr[STATE_END:] = ctx
 
 
 def context_features(gate_index) -> list[float]:

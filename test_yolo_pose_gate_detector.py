@@ -113,6 +113,38 @@ def test_generic_pose_weights_are_rejected():
         )
 
 
+def test_roboflow_project_class_name_is_accepted():
+    model = _FakeModel(
+        [_frame(rows=((100, 60, 300, 260, 0.90, 1),))],
+        names={0: "0", 1: "AIGP-8keypoints"},
+    )
+
+    candidates = detect_gate_poses(
+        np.zeros((360, 640, 3), dtype=np.uint8),
+        model,
+        PoseGateConfig(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].box.class_id == 1
+    assert candidates[0].box.label == "AIGP-8keypoints"
+
+
+def test_roboflow_dummy_class_zero_is_ignored():
+    model = _FakeModel(
+        [_frame(rows=((100, 60, 300, 260, 0.90, 0),))],
+        names={0: "0", 1: "AIGP-8keypoints"},
+    )
+
+    candidates = detect_gate_poses(
+        np.zeros((360, 640, 3), dtype=np.uint8),
+        model,
+        PoseGateConfig(),
+    )
+
+    assert candidates == []
+
+
 def test_loaded_pose_model_is_warmed_before_detector_is_ready(monkeypatch):
     model = _FakeModel([([], [], [])])
     monkeypatch.setattr(

@@ -23,6 +23,7 @@ literature:
 
     python tools/train_policy.py --telem logs/telem_A.csv logs/telem_B.csv
     python tools/train_policy.py --glob 'logs/telem_2026*.csv' --epochs 60
+    python tools/train_policy.py --glob 'logs/seed/telem_*.csv' --glob 'logs/coach/telem_*.csv'
 """
 from __future__ import annotations
 
@@ -48,6 +49,8 @@ from race_obs import (  # noqa: E402
     FRAME_W,
     KEYPOINT_COUNT,
     NOT_SEEN,
+    SNAP_VISUAL,
+    apply_visual_snap,
     bin_centers,
     feature_dim,
     LABEL_DIM,
@@ -56,6 +59,7 @@ from race_obs import (  # noqa: E402
     augment_corners,
     labels_from_row,
     observation_from_row,
+    visual_target_changed,
 )
 
 
@@ -245,12 +249,26 @@ def build_windows(runs, history: int, target_dt: float = 0.0, chunk: int = 1):
         seg_start = np.zeros(n, dtype=np.int64)
         for k in range(1, n):
             seg_start[k] = k if attempts[k] != attempts[k - 1] else seg_start[k - 1]
+        # Same one-shot visual snap the planner applies in flight, so a
+        # window ending on a new lock is not 63 frames of the previous gate.
+        live = obs.copy()
         for end in range(n):
+            if (
+                SNAP_VISUAL
+                and end > 0
+                and attempts[end] == attempts[end - 1]
+                and visual_target_changed(live[end - 1], live[end])
+            ):
+                lo_snap = max(
+                    int(seg_start[end]),
+                    end - (history - 1) * stride,
+                )
+                apply_visual_snap(live[lo_snap:end], live[end])
             if not valid[end]:
                 continue
             lo = int(seg_start[end])
             idx = [max(lo, end - stride * i) for i in range(history - 1, -1, -1)]
-            window = obs[idx]
+            window = live[idx]
             if chunk > 1:
                 # Targets for this step and the next chunk-1, spaced like the
                 # history. Clamp at the end of the attempt rather than bleeding
@@ -358,10 +376,33 @@ def gate_balance_weights(
     return out
 
 
+def warm_start_policy(model, path: Path, device: str):
+    """Load ``path`` into ``model``. Arch must match or this is a no-op crash.
+
+    From-scratch DAgger on mixed seed+coach is what forgot the launch in r1.
+    Warm-start keeps the seed's pitch/roll and edits recoveries on top.
+    """
+    from policy_net import load_policy
+
+    loaded, blob = load_policy(path, map_location=device)
+    want, got = model.arch(), loaded.arch()
+    if want != got:
+        raise SystemExit(
+            f'--init {path} arch {got} does not match this train {want}'
+        )
+    model.load_state_dict(loaded.state_dict())
+    return blob
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--telem', type=Path, nargs='*', default=[])
-    ap.add_argument('--glob', default=None)
+    ap.add_argument(
+        '--glob',
+        action='append',
+        default=None,
+        help='file glob; pass more than once to mix seed and coach folders',
+    )
     ap.add_argument('--history', type=int, default=DEFAULT_HISTORY)
     ap.add_argument(
         '--target-dt', type=float, default=0.1,
@@ -438,12 +479,18 @@ def main() -> None:
              'those modes into a permanent mild input. 0 = regression.',
     )
     ap.add_argument('--out', type=Path, default=ROOT / 'models' / 'policy.pt')
+    ap.add_argument(
+        '--init', type=Path, default=None,
+        help='warm-start from this checkpoint. Arch (H/chunk/bins/n_in) must '
+             'match. Use this for DAgger rounds so the seed launch is not '
+             're-rolled from scratch.',
+    )
     ap.add_argument('--seed', type=int, default=0)
     args = ap.parse_args()
 
     paths = list(args.telem)
-    if args.glob:
-        paths += [Path(p) for p in globlib.glob(args.glob)]
+    for pattern in args.glob or []:
+        paths += [Path(p) for p in globlib.glob(pattern)]
     paths = [p for p in dict.fromkeys(paths) if p.is_file()]
     if not paths:
         print('no telemetry files found — pass --telem or --glob', flush=True)
@@ -555,6 +602,9 @@ def main() -> None:
     model = RacePolicy(
         n_in=n_feat, history=args.history, chunk=args.chunk, bins=args.bins
     ).to(device)
+    if args.init is not None:
+        warm_start_policy(model, args.init, device)
+        print(f'warm-start from {args.init}', flush=True)
 
     # Bin targets for the categorical head. Y is (N, LABEL_DIM) or
     # (N, chunk, LABEL_DIM) in raw units; Yb mirrors it with bin indices.
@@ -728,6 +778,7 @@ def main() -> None:
         'runs': [str(p) for p in paths],
         'n_windows': int(len(X)),
         'intervention_windows': int((W > 1.0).sum()),
+        'init': str(args.init) if args.init is not None else None,
     })
     print(f'wrote {args.out}', flush=True)
 

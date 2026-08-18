@@ -1,44 +1,45 @@
 # Classical vision racing (Li & de Croon)
 
-Branch: `classical-vision-racing`.
+`FLIGHT_MODE=race` — an alternate planner, **not** the timed submission.
+The timed path is `FLIGHT_MODE=policy` ([`HG_DAGGER.md`](HG_DAGGER.md)).
 
-## What landed
+## What it is
 
-- `vision/gate_ls_pose.py` — bearing-vector least-squares gate pose (attitude known, 3 unknowns)
-- `ekf/drag_ekf.py` — 7-state drag EKF (bias integrates once, not twice)
-- `race_planner.py` — PD align when gate visible, feed-forward arc when blind
+Bearing-vector least-squares gate pose, a 7-state drag EKF, and a PD-align /
+feed-forward-arc planner:
+
+- `vision/gate_ls_pose.py` — attitude known, 3 unknowns
+- `ekf/drag_ekf.py` — bias integrates once, not twice
+- `race_planner.py` — PD when the gate is visible, arc when blind
 - `tools/build_course_map.py`, `tools/eval_gate_pose.py`, `tools/identify_drag.py`
-- `FLIGHT_MODE=race` wired through `config.py` / `setup.py` / `main.py`
 
-## Run (when the sim is back)
+Wired through `config.py` / `setup.py` / `main.py`. Pose weights and the
+Windows venv live in this checkout (`models/ROBOFLOW_RETRAIN.pt`, `winvenv/`).
+
+## Run (experiment only)
 
 ```powershell
 $env:FLIGHT_MODE='race'
 .\winvenv\Scripts\python.exe main.py
 ```
 
-Score with `tools/score_runs.py` / `tools/approach_metrics.py`.
+Score with `tools/score_runs.py` / `tools/approach_metrics.py` if you are
+comparing this stack to itself. Do not use those numbers as the submission
+clock.
 
-## Blocked on this checkout
+Offline solver / EKF tests:
 
-The working tree no longer contains:
-
-- `AIGP_3385/` — the simulator
-- `frames/` — 36k images for Phase 1b GO/NO-GO
-- `logs/telem_*.csv` — drag identification / GATE_PASSED anchors
-- `models/*.pt` — YOLO weights
-- `venv/` / `winvenv/` — Python environments
-
-So Phase 1b (`tools/eval_gate_pose.py`), drag fitting (`tools/identify_drag.py`), and live flight cannot run here yet. Synthetic unit tests for the solver and EKF do run without those assets:
-
-```bash
-python -m pytest test_gate_ls_pose.py test_drag_ekf.py -q
+```powershell
+.\winvenv\Scripts\python.exe -m unittest test_gate_ls_pose test_drag_ekf
 ```
 
-## Restore checklist
+## If you revive this path
 
-1. Put the simulator back under `AIGP_3385/` (or update paths).
-2. Restore `winvenv/` (or recreate) and YOLO weights under `models/`.
-3. Optionally restore `frames/` and run `python tools/eval_gate_pose.py` before trusting range at speed.
-4. Fly one lap, then `python tools/identify_drag.py --telem logs/telem_....csv` and set `DRAG_KX` / `DRAG_KY`.
-5. `python tools/build_course_map.py --telem ...` to replace the stub `course_map.json`.
+1. Simulator running, logged in, race started.
+2. YOLO pose weights under `models/` (same detector as the rest of the client).
+3. Optional: `tools/eval_gate_pose.py` on saved frames before trusting range
+   at speed.
+4. One flown lap → `tools/identify_drag.py --telem logs/telem_....csv` →
+   `DRAG_KX` / `DRAG_KY`.
+5. `tools/build_course_map.py --telem ...` if you want a map file. The
+   policy path does not need one.

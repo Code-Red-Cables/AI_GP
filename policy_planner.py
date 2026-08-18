@@ -23,10 +23,13 @@ from race_obs import (
     DEFAULT_HISTORY,
     FEATURE_DIM,
     LABEL_NAMES,
+    SNAP_VISUAL,
+    apply_visual_snap,
     bin_centers,
     build_observation,
     decode_bin_probs,
     stack_history,
+    visual_target_changed,
 )
 
 
@@ -93,7 +96,7 @@ class PolicyPlanner:
     def __init__(self, weights_path: str | None = None):
         self.name = 'policy(hg-dagger)'
         path = weights_path or os.environ.get(
-            'POLICY_WEIGHTS', 'models/policy.pt'
+            'POLICY_WEIGHTS', 'models/policy_seed_17.pt'
         )
         self.weights_path = path
         self._sort_by_u = False
@@ -165,6 +168,18 @@ class PolicyPlanner:
                 f'observation dim {len(obs)} != checkpoint n_in '
                 f'{self._expect_dim} (context={self._with_context})'
             )
+        # New visual lock / GATE_PASSED: paint the current corners + gate id
+        # across the history window so the TCN does not keep flying the
+        # previous target. IMU (roll/pitch/gyro) on those frames stays.
+        snapped = False
+        if (
+            SNAP_VISUAL
+            and self._buf
+            and visual_target_changed(self._buf[-1], obs)
+        ):
+            apply_visual_snap(self._buf, obs)
+            self._plans.clear()
+            snapped = True
         self._buf.append(obs)
         window = stack_history(self._buf, self._history)
         x = self._torch.tensor(
@@ -241,5 +256,6 @@ class PolicyPlanner:
         shared_data['policy_obs'] = {
             'n_vis': float(sum(obs[16:24])),
             'history': len(self._buf),
+            'visual_snap': snapped,
         }
         return target

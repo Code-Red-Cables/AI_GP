@@ -12,7 +12,7 @@ import yaml
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = (
-    REPOSITORY_ROOT / "datasets" / "AIGP_8keypoints.v1i.yolov8" / "data.yaml"
+    REPOSITORY_ROOT / "datasets" / "AIGP_8keypoints.v5i.yolov8" / "data.yaml"
 )
 # Outer ring then inner ring, each clockwise from top-left.
 KEYPOINT_COUNT = 8
@@ -21,6 +21,50 @@ EXPECTED_KEYPOINT_SHAPE = [KEYPOINT_COUNT, 3]
 EXPECTED_FLIP_INDEX = [1, 0, 3, 2, 5, 4, 7, 6]
 LABEL_FIELD_COUNT = 5 + KEYPOINT_COUNT * 3
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".webp"}
+
+# Ultralytics defaults leave degrees=0, so a mostly-level Roboflow set never
+# sees a banked gate. ±90 covers knife-edge roll. flipud stays off: it would
+# invert top/bottom ring identity the same way a wrong flip_idx inverts
+# left/right.
+# All geometric / mosaic augs off. Use when the dataset already contains
+# augmented copies (Roboflow "augmentation built in").
+POSE_NO_AUGMENTATION = {
+    "degrees": 0.0,
+    "translate": 0.0,
+    "scale": 0.0,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "fliplr": 0.0,
+    "flipud": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.0,
+    "mosaic": 0.0,
+    "mixup": 0.0,
+    "copy_paste": 0.0,
+    "close_mosaic": 0,
+    "erasing": 0.0,
+    "multi_scale": 0.0,
+}
+
+POSE_TRAIN_AUGMENTATION = {
+    "degrees": 90.0,
+    "translate": 0.20,
+    "scale": 0.70,
+    "shear": 6.0,
+    "perspective": 0.001,
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.0,
+    "mosaic": 1.0,
+    "mixup": 0.10,
+    "copy_paste": 0.20,
+    "close_mosaic": 20,
+    "erasing": 0.30,
+    "multi_scale": 0.5,
+}
 
 
 def parse_args(argv=None):
@@ -41,6 +85,18 @@ def parse_args(argv=None):
     parser.add_argument(
         "--output",
         default=str(REPOSITORY_ROOT / "models" / "gate_pose.pt"),
+    )
+    parser.add_argument(
+        "--degrees",
+        type=float,
+        default=POSE_TRAIN_AUGMENTATION["degrees"],
+        help="Max random rotation in degrees (±). Default 90 for heavy race roll.",
+    )
+    parser.add_argument(
+        "--no-augment",
+        action="store_true",
+        help="Disable trainer-side augmentation. Use when the export already "
+             "includes Roboflow (or other) augmented copies.",
     )
     return parser.parse_args(argv)
 
@@ -145,6 +201,27 @@ def validate_pose_dataset(data_yaml: Path) -> dict[str, tuple[int, int]]:
     return summary
 
 
+def build_train_kwargs(args) -> dict:
+    """Ultralytics train() kwargs, including race-specific augmentation."""
+    aug = (
+        dict(POSE_NO_AUGMENTATION)
+        if bool(getattr(args, "no_augment", False))
+        else {**POSE_TRAIN_AUGMENTATION, "degrees": float(args.degrees)}
+    )
+    train_kwargs = {
+        "data": str(Path(args.data).resolve()),
+        "epochs": args.epochs,
+        "imgsz": args.imgsz,
+        "batch": args.batch,
+        "workers": args.workers,
+        "name": args.name,
+        **aug,
+    }
+    if args.device:
+        train_kwargs["device"] = args.device
+    return train_kwargs
+
+
 def main(argv=None):
     args = parse_args(argv)
     data_yaml = Path(args.data).resolve()
@@ -170,17 +247,21 @@ def main(argv=None):
         ) from exc
 
     model = YOLO(args.model)
-    train_kwargs = {
-        "data": str(data_yaml),
-        "epochs": args.epochs,
-        "imgsz": args.imgsz,
-        "batch": args.batch,
-        "workers": args.workers,
-        "name": args.name,
-        "fliplr": 0.5,
-    }
-    if args.device:
-        train_kwargs["device"] = args.device
+    train_kwargs = build_train_kwargs(args)
+    print(
+        "[POSE AUG] "
+        f"degrees=±{train_kwargs['degrees']:.0f} "
+        f"translate={train_kwargs['translate']} "
+        f"scale={train_kwargs['scale']} "
+        f"shear={train_kwargs['shear']} "
+        f"perspective={train_kwargs['perspective']} "
+        f"hsv=({train_kwargs['hsv_h']},{train_kwargs['hsv_s']},"
+        f"{train_kwargs['hsv_v']}) "
+        f"mixup={train_kwargs['mixup']} copy_paste={train_kwargs['copy_paste']} "
+        f"erasing={train_kwargs['erasing']} multi_scale={train_kwargs['multi_scale']} "
+        f"fliplr={train_kwargs['fliplr']} flipud={train_kwargs['flipud']}",
+        flush=True,
+    )
     result = model.train(**train_kwargs)
     save_dir = Path(
         getattr(result, "save_dir", "runs/pose/gate_pose_train")

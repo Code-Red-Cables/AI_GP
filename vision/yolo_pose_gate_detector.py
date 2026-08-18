@@ -30,6 +30,7 @@ from .gate_detector import (
 from .yolo_gate_detector import (
     InnerGateCorners,
     YoloGateBox,
+    resolve_gate_class_ids,
     score_gate_candidate,
     select_target_gate,
 )
@@ -37,7 +38,7 @@ from .yolo_gate_detector import (
 
 @dataclass(frozen=True)
 class PoseGateConfig:
-    model_path: str = "models/gate_pose.pt"
+    model_path: str = "models/ROBOFLOW_RETRAIN.pt"
     gate_class_name: str = "gate"
     confidence_threshold: float = 0.25
     keypoint_confidence_threshold: float = 0.25
@@ -180,11 +181,7 @@ def detect_gate_poses(
         return []
     result = results[0]
     names = _model_names(result, model)
-    gate_ids = {
-        class_id
-        for class_id, name in names.items()
-        if name.strip().lower() == config.gate_class_name.strip().lower()
-    }
+    gate_ids = resolve_gate_class_ids(names, config.gate_class_name)
     if not gate_ids:
         available = ", ".join(
             f"{class_id}:{name}" for class_id, name in sorted(names.items())

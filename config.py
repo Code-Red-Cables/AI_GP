@@ -129,7 +129,11 @@ if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'race', 'policy'}:
     raise ValueError(
         'FLIGHT_MODE must be "assist", "kalman", "spline", "race" or "policy"'
     )
-POLICY_WEIGHTS = os.environ.get('POLICY_WEIGHTS', 'models/policy.pt')
+POLICY_WEIGHTS = os.environ.get('POLICY_WEIGHTS', 'models/policy_seed_17.pt')
+# How often the policy history advances. Default matches the coach loop
+# (20 Hz), not CONTROL_HZ. A 99 Hz main.py loop would otherwise compress
+# H=64 into well under a second. Pass --hz 10 to match train --target-dt.
+POLICY_LOOP_HZ = float(os.environ.get('POLICY_LOOP_HZ', '20'))
 
 # ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
 # Capture/replay use the same EKF_USE_PNP so drift stays common-mode.
@@ -842,7 +846,10 @@ ASSIST_ROLL_LEFT_MISS_BOOST = float(
     os.environ.get('ASSIST_ROLL_LEFT_MISS_BOOST', '1.0')
 )
 # Skip controller takeoff boost — assist clears the pad with soft lean only.
-if FLIGHT_MODE in ('assist', 'race') and 'TAKEOFF_DURATION_S' not in os.environ:
+if (
+    FLIGHT_MODE in ('assist', 'race', 'policy')
+    and 'TAKEOFF_DURATION_S' not in os.environ
+):
     TAKEOFF_DURATION_S = 0.0
 # LEAN_THRUST_BOOST default is 0 (geometric gate1 height owns altitude in assist).
 
@@ -1105,7 +1112,7 @@ if GATE_DETECTOR_BACKEND not in {
     )
 
 YOLO_POSE_MODEL_PATH = os.environ.get(
-    'YOLO_POSE_MODEL_PATH', 'models/gate_pose.pt'
+    'YOLO_POSE_MODEL_PATH', 'models/ROBOFLOW_RETRAIN.pt'
 )
 YOLO_MODEL_PATH = os.environ.get(
     'YOLO_MODEL_PATH', 'models/gate_detector.pt'

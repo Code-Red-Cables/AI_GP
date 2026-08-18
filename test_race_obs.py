@@ -15,13 +15,18 @@ import race_obs
 from race_obs import (
     DEFAULT_HISTORY,
     FEATURE_DIM,
+    FEATURE_DIM_CTX,
     FEATURE_NAMES,
     KEYPOINT_COUNT,
     NOT_SEEN,
+    STATE_END,
+    VISUAL_END,
+    apply_visual_snap,
     build_observation,
     labels_from_row,
     observation_from_row,
     stack_history,
+    visual_target_changed,
 )
 
 
@@ -132,6 +137,49 @@ class ObservationTests(unittest.TestCase):
         self.assertAlmostEqual(got[1], 0.1 / config.RATE_SIGN_ROLL)
         self.assertAlmostEqual(got[2], -0.2 / config.RATE_SIGN_PITCH)
         self.assertAlmostEqual(got[3], 0.05 / config.RATE_SIGN_YAW)
+
+
+class VisualSnapTests(unittest.TestCase):
+    def test_centre_jump_is_a_new_target(self):
+        a = build_observation([[100.0, 100.0]] * KEYPOINT_COUNT)
+        b = build_observation([[400.0, 200.0]] * KEYPOINT_COUNT)
+        self.assertTrue(visual_target_changed(a, b))
+        self.assertFalse(visual_target_changed(a, a))
+
+    def test_small_jitter_is_not_a_new_target(self):
+        a = build_observation([[100.0, 100.0]] * KEYPOINT_COUNT)
+        b = build_observation([[110.0, 104.0]] * KEYPOINT_COUNT)
+        self.assertFalse(visual_target_changed(a, b))
+
+    def test_reacquire_is_a_new_target_but_dropout_is_not(self):
+        seen = build_observation(_kps(n_visible=8))
+        blank = build_observation(_kps(n_visible=0))
+        self.assertTrue(visual_target_changed(blank, seen))
+        self.assertFalse(visual_target_changed(seen, blank))
+
+    def test_active_gate_change_snaps_even_if_corners_match(self):
+        pts = _kps()
+        a = build_observation(pts, gate_index=3)
+        b = build_observation(pts, gate_index=4)
+        self.assertTrue(visual_target_changed(a, b))
+
+    def test_snap_rewrites_visual_and_keeps_imu(self):
+        old = build_observation(
+            [[80.0, 80.0]] * KEYPOINT_COUNT,
+            roll=0.1, pitch=-0.2, gx=0.3, gy=0.4, gz=0.5,
+            gate_index=2,
+        )
+        new = build_observation(
+            [[400.0, 180.0]] * KEYPOINT_COUNT,
+            roll=0.9, pitch=0.8, gx=1.0, gy=1.1, gz=1.2,
+            gate_index=5,
+        )
+        frames = [list(old)]
+        apply_visual_snap(frames, new)
+        self.assertEqual(frames[0][:VISUAL_END], new[:VISUAL_END])
+        self.assertEqual(frames[0][VISUAL_END:STATE_END], old[VISUAL_END:STATE_END])
+        self.assertEqual(frames[0][STATE_END:], new[STATE_END:])
+        self.assertEqual(len(frames[0]), FEATURE_DIM_CTX)
 
 
 class HistoryTests(unittest.TestCase):

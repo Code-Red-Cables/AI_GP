@@ -1,10 +1,13 @@
 # Spline waypoint following on derived position (`Q2_spline`)
 
-Experimental branch off `Q2_kalman`. Adds a **vision-free** flight mode that
-follows a pre-captured path using the EKF's own position estimate.
+Experimental branch off `Q2_kalman`. **Not the timed submission.** The timed
+path is `FLIGHT_MODE=policy` ([`docs/HG_DAGGER.md`](docs/HG_DAGGER.md)).
 
-`FLIGHT_MODE=assist` is still the default and is untouched. Everything here is
-additive: `FLIGHT_MODE=spline` opts in.
+Adds a **vision-free** flight mode that follows a pre-captured path using
+the EKF's own position estimate.
+
+`FLIGHT_MODE=assist` is the config.py default for the classical stack and is
+untouched. Everything here is additive: `FLIGHT_MODE=spline` opts in.
 
 ## The idea, and why it can work despite drift
 

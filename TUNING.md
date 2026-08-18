@@ -1,7 +1,10 @@
 # Tuning the dual-gate PnP + IMU flight stack
 
-Runbook for `tools/tune_flight.py`. Work the phases in order — each one
-depends on the previous being correct.
+Classical / Kalman / assist runbook for `tools/tune_flight.py`. **Not the
+timed submission.** The timed path is `FLIGHT_MODE=policy`
+([`docs/HG_DAGGER.md`](docs/HG_DAGGER.md), [`README.md`](README.md)).
+
+Work the phases in order — each one depends on the previous being correct.
 
 ## The two simulator builds
 
@@ -48,8 +51,8 @@ comes first — nothing downstream can compensate for it.
 
 ## Before you start
 
-- `models/gate_pose.pt` must be the trained pose model, or `VisionRX` raises at
-  startup.
+- Pose weights must exist at `YOLO_POSE_MODEL_PATH` (default
+  `models/ROBOFLOW_RETRAIN.pt`), or `VisionRX` raises at startup.
 - Sim running, logged in, **and in a race** — the menu alone publishes nothing.
 - A gate in view for anything that measures altitude.
 - Every run writes a CSV to `logs/tuning/` with the gains in each row, so any
@@ -60,17 +63,19 @@ lean, and force `AUTO_RESET_ON_CRASH=0` so a run cannot be yanked mid-measuremen
 
 ---
 
-## Default race client — image assist (`main.py`)
+## Image assist (`FLIGHT_MODE=assist`)
 
-`FLIGHT_MODE=assist` (default) flies the **image + PnP gate1** planner on the
-same attitude plant as `manual`. It does **not** steer on EKF position.
+`config.py` defaults `FLIGHT_MODE` to `assist` for this classical stack.
+That is **not** the timed client. Assist flies the **image + PnP gate1**
+planner on the same attitude plant as `manual`. It does **not** steer on
+EKF position.
 
 Policy:
 - **Pitch + yaw** — keep gate1 in frame (YOLO / dual norms).
 - **Altitude** — gate1 PnP *geometric* height only (`body→NED` z). Climb if
-  the gate is above us, sink if below. Never from image-`ny` (that lofted /
-  crashed takeoff) and never from camera boresight Y (041233 false-sank a
-  same-height gate that only looked low under the 20° cam tilt).
+  the gate is above us, sink if below. Never from image-`ny` (that lofted
+  takeoff) and never from camera boresight Y (a same-height gate can look
+  low under the camera tilt).
 
 ```powershell
 # Full run (logs → logs/telem_*.csv + logs/events_*.txt)
@@ -127,8 +132,8 @@ compensate for it.
 ### Attitude drift over a long run
 
 A clean attitude error at t=5 s says nothing about t=50 s. Integrated gyro has
-no absolute reference, so neutral slides: 141532 walked +4° → −23° across one
-run. Check the error at the **end** of a full-length run, not just after arm.
+no absolute reference, so neutral slides across a long run. Check the error
+at the **end** of a full-length run, not just after arm.
 
 The accelerometer cannot bound it. On a quadrotor, "leaned + accelerating" and
 "level + wrong estimate" put out the same `|acc_ned| = g·sin θ`, so any gate
@@ -142,18 +147,16 @@ recovered by PnP and immune to acceleration. It runs as a Mahony filter —
 (0.30) integrates into gyro bias, with the same pair for yaw against a
 per-gate heading anchor.
 
-**The bias term is the one that matters.** A near gate is in view only ~64% of
-the time (152912, gaps up to 2.5 s), so pulling attitude while you can see a
-gate just lets it drift back when you cannot. Learning the bias removes the
-cause. On that measured duty cycle at 0.5°/s bias the worst excursion is
-1.29° with the proportional term alone and 0.07° with the bias term.
+**The bias term is the one that matters.** A near gate is out of view for
+long stretches, so pulling attitude only while you can see a gate lets it
+drift back when you cannot. Learning the bias removes the cause.
 
 Two traps worth not re-walking:
 
 - **Never gate a correction on how far it sits from the current estimate.**
   The first version rejected disagreements over 30°, which made a drifted
-  filter reject the evidence that it had drifted — 23% of 152912's frames were
-  past that. Screen on solve quality instead (`EKF_GATE_ATT_MAX_RANGE_M`,
+  filter reject the evidence that it had drifted. Screen on solve quality
+  instead (`EKF_GATE_ATT_MAX_RANGE_M`,
   `EKF_GATE_ATT_MAX_REPROJ_PX`, geometry) and clamp the step
   (`EKF_GATE_*_MAX_STEP_DEG`) so a rare bad pose can only nudge.
 - **`held` PnP frames are last frame's pose re-stamped.** Fine for position,
@@ -161,9 +164,8 @@ Two traps worth not re-walking:
   value while the craft keeps rotating. They are skipped.
 
 If drift persists, read `gh_fixes` / `gh_skips` / `bias_gx` in the telemetry
-CSV (or `gh… b…` on the HUD) before touching a gain — on 152912 the aid was
-invisible because nothing reported whether it had fired at all. `gh_fixes`
-stuck at 0 usually means `EKF_USE_PNP=0` left over from a spline capture.
+CSV (or `gh… b…` on the HUD) before touching a gain. `gh_fixes` stuck at 0
+usually means `EKF_USE_PNP=0` left over from a spline capture.
 
 `test_gate_attitude_aid.py` drives the whole convention chain (world pose →
 camera → pixels → solvePnP → body → EKF euler); run it after touching
@@ -419,12 +421,11 @@ defaults so competition runs do not depend on shell environment.
 ## Why 0.24 is suspect
 
 `HOVER_THRUST` defaults to `0.24`. The deleted pose_debug path, on identical
-physics, converged on `0.285`, and its notes record why:
+physics, converged near `0.285`, and the notes around that work record why
+`0.24` sat below hover:
 
-- *"141553: hover 0.26 scraped (21k collisions, thr dipped to 0.245)"*
-- *"0.25s×0.263 never got off the floor"*
 - `POSE_DEBUG_THRUST_MIN = 0.270`
-- in `controller.py`: *"0.24 drops the craft"*
+- in `controller.py`: a comment that `0.24` drops the craft
 
 Now consider what the kalman planner can command. It computes
 `thrust = HOVER_THRUST - 0.030*ny`, then clamps to

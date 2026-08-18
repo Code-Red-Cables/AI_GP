@@ -1,31 +1,55 @@
-# Custom gate model weights
+# Gate and policy weights
 
-The runtime uses the eight-keypoint pose model:
+## Live inference (pose)
 
-```text
-models/gate_pose.pt
-```
-
-Place the Roboflow YOLOv8 keypoint export at:
+The client default is the unstretched eight-keypoint pose model:
 
 ```text
-datasets/AIGP_8keypoints.v1i.yolov8/
+models/ROBOFLOW_RETRAIN.pt
 ```
 
-Its eight points label both rings of the gate, each clockwise from top-left:
+Set `YOLO_POSE_MODEL_PATH` (or the env of the same name) to point at another
+checkpoint after you copy it in. Earlier files still in this folder:
+
+| File | Role |
+|---|---|
+| `ROBOFLOW_RETRAIN.pt` | Default live pose (YOLO11s, unstretched, 8 kpts) |
+| `ROBOFLOW_gatepose.pt` | Older stretched-nano train — do not use |
+| `gate_pose.pt` / `gate_pose_v2.pt` | Local Ultralytics installs from earlier datasets |
+| `gate_pose_v5.pt` | Local v5 train (pass `--yolo models/gate_pose_v5.pt` to fly it) |
+| `policy_seed_17.pt` | Live policy flyer (`H=64`, `chunk=5`, `bins=21`, `--context`) |
+| `policy.pt` | Trainer default output name — not automatically the flyer |
+
+Roboflow hosted weights keep the project class `AIGP-8keypoints` plus a dummy
+class `0`. `vision/yolo_gate_detector.py` `resolve_gate_class_ids` accepts
+`gate` and that project name, and ignores the dummy.
+
+Do not stretch frames to 640×640 for pose. Letterbox.
+
+## Dataset
+
+Current export:
+
+```text
+datasets/AIGP_8keypoints.v5i.yolov8/
+```
+
+Eight points label both rings, each clockwise from top-left:
 
 | ids | ring | real size |
 |---|---|---|
-| 0-3 | outer square | 2.7 m |
-| 4-7 | flyable opening | 1.5 m |
+| 0–3 | outer square | 2.7 m |
+| 4–7 | flyable opening | 1.5 m |
 
-They feed `vision/yolo_pnp.py` / `vision/dual_gate_pnp.py` for the PnP range and
-bearing fixes that correct the EKF. Unlike the old four-corner path these are
-trusted by keypoint id rather than re-ordered geometrically, which is what lets
-a gate that is partly out of frame still solve: any four good points produce a
-pose, and points the model did not see (reported as `0 0 0`) are left out.
+They feed `vision/yolo_pnp.py` / `vision/dual_gate_pnp.py` for PnP on the
+classical path. The **policy** uses the same keypoints as normalised image
+features (`race_obs.py`); it does not consume PnP.
 
-Ensure `data.yaml` uses dataset-local paths and correct horizontal flip
+Keypoints are trusted by id, not re-ordered geometrically. Any four good
+points can still solve a pose. Unseen points are `0 0 0` in the label and
+`-1` in the policy observation.
+
+`data.yaml` must use dataset-local paths and correct horizontal-flip
 semantics:
 
 ```yaml
@@ -36,26 +60,43 @@ flip_idx: [1, 0, 3, 2, 5, 4, 7, 6]
 names: ['gate']
 ```
 
-Roboflow gets three of those wrong on export and they must be fixed by hand. It
-writes `../train/images`, which resolves outside the dataset; it names the class
-after the project rather than `gate`; and it writes `flip_idx` as the identity
-`[0, 1, ...]`, which silently teaches mirrored corner identities because
-training runs with `fliplr: 0.5`. `tools/train_gate_pose.py` fails preflight on
-the last two rather than letting a quietly wrong model get trained.
+Roboflow export typically gets three of those wrong: `../train/images`
+(resolves outside the dataset), the project title as the class name, and
+identity `flip_idx`, which silently teaches mirrored corner ids when
+`fliplr` is on. `tools/train_gate_pose.py` fails preflight on a broken yaml
+rather than training a quietly wrong model. Dummy class-`0` objects with
+all-zero keypoints should be dropped from the labels (those images become
+empty negatives).
 
-Train locally and install `models/gate_pose.pt`:
+## Train pose
+
+The v5 export already contains augmented copies. Do **not** add a second
+round of geometric augs on top:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe tools\train_gate_pose.py
+.\winvenv\Scripts\python.exe tools\train_gate_pose.py --no-augment --name gate_pose_v5 --output models\gate_pose_v5.pt
 ```
 
-The model must contain a class named `gate`. Generic COCO weights are useful as
-a training starting point, but they are rejected for live inference because they
-do not define the custom racing-gate class.
+Without `--no-augment` the trainer applies race-style augs (Ultralytics
+defaults leave `degrees` at 0): ±90° roll, wide scale/translate, shear,
+perspective, copy-paste, multi-scale. HSV colour jitter stays off. `flipud`
+stays off so top/bottom corner ids stay intact.
 
-`models/gate_detector.pt` (bounding-box weights) is optional: the box detector
-in `vision/yolo_gate_detector.py` is retained only as the shared box/HSV
-scaffolding used by the pose detector, and `GATE_DETECTOR_BACKEND=yolo_hybrid`
-is a fallback for detector debugging. It cannot drive the PnP path on its own
-because it produces no corners.
+`--output` copies `runs/pose/<name>/weights/best.pt` to the path you pass.
+Do not point `YOLO_POSE_MODEL_PATH` at a new file until that copy exists.
+
+The live class must be `gate` or `AIGP-8keypoints`. Generic COCO weights
+are a training start only; they are rejected for live inference.
+
+`models/gate_detector.pt` (boxes only) is optional scaffolding.
+`GATE_DETECTOR_BACKEND=yolo_hybrid` is a detector-debug fallback. It cannot
+drive PnP or the policy on its own.
+
+## Train policy
+
+See [`docs/HG_DAGGER.md`](../docs/HG_DAGGER.md). The flyer that matches the
+current architecture:
+
+```powershell
+.\winvenv\Scripts\python.exe tools\train_policy.py --glob "logs/seed/telem_*.csv" --history 64 --chunk 5 --bins 21 --context --balance-gates --epochs 150 --out models\policy_seed_17.pt
+```

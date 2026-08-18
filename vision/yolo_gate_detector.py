@@ -125,6 +125,37 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+# Roboflow hosted training keeps the project title as the class name and
+# often adds a dummy class ``0``. Those weights are still the gate model.
+ROBOFLOW_GATE_CLASS_ALIASES = frozenset({
+    "gate",
+    "aigp-8keypoints",
+})
+
+
+def _normalize_class_name(name: str) -> str:
+    return name.strip().lower().replace("_", "-")
+
+
+def resolve_gate_class_ids(
+    names: dict[int, str],
+    gate_class_name: str,
+) -> set[int]:
+    """Return class ids that are the racing gate, including Roboflow aliases."""
+    wanted = {
+        _normalize_class_name(gate_class_name),
+        *ROBOFLOW_GATE_CLASS_ALIASES,
+    }
+    gate_ids: set[int] = set()
+    for class_id, name in names.items():
+        normalized = _normalize_class_name(name)
+        if normalized.isdigit():
+            continue
+        if normalized in wanted:
+            gate_ids.add(class_id)
+    return gate_ids
+
+
 def _model_names(result: Any, model: Any) -> dict[int, str]:
     names = getattr(result, "names", None)
     if names is None:
@@ -157,11 +188,7 @@ def detect_gates_yolo(
         return []
     result = results[0]
     names = _model_names(result, model)
-    gate_ids = {
-        class_id
-        for class_id, name in names.items()
-        if name.strip().lower() == config.gate_class_name.strip().lower()
-    }
+    gate_ids = resolve_gate_class_ids(names, config.gate_class_name)
     if not gate_ids:
         available = ", ".join(
             f"{class_id}:{name}" for class_id, name in sorted(names.items())

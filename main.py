@@ -1,3 +1,4 @@
+import os
 import time
 
 import config
@@ -215,22 +216,35 @@ def _early_start_hold() -> None:
     time.sleep(hold_s)
 
 
-def _wait_pad_vision(shared_data, timeout_s: float = 45.0) -> bool:
-    """Block until vision sees gate 1 (pad facing the course).
+def _pad_wants_pnp(flight_mode: str | None = None) -> bool:
+    """True when arm must wait for dual-gate PnP rather than a YOLO box.
 
-    Assist mode accepts a YOLO box; kalman mode wants dual-gate PnP.
-
-    bc is grouped with assist because the cloned policy is trained on the 2D
-    detection only -- it never reads a PnP pose, so waiting for one would hang
-    the arm on a fix it does not need.
+    ``policy`` and ``race`` steer from YOLO keypoints. They never read a PnP
+    pose, so waiting for DUAL_PNP would hang the arm on a fix they do not use.
+    ``assist`` is the same (image-space chase). Kalman / spline still need PnP.
     """
-    # Assist / race accept a YOLO box; kalman wants dual-gate PnP.
-    #
-    # race is grouped with assist because the Li & de Croon planner steers
-    # from LS bearing pose on the same keypoints the YOLO detector already
-    # emits — waiting for dual-gate PnP would hang the arm on a fix it does
-    # not need.
-    want_pnp = config.FLIGHT_MODE not in ('assist', 'race')
+    mode = (flight_mode if flight_mode is not None else config.FLIGHT_MODE)
+    return str(mode).strip().lower() not in ('assist', 'race', 'policy')
+
+
+def _quit_requested() -> bool:
+    """Esc / X / Q in the console. Does not read sticks or H/T."""
+    try:
+        import msvcrt
+    except ImportError:
+        return False
+    while msvcrt.kbhit():
+        ch = msvcrt.getwch()
+        if ch in ('\x1b', 'x', 'X', 'q', 'Q'):
+            return True
+        if ch in ('\x00', '\xe0') and msvcrt.kbhit():
+            msvcrt.getwch()
+    return False
+
+
+def _wait_pad_vision(shared_data, timeout_s: float = 45.0) -> bool:
+    """Block until vision sees gate 1 (pad facing the course)."""
+    want_pnp = _pad_wants_pnp()
     deadline = time.monotonic() + max(1.0, float(timeout_s))
     need = 'DUAL_PNP (gate1_body)' if want_pnp else 'YOLO gate or DUAL_PNP'
     print(
@@ -362,16 +376,44 @@ def run_racing():
         # once the drone can actually leave its spawn point.
         shared_data['flight_started'] = True
         monitor.note_armed(shared_data)
-    print('Control loop running -- Ctrl+C to exit', flush=True)
+    print('Control loop running -- Ctrl+C / Esc to exit', flush=True)
     # Timed path: never take human authority (spec §7). Interventions are
     # training-only via tools/tune_flight.py coach.
     shared_data['control_authority'] = 'policy'
     shared_data['intervention_id'] = ''
 
+    panel = None
+    if os.environ.get('OBS_PANEL', '').strip().lower() in (
+        '1', 'true', 'yes', 'on',
+    ):
+        from obs_panel import ObservationPanel
+        try:
+            scale = float(os.environ.get('OBS_PANEL_SCALE', '1') or 1)
+        except ValueError:
+            scale = 1.0
+        panel = ObservationPanel(
+            with_context=bool(getattr(planner, '_with_context', False)),
+            scale=scale,
+        )
+        print('[PANEL] observation window on (q or Esc closes the window)',
+              flush=True)
+
+    policy_period = 0.0
+    if config.FLIGHT_MODE == 'policy':
+        hz = float(getattr(config, 'POLICY_LOOP_HZ', 20.0) or 20.0)
+        policy_period = 1.0 / max(1.0, hz)
+        print(
+            f'[POLICY] loop {hz:.0f} Hz  weights={getattr(planner, "weights_path", "?")}',
+            flush=True,
+        )
+
     run_started_at = time.monotonic()
     try:
         while True:
             now = time.monotonic()
+            if _quit_requested():
+                print('[STOP] quit key', flush=True)
+                break
             if (
                 config.RUN_MAX_SECONDS > 0.0
                 and now - run_started_at >= config.RUN_MAX_SECONDS
@@ -398,13 +440,21 @@ def run_racing():
                 continue
             shared_data['control_authority'] = 'policy'
             shared_data['planner_target'] = planner.compute_target(shared_data)
+            if panel is not None and not panel.show(shared_data):
+                panel = None
             if config.PERCEPTION_ONLY:
                 time.sleep(1.0 / config.CONTROL_HZ)
             else:
                 controller.update()
+                if policy_period > 0.0:
+                    remain = policy_period - (time.monotonic() - now)
+                    if remain > 0.0:
+                        time.sleep(remain)
     except KeyboardInterrupt:
         pass
     finally:
+        if panel is not None:
+            panel.close()
         if not config.PERCEPTION_ONLY:
             controller.disarm()
         logger.stop()

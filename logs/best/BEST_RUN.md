@@ -1,16 +1,18 @@
-# Personal best — 35.963s
+# Reference session artifacts
 
-| Field | Value |
+Human / classical practice artifacts from a finished full-course session.
+They are **not** the timed policy submission and are not a scoreboard.
+
+| File | Contents |
 |---|---|
-| Finish | **35.963 s** (sim race clock) |
-| Source session | `20260731_001506` |
-| Course | gates 0–17 (full finish) |
-| Also in session | slower finish 37.473 s (ignored) |
+| `events_best.txt` | Events log for the session |
+| `pilot_best.csv` | Pilot tuning CSV |
+| `attitude_pb.json` / `attitude_best.json` | Open-loop attitude tape of one finished lap |
+| `best_run.json` | Scorer metadata |
 
-Artifacts:
-- `events_best.txt` — full events log for the session
-- `pilot_best.csv` — pilot tuning CSV for the session
-- `attitude_pb.json` / `attitude_best.json` — open-loop attitude tape of the 35.963 s lap (wall ≈ 236.5–275.9 s)
-- `best_run.json` — scored metadata
+Open-loop tape replay is not a reliable full-lap path on this sim (wind,
+density, and spawn vary). Use a tape as a supervised prefix only — see
+[`MANUAL_INSTRUCTIONS.md`](../../MANUAL_INSTRUCTIONS.md).
 
-Do not treat open-loop tape replay as a reliable PB path on this sim.
+The timed client is `FLIGHT_MODE=policy` with
+`models/policy_seed_17.pt`.

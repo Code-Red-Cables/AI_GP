@@ -12,8 +12,10 @@ winvenv/
 # Local practice checkpoints (regenerated as you fly).
 practice/
 
-# Ignore run logs, but keep the published personal-best package.
+# Ignore run logs, but keep the published personal-best package
+# and the folder rules for anyone cloning the repo.
 logs/*
+!logs/README.md
 !logs/best/
 !logs/best/**
 logs/best/telem_best.csv

@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from tools.train_gate_pose import validate_pose_dataset
+from tools.train_gate_pose import (
+    POSE_NO_AUGMENTATION,
+    POSE_TRAIN_AUGMENTATION,
+    build_train_kwargs,
+    parse_args,
+    validate_pose_dataset,
+)
 
 # Outer ring then inner ring, each clockwise from top-left.
 _OUTER = "0.3 0.3 2 0.7 0.3 2 0.7 0.7 2 0.3 0.7 2"
@@ -97,3 +103,32 @@ def test_pose_preflight_rejects_wrong_label_width(tmp_path):
 
     with pytest.raises(ValueError, match="expected class . box"):
         validate_pose_dataset(data_yaml)
+
+
+def test_pose_training_rotates_for_race_roll():
+    assert POSE_TRAIN_AUGMENTATION["degrees"] == 90.0
+    assert POSE_TRAIN_AUGMENTATION["fliplr"] == 0.5
+    assert POSE_TRAIN_AUGMENTATION["flipud"] == 0.0
+
+
+def test_build_train_kwargs_applies_augmentation_and_degrees_override(tmp_path):
+    data_yaml = _write_dataset(tmp_path)
+    args = parse_args(["--data", str(data_yaml), "--degrees", "0"])
+    kwargs = build_train_kwargs(args)
+
+    assert kwargs["degrees"] == 0.0
+    assert kwargs["translate"] == POSE_TRAIN_AUGMENTATION["translate"]
+    assert kwargs["scale"] == POSE_TRAIN_AUGMENTATION["scale"]
+    assert kwargs["fliplr"] == 0.5
+    assert kwargs["flipud"] == 0.0
+
+
+def test_build_train_kwargs_disables_augmentation_when_asked(tmp_path):
+    data_yaml = _write_dataset(tmp_path)
+    args = parse_args(["--data", str(data_yaml), "--no-augment"])
+    kwargs = build_train_kwargs(args)
+
+    assert kwargs["degrees"] == 0.0
+    assert kwargs["mosaic"] == 0.0
+    assert kwargs["fliplr"] == 0.0
+    assert kwargs["translate"] == POSE_NO_AUGMENTATION["translate"]

@@ -1,9 +1,12 @@
 # Dual-gate PnP + EKF + Cascaded PID (Q2_kalman)
 
-This branch runs exactly one navigation path: dual-gate PnP fixes fused with the
-IMU in an EKF, steered by a body-frame planner. There is no mode switch — the
-IBVS/OpenCV state machine, the pose-debug pad hover, teleop and the DreamerV3
-policy all live on other branches.
+`FLIGHT_MODE=kalman` — classical estimator + body-frame planner. **Not the
+timed submission.** The timed path is `FLIGHT_MODE=policy`
+([`HG_DAGGER.md`](HG_DAGGER.md)).
+
+This document describes one navigation path: dual-gate PnP fixes fused with
+the IMU in an EKF, steered by a body-frame planner. Teleop, assist, spline,
+`FLIGHT_MODE=race`, and the HG-DAgger student live in other modes.
 
 ## Algorithm
 
@@ -41,14 +44,17 @@ While both gates are visible, the EKF refreshes `gate2_ned` each correction. Whe
 
 ## Run
 
-```bash
-python main.py
+```powershell
+$env:FLIGHT_MODE="kalman"
+.\winvenv\Scripts\python.exe main.py
 
 # bounded attempt (seconds) instead of running until Ctrl+C
-RUN_MAX_SECONDS=60 python main.py
+$env:RUN_MAX_SECONDS="60"
+.\winvenv\Scripts\python.exe main.py
 
 # perception only: no arming, no flight commands
-PERCEPTION_ONLY=1 python main.py
+$env:PERCEPTION_ONLY="1"
+.\winvenv\Scripts\python.exe main.py
 ```
 
-Offline smoke: `python test_kalman_dual_gate.py`.
+Offline smoke: `.\winvenv\Scripts\python.exe test_kalman_dual_gate.py`.

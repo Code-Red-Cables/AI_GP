@@ -136,6 +136,34 @@ class AttemptSegmentTests(unittest.TestCase):
         self.assertTrue((first_of_attempt2[:, 0] == first_of_attempt2[0, 0]).all())
         self.assertGreater(first_of_attempt2[0, 0], 0.5)
 
+    def test_new_lock_snaps_visual_in_the_window_and_keeps_imu(self):
+        from race_obs import STATE_END, VISUAL_END
+        from tools.train_policy import build_windows
+
+        rows = []
+        for i in range(8):
+            gate = '1' if i < 5 else '2'
+            u = '80' if i < 5 else '400'
+            rows.append({
+                't': f'{i * 0.1:.1f}', 'control_authority': 'human',
+                'attempt': '1', 'active_gate': gate,
+                'cmd_thrust': '0.3', 'cmd_roll_rate': '0.0',
+                'cmd_pitch_rate': '0.0', 'cmd_yaw_rate': '0.0',
+                'gx_imu': str(0.1 * i), 'gy_imu': '0', 'gz_imu': '0',
+                **{f'kp{k}_u': u for k in range(8)},
+                **{f'kp{k}_v': '100' for k in range(8)},
+            })
+        loaded = load_run(
+            _write(rows), lead_s=0.0, tail_s=0.0, sort_by_u=False,
+            with_context=True,
+        )
+        X, _Y, _W, _G = build_windows([loaded], history=4)
+        # Window ending on the first new-lock row (i=5).
+        win = X[5]
+        self.assertTrue(np.allclose(win[:, :VISUAL_END], win[-1, :VISUAL_END]))
+        gyros = win[:, VISUAL_END + 2]
+        self.assertGreater(float(np.ptp(gyros)), 0.05)
+
     def test_single_attempt_behaves_as_before(self):
         from tools.train_policy import build_windows
 
@@ -355,6 +383,39 @@ class CollisionFilterTests(unittest.TestCase):
             path, lead_s=0.0, tail_s=0.0, sort_by_u=False
         )
         self.assertTrue(valid.all())
+
+
+class WarmStartTests(unittest.TestCase):
+    def test_matching_checkpoint_loads(self):
+        import tempfile
+        from pathlib import Path
+
+        from policy_net import RacePolicy, save_policy
+        from tools.train_policy import warm_start_policy
+
+        src = RacePolicy(n_in=29, history=8, chunk=5, bins=21)
+        dst = RacePolicy(n_in=29, history=8, chunk=5, bins=21)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'seed.pt'
+            save_policy(path, src)
+            warm_start_policy(dst, path, 'cpu')
+        for a, b in zip(src.parameters(), dst.parameters()):
+            self.assertTrue((a.detach() == b.detach()).all())
+
+    def test_arch_mismatch_is_fatal(self):
+        import tempfile
+        from pathlib import Path
+
+        from policy_net import RacePolicy, save_policy
+        from tools.train_policy import warm_start_policy
+
+        src = RacePolicy(n_in=29, history=8, chunk=5, bins=21)
+        dst = RacePolicy(n_in=29, history=8, chunk=1, bins=21)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'seed.pt'
+            save_policy(path, src)
+            with self.assertRaises(SystemExit):
+                warm_start_policy(dst, path, 'cpu')
 
 
 if __name__ == '__main__':
