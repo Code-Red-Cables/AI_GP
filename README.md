@@ -1,4 +1,4 @@
-# VQ1 — vision-only drone race client
+# AI Grand Prix 
 
 Python client for the AI Grand Prix / VQ1 simulator. A timed lap is a
 **vision-only policy**: a TCN reads 8-keypoint gate pose plus IMU and writes
@@ -29,7 +29,7 @@ then arms.
 | Flag | Default | What it is |
 |---|---|---|
 | `--weights` | `models/policy_seed_17.pt` | Live policy (`H=64`, chunk=5, 21 bins, `--context`) |
-| `--yolo` | `models/ROBOFLOW_RETRAIN.pt` | 8-keypoint pose detector |
+| `--yolo` | `models/gate_pose_v5.pt` | 8-keypoint pose detector |
 | `--hz` | 20 | How often the policy history advances |
 
 `main.py` is the same loop once `FLIGHT_MODE=policy` is set. Prefer
@@ -73,7 +73,7 @@ ones, and do not stretch frames to 640×640 (letterbox):
 .\winvenv\Scripts\python.exe tools\train_gate_pose.py --no-augment --name gate_pose_v5 --output models\gate_pose_v5.pt
 ```
 
-Default live pose: `models/ROBOFLOW_RETRAIN.pt`. Details:
+Default live pose: `models/gate_pose_v5.pt`. Details:
 [`models/README.md`](models/README.md).
 
 ### 2. Fly expert laps (the seed set)
@@ -240,8 +240,8 @@ More: [`docs/HG_DAGGER.md`](docs/HG_DAGGER.md).
 | File | Use |
 |---|---|
 | `models/policy_seed_17.pt` | **Live policy.** 17-lap seed (now 18 filed), 300 epochs. Use this. |
-| `models/ROBOFLOW_RETRAIN.pt` | Default live pose (YOLO11s, unstretched, 8 kpts) |
-| `models/gate_pose_v5.pt` | Newer local pose train — pass `--yolo` to try it |
+| `models/gate_pose_v5.pt` | Default live pose (local v5, unstretched, 8 kpts) |
+| `models/ROBOFLOW_RETRAIN.pt` | Previous default (YOLO11s hosted train) |
 | `models/policy.pt` | Trainer default output name, not the flyer |
 | `models/policy_r1.pt`, `policy_r2.pt`, `policy_r4.pt` | Do not fly. Warm-starts that lost the launch. |
 | `models/ROBOFLOW_gatepose.pt` | Stretched-nano pose. Do not use. |
@@ -282,6 +282,7 @@ experiment paths. They are not the timed submission.
 
 - A gamepad or keyboard on a timed run
 - HSV-first detection, or HSV images as policy input
-- Privileged state, PPO, or a gym
+- Privileged state or a gym. Optional on-sim PPO (`tools/train_ppo.py`)
+  fine-tunes the seed with a KL leash; it is an experiment, not the timed path
 - `gatenet_handoff/` (4-corner CNN; unused)
 - `FLIGHT_MODE=race` / `spline` on the timed clock

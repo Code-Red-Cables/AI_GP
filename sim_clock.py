@@ -40,15 +40,18 @@ class SimClock:
         trim_frac: float = 0.15,
         speed_min: float = 0.02,
         speed_max: float = 4.0,
+        initial_speed: float = 1.0,
     ):
         self._trim_gain = float(trim_gain)
         self._trim_frac = float(trim_frac)
         self._speed_min = float(speed_min)
         self._speed_max = float(speed_max)
-        self._speed = 1.0
+        self._speed = max(self._speed_min, min(self._speed_max, float(initial_speed)))
         self._last_wall: Optional[float] = None
         self._last_sim: Optional[float] = None
         self._last_out: Optional[float] = None
+        self._span0: Optional[tuple[float, float]] = None
+        self._span1: Optional[tuple[float, float]] = None
 
     @property
     def speed(self) -> float:
@@ -60,6 +63,31 @@ class SimClock:
         self._last_wall = None
         self._last_sim = None
         self._last_out = None
+        self._span0 = None
+        self._span1 = None
+
+    def lock_speed_from_span(self) -> float:
+        """Snap ``speed`` to the wall→sim slope seen since the first tick.
+
+        The per-packet trim is too slow to learn 0.2x before launch. A 3 s
+        countdown at 0.2x is ~15 s of wall with several ``sim_boot_ms``
+        steps — enough for a one-shot slope.
+        """
+        if self._span0 is None or self._span1 is None:
+            return self._speed
+        dt_wall = self._span1[0] - self._span0[0]
+        dt_sim = self._span1[1] - self._span0[1]
+        if dt_wall < 0.8 or dt_sim <= 1e-4:
+            return self._speed
+        measured = dt_sim / dt_wall
+        if not math.isfinite(measured):
+            return self._speed
+        for nice in (0.1, 0.2, 0.25, 0.5, 1.0, 2.0):
+            if abs(measured - nice) <= max(0.03, 0.08 * nice):
+                self._speed = nice
+                return self._speed
+        self._speed = max(self._speed_min, min(self._speed_max, measured))
+        return self._speed
 
     def tick(self, wall: float, sim_boot: Optional[float]) -> float:
         """Advance and return simulator time (seconds).
@@ -78,6 +106,9 @@ class SimClock:
             self._last_wall = wall
             self._last_sim = sim
             self._last_out = 0.0 if sim is None else sim
+            if sim is not None:
+                self._span0 = (wall, sim)
+                self._span1 = (wall, sim)
             return self._last_out
 
         dt_wall = max(0.0, wall - self._last_wall)
@@ -104,6 +135,9 @@ class SimClock:
 
         if sim is not None:
             self._last_sim = sim
+            if self._span0 is None:
+                self._span0 = (wall, sim)
+            self._span1 = (wall, sim)
 
         if out < self._last_out:
             out = self._last_out

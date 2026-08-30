@@ -112,8 +112,9 @@ class Logger:
         # VIO-owned position_ned when present; VQ1 sim odometry otherwise.
         pos  = d.get('position_ned') or d.get('local_position_ned') or {}
         # Raw sim ODOMETRY, kept strictly separate from the estimator's belief
-        # above. pos_*/vel_* are dead reckoning and have been observed ranging
-        # to 1e7 m; odo_* is measurement. Never conflate them when scoring.
+        # above. pos_*/vel_* are commanded-physics dead reckoning (thrust +
+        # attitude + drag), not integrated HIGHRES_IMU. They have been observed
+        # ranging to 1e7 m; odo_* is measurement. Never conflate them.
         odo  = d.get('odometry')        or {}
         odo_q = odo.get('q') or (None, None, None, None)
         vio  = d.get('vio_stats')        or {}
@@ -327,6 +328,11 @@ class Logger:
             'bias_gx':        self._f(gyro_bias[0]),
             'bias_gy':        self._f(gyro_bias[1]),
             'bias_gz':        self._f(gyro_bias[2]),
+            'hover_trim':     self._f(ekf.get('hover_trim')),
+            'accel_source':   str(ekf.get('accel_source', 'none')),
+            'a_cmd_n':        self._f(ekf.get('a_cmd_n')),
+            'a_cmd_e':        self._f(ekf.get('a_cmd_e')),
+            'a_cmd_d':        self._f(ekf.get('a_cmd_d')),
             'active_gate':    race.get('active_gate', 'nan'),
             'sim_boot_ms':    race.get('sim_boot_ms', 'nan'),
             'race_start_ms':  race.get('race_start_ms', 'nan'),

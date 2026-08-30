@@ -14,7 +14,7 @@ feed-forward-arc planner:
 - `tools/build_course_map.py`, `tools/eval_gate_pose.py`, `tools/identify_drag.py`
 
 Wired through `config.py` / `setup.py` / `main.py`. Pose weights and the
-Windows venv live in this checkout (`models/ROBOFLOW_RETRAIN.pt`, `winvenv/`).
+Windows venv live in this checkout (`models/gate_pose_v5.pt`, `winvenv/`).
 
 ## Run (experiment only)
 

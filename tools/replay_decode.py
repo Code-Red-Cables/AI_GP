@@ -22,6 +22,7 @@ from race_obs import (  # noqa: E402
     decode_bin_probs,
     feature_dim,
     observation_from_row,
+    commanded_velocity_from_rows,
     stack_history,
 )
 
@@ -56,15 +57,29 @@ def main():
         print('checkpoint has no categorical head; nothing to compare')
         return
     ctx = bool(blob.get('context', False))
-    n_feat = feature_dim(with_context=ctx)
+    vel = bool(blob.get('velocity', False))
+    n_in = int(arch.get('n_in', 0) or 0)
+    if n_in in (32, 51):
+        vel = True
+    n_feat = feature_dim(with_context=ctx, with_velocity=vel)
 
     with open(path, newline='') as fh:
         rows = list(csv.DictReader(fh))
     print(f'== {os.path.basename(path)}  {len(rows)} rows')
     print(f'   weights={os.path.basename(args.weights)} history={history} '
-          f'bins={bins} context={ctx}')
+          f'bins={bins} context={ctx} velocity={vel}')
 
-    obs_rows = [observation_from_row(r, with_context=ctx) for r in rows]
+    vels = commanded_velocity_from_rows(rows) if vel else None
+    obs_rows = []
+    for i, r in enumerate(rows):
+        vx = vy = vz = 0.0
+        if vels is not None:
+            vx, vy, vz = vels[i]
+        obs_rows.append(
+            observation_from_row(
+                r, with_context=ctx, with_velocity=vel, vx=vx, vy=vy, vz=vz,
+            )
+        )
 
     # Forward every frame once; decode the same probabilities several ways.
     probs_seq = []

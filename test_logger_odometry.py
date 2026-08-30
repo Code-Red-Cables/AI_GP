@@ -1,7 +1,7 @@
 """The logger must record sim ODOMETRY separately from the estimator's belief.
 
 pos_*/vel_* come from position_ned / local_position_ned, which on this build is
-IMU dead reckoning -- earlier logs held those fields populated 100% of the time
+commanded-physics dead reckoning -- earlier logs held those fields populated 100% of the time
 while ranging to +81264 m and -10770500 m. odo_* must carry the sim's measured
 state instead, or HG-DAgger has no ground truth to validate the observation
 against and every recorded run is unusable for Phase 3.

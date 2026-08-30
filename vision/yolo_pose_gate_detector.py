@@ -38,7 +38,7 @@ from .yolo_gate_detector import (
 
 @dataclass(frozen=True)
 class PoseGateConfig:
-    model_path: str = "models/ROBOFLOW_RETRAIN.pt"
+    model_path: str = "models/gate_pose_v5.pt"
     gate_class_name: str = "gate"
     confidence_threshold: float = 0.25
     keypoint_confidence_threshold: float = 0.25

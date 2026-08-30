@@ -5,7 +5,7 @@
 The client default is the unstretched eight-keypoint pose model:
 
 ```text
-models/ROBOFLOW_RETRAIN.pt
+models/gate_pose_v5.pt
 ```
 
 Set `YOLO_POSE_MODEL_PATH` (or the env of the same name) to point at another
@@ -13,10 +13,10 @@ checkpoint after you copy it in. Earlier files still in this folder:
 
 | File | Role |
 |---|---|
-| `ROBOFLOW_RETRAIN.pt` | Default live pose (YOLO11s, unstretched, 8 kpts) |
+| `gate_pose_v5.pt` | Default live pose (local v5, unstretched, 8 kpts) |
+| `ROBOFLOW_RETRAIN.pt` | Previous default (YOLO11s hosted train) |
 | `ROBOFLOW_gatepose.pt` | Older stretched-nano train — do not use |
 | `gate_pose.pt` / `gate_pose_v2.pt` | Local Ultralytics installs from earlier datasets |
-| `gate_pose_v5.pt` | Local v5 train (pass `--yolo models/gate_pose_v5.pt` to fly it) |
 | `policy_seed_17.pt` | Live policy flyer (`H=64`, `chunk=5`, `bins=21`, `--context`) |
 | `policy.pt` | Trainer default output name — not automatically the flyer |
 

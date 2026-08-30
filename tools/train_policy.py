@@ -59,6 +59,7 @@ from race_obs import (  # noqa: E402
     augment_corners,
     labels_from_row,
     observation_from_row,
+    commanded_velocity_from_rows,
     visual_target_changed,
 )
 
@@ -78,6 +79,39 @@ _COLLISION_RE = re.compile(
 # Below this share of policy-flown frames a run counts as a pure human
 # demonstration rather than a DAgger round with interventions.
 DEMO_POLICY_FRAC = 0.02
+
+
+def sim_time_scale(rows, times) -> float:
+    """Sim seconds per wall second, from ``last_gate_time_ns`` vs ``t``.
+
+    Seed logs at CE 0.2x stamp ``t`` with wall clock (~0.1 s/row) while
+    physics advances 0.02 s/row. Striding on wall ``t`` then flying at 10 Hz
+    holds the opening pitch-down for 5x too long and never reaches the
+    look-up. 1.0 means the log is already in sim time (1x).
+    """
+    # last_gate_time_ns is the race clock at the last GATE_PASSED, held
+    # constant until the next pass. Scale is (Δ race s) / (Δ wall s) across
+    # those plateaus, not consecutive rows (a 1.3 s gate split is one row).
+    plateaus: list[tuple[float, float]] = []
+    prev_lg = None
+    for row, t in zip(rows, times):
+        ns = _num(row.get('last_gate_time_ns'))
+        if not math.isfinite(t) or not math.isfinite(ns) or ns <= 0.0:
+            continue
+        lg = ns * 1e-9
+        if prev_lg is None or lg > prev_lg + 1e-4:
+            plateaus.append((t, lg))
+            prev_lg = lg
+    samples = []
+    for (t0, l0), (t1, l1) in zip(plateaus, plateaus[1:]):
+        if t1 > t0 + 0.2 and l1 > l0:
+            samples.append((l1 - l0) / (t1 - t0))
+    if len(samples) < 3:
+        return 1.0
+    scale = float(np.median(samples))
+    if scale < 0.05 or scale > 1.01:
+        return 1.0
+    return scale
 
 
 def collision_times(telem_path: Path, min_impulse: float = 0.0) -> list[float]:
@@ -119,6 +153,7 @@ def load_run(
     min_impulse: float = 0.0,
     drop_policy_frames: bool = True,
     with_context: bool = False,
+    with_velocity: bool = False,
 ):
     """Return (obs, labels, weight_hint, valid, marked, gates) for one run.
 
@@ -181,14 +216,30 @@ def load_run(
             return False
         return any(abs(t - h) <= drop_collision_s for h in hits)
 
-    obs = np.zeros((n, feature_dim(with_context)), dtype=np.float32)
+    obs = np.zeros(
+        (n, feature_dim(with_context, with_velocity)), dtype=np.float32
+    )
     lab = np.zeros((n, LABEL_DIM), dtype=np.float32)
     valid = np.zeros(n, dtype=bool)
     gates = np.full(n, -1, dtype=np.int32)
     attempts = np.zeros(n, dtype=np.int32)
+    vel = (
+        commanded_velocity_from_rows(rows)
+        if with_velocity
+        else None
+    )
     for k, row in enumerate(rows):
+        vx = vy = vz = 0.0
+        if vel is not None:
+            vx, vy, vz = vel[k]
         vec = observation_from_row(
-            row, sort_by_u=sort_by_u, with_context=with_context
+            row,
+            sort_by_u=sort_by_u,
+            with_context=with_context,
+            with_velocity=with_velocity,
+            vx=vx,
+            vy=vy,
+            vz=vz,
         )
         obs[k] = vec
         y = labels_from_row(row)
@@ -224,7 +275,9 @@ def load_run(
     weight = np.where(marked, 2.0, 1.0).astype(np.float32)
     steps = [b - a for a, b in zip(times, times[1:])
              if math.isfinite(a) and math.isfinite(b) and 0.0 < b - a < 1.0]
-    row_dt = float(np.median(steps)) if steps else 0.1
+    wall_dt = float(np.median(steps)) if steps else 0.1
+    scale = sim_time_scale(rows, times)
+    row_dt = float(wall_dt * scale)
     return obs, lab, weight, valid, marked, gates, attempts, row_dt
 
 
@@ -405,15 +458,22 @@ def main() -> None:
     )
     ap.add_argument('--history', type=int, default=DEFAULT_HISTORY)
     ap.add_argument(
-        '--target-dt', type=float, default=0.1,
-        help='wall seconds between observations at deployment (1 / coach --hz). '
-             'Faster logs are strided so every window spans the same time. '
-             '0 disables.',
+        '--target-dt', type=float, default=0.02,
+        help='sim seconds between observations at deployment (1 / --hz). '
+             '0.2x seed logs are converted from wall time first. Default 0.02 '
+             'matches a 50 Hz flyer so a short look-up after pitch-down is '
+             'not smeared. 0 disables striding.',
     )
     ap.add_argument('--epochs', type=int, default=60)
     ap.add_argument('--batch', type=int, default=256)
     ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--val-frac', type=float, default=0.2)
+    ap.add_argument(
+        '--save-last', action='store_true',
+        help='write the final epoch, not the best validation snapshot. Use '
+             'this to memorize a small seed (val early-stop is why a 400-epoch '
+             'run can still fly unlike any demo).',
+    )
     ap.add_argument('--lead-s', type=float, default=0.5,
                     help='back-date interventions by this many seconds')
     ap.add_argument('--tail-s', type=float, default=0.5,
@@ -466,6 +526,17 @@ def main() -> None:
              'follower, at the cost of portability to another course.',
     )
     ap.add_argument(
+        '--velocity', action='store_true', default=True,
+        help='add commanded body velocity (vx, vy, vz). Reconstructed from '
+             'thrust + attitude + drag — not the accelerometer, not EKF pos. '
+             'Default on; a new seed must be trained, old n_in=29/48 '
+             'checkpoints still fly without it.',
+    )
+    ap.add_argument(
+        '--no-velocity', dest='velocity', action='store_false',
+        help='omit commanded velocity (match a pre-velocity checkpoint).',
+    )
+    ap.add_argument(
         '--chunk', type=int, default=1,
         help='predict this many future action steps per inference (action '
              'chunking). >1 forces a coherent short-term plan and lets the '
@@ -506,6 +577,7 @@ def main() -> None:
             min_impulse=args.min_impulse,
             drop_policy_frames=args.drop_policy_frames,
             with_context=args.context,
+            with_velocity=args.velocity,
         )
         if loaded is None:
             print(f'  {p.name}: empty, skipped', flush=True)
@@ -519,7 +591,8 @@ def main() -> None:
             hits = collision_times(p, args.min_impulse)
             extra = f', {len(hits)} contact(s)'
         print(f'  {p.name}: {len(obs)} rows, {int(valid.sum())} usable, '
-              f'{int(marked.sum())} in intervention windows{extra}')
+              f'{int(marked.sum())} in intervention windows, '
+              f'dt={_dt:.3f}s sim{extra}')
 
     if not runs:
         print('nothing loaded', flush=True)
@@ -574,8 +647,12 @@ def main() -> None:
 
     # Split by window index, but shuffle first so both halves span the runs.
     idx = rng.permutation(len(X))
-    n_val = max(1, int(args.val_frac * len(X)))
-    val_idx, train_idx = idx[:n_val], idx[n_val:]
+    if args.save_last or args.val_frac <= 0.0:
+        n_val = 0
+        train_idx, val_idx = idx, idx[: min(32, len(idx))]
+    else:
+        n_val = max(1, int(args.val_frac * len(X)))
+        val_idx, train_idx = idx[:n_val], idx[n_val:]
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'device={device}  train={len(train_idx)}  val={len(val_idx)}', flush=True)
@@ -636,7 +713,9 @@ def main() -> None:
             batch_size=args.batch, shuffle=True,
         )
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    sched = None
+    if not args.save_last:
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     best_mae = float('inf')
     best_state = None
@@ -704,7 +783,8 @@ def main() -> None:
             opt.step()
             run_loss += float(loss.detach()) * len(xb)
             seen += len(xb)
-        sched.step()
+        if sched is not None:
+            sched.step()
 
         model.eval()
         with torch.no_grad():
@@ -747,8 +827,10 @@ def main() -> None:
                   f'{100 * idle_true:.0f}%',
                   flush=True)
 
-    if best_state is not None:
+    if best_state is not None and not args.save_last:
         model.load_state_dict(best_state)
+    elif args.save_last:
+        print('saving last epoch (--save-last); not the best val snapshot', flush=True)
 
     # Baseline: predict the training mean. A policy that cannot beat this has
     # learned nothing, which is the check the earlier attempt lacked.
@@ -772,6 +854,7 @@ def main() -> None:
         'history': args.history,
         'sort_by_u': bool(args.sort_by_u),
         'context': bool(args.context),
+        'velocity': bool(args.velocity),
         'chunk': int(args.chunk),
         'bins': int(args.bins),
         'target_dt': float(args.target_dt),

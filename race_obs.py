@@ -17,11 +17,17 @@ privileged state exists.
     "is -1 a position or a sentinel"
   * roll and pitch (gravity-referenced, available on both builds)
   * body rates from HIGHRES_IMU
+  * optional body velocity from commanded thrust + attitude + drag
+    (``--velocity``). A quadrotor is its own accelerometer: world accel is
+    ``g − (thr/hover)·g·(R @ e_z) − drag(v)``, integrated in FRD so yaw is
+    never required. This is not privileged state and does not use the
+    competition accelerometer (horizontal correlation with true velocity ~0)
+    or the EKF position that once diverged to 1e7 m.
 
 Deliberately excluded, each because it is unavailable or misleading here:
 
-  position / velocity   VQ2 publishes neither; the EKF's belief diverged to
-                        1e7 m, so it is not a substitute
+  position / EKF vel    VQ2 publishes neither; IMU-integrated EKF vel is not
+                        a substitute. Commanded body velocity is the replacement.
   absolute yaw          unobservable without a magnetometer
   PnP range / pose      paper1 uses no pose estimation at all, and PnP was
                         non-null in 1 of 39 laps on this detector
@@ -63,14 +69,20 @@ CORNER_CHANNELS = tuple(
 )
 VIS_CHANNELS = tuple(f'vis{i}' for i in range(KEYPOINT_COUNT))
 STATE_CHANNELS = ('roll', 'pitch', 'gx', 'gy', 'gz')
+VEL_CHANNELS = ('vx', 'vy', 'vz')
+VEL_DIM = len(VEL_CHANNELS)
+# Body-frame m/s. Race speed is ~20 m/s; clip collisions the way gyro is clipped.
+VEL_CLIP = 20.0
 
 FEATURE_NAMES: tuple[str, ...] = CORNER_CHANNELS + VIS_CHANNELS + STATE_CHANNELS
 FEATURE_DIM = len(FEATURE_NAMES)
+FEATURE_NAMES_VEL: tuple[str, ...] = FEATURE_NAMES + VEL_CHANNELS
+FEATURE_DIM_VEL = len(FEATURE_NAMES_VEL)
 
 # Observation layout. Visual target (corners + visibility + optional one-hot)
-# can snap on a new lock; IMU (roll/pitch/gyro) must not.
+# can snap on a new lock; IMU (roll/pitch/gyro) and commanded velocity must not.
 VISUAL_END = 2 * KEYPOINT_COUNT + KEYPOINT_COUNT  # 24
-STATE_END = VISUAL_END + len(STATE_CHANNELS)  # 29
+STATE_END = VISUAL_END + len(STATE_CHANNELS)  # 29; velocity, if present, follows
 # A new lock is a centre jump of this many normalised pixels, a reacquire
 # after unseen, or an active_gate one-hot change. Tracking jitter is smaller.
 SNAP_VISUAL = os.environ.get('OBS_SNAP_VISUAL', '1').strip().lower() not in (
@@ -93,36 +105,88 @@ CONTEXT_CHANNELS: tuple[str, ...] = (
 )
 FEATURE_NAMES_CTX: tuple[str, ...] = FEATURE_NAMES + CONTEXT_CHANNELS
 FEATURE_DIM_CTX = len(FEATURE_NAMES_CTX)
+FEATURE_NAMES_VEL_CTX: tuple[str, ...] = FEATURE_NAMES_VEL + CONTEXT_CHANNELS
+FEATURE_DIM_VEL_CTX = len(FEATURE_NAMES_VEL_CTX)
 
 
-def feature_dim(with_context: bool = False) -> int:
-    return FEATURE_DIM_CTX if with_context else FEATURE_DIM
+def feature_dim(with_context: bool = False, with_velocity: bool = False) -> int:
+    n = FEATURE_DIM
+    if with_velocity:
+        n += VEL_DIM
+    if with_context:
+        n += len(CONTEXT_CHANNELS)
+    return n
+
+
+def state_end_of(obs) -> int:
+    """Index after IMU (+ velocity). Context, if any, starts here."""
+    n = len(_as_seq(obs))
+    if n in (FEATURE_DIM_VEL, FEATURE_DIM_VEL_CTX):
+        return STATE_END + VEL_DIM
+    return STATE_END
 
 
 def _as_seq(obs) -> list[float]:
     return list(obs)
 
 
-def visible_center(obs) -> Optional[tuple[float, float]]:
-    """Mean (u, v) of visible corners, or None if the gate is unseen."""
+def _visible_uv(obs, *, ids: Optional[Iterable[int]] = None) -> tuple[list[float], list[float]]:
     seq = _as_seq(obs)
+    if ids is None:
+        ids = range(KEYPOINT_COUNT)
     us: list[float] = []
     vs: list[float] = []
-    for i in range(KEYPOINT_COUNT):
+    for i in ids:
         if seq[2 * KEYPOINT_COUNT + i] > 0.0:
             us.append(seq[2 * i])
             vs.append(seq[2 * i + 1])
+    return us, vs
+
+
+def visible_center(obs) -> Optional[tuple[float, float]]:
+    """Mean (u, v) of visible corners, or None if the gate is unseen."""
+    us, vs = _visible_uv(obs)
     if not us:
         return None
     return (sum(us) / len(us), sum(vs) / len(vs))
 
 
+def visible_span(obs) -> Optional[float]:
+    """Apparent size: hypot of the u/v ranges of visible corners.
+
+    Prefers the outer ring (ids 0–3) when at least two of those are seen,
+    because that ring's physical size is what encodes range.
+    """
+    us, vs = _visible_uv(obs, ids=range(4))
+    if len(us) < 2:
+        us, vs = _visible_uv(obs)
+    if len(us) < 2:
+        return None
+    return math.hypot(max(us) - min(us), max(vs) - min(vs))
+
+
+def approach_potential(obs) -> Optional[float]:
+    """span × alignment. Grows only when the gate gets bigger *and* stays aimed.
+
+    None if the gate is unseen. Image-diagonal normalisation so a corner lock
+    is ~0 and a centered lock is ~1, times apparent size in [0, √2].
+    """
+    span = visible_span(obs)
+    center = visible_center(obs)
+    if span is None or center is None:
+        return None
+    offset = math.hypot(center[0] - 0.5, center[1] - 0.5)
+    align = max(0.0, 1.0 - offset / math.sqrt(0.5))
+    return float(span * align)
+
+
 def context_gate(obs) -> Optional[int]:
     """Argmax of the active_gate one-hot, or None if context is absent/empty."""
     seq = _as_seq(obs)
-    if len(seq) < STATE_END + N_GATES:
+    start = state_end_of(seq)
+    if len(seq) < start + N_GATES:
         return None
-    onehot = seq[STATE_END: STATE_END + N_GATES]
+    onehot = seq[start: start + N_GATES]
     if not any(v > 0.0 for v in onehot):
         return None
     return max(range(N_GATES), key=lambda i: onehot[i])
@@ -161,11 +225,13 @@ def apply_visual_snap(frames, source) -> None:
     """
     src = _as_seq(source)
     vis = src[:VISUAL_END]
-    ctx = src[STATE_END:] if len(src) > STATE_END else None
+    imu_end = state_end_of(src)
+    ctx = src[imu_end:] if len(src) > imu_end else None
     for fr in frames:
         fr[:VISUAL_END] = vis
-        if ctx is not None and len(fr) > STATE_END:
-            fr[STATE_END:] = ctx
+        end = state_end_of(fr)
+        if ctx is not None and len(fr) > end:
+            fr[end:] = ctx
 
 
 def context_features(gate_index) -> list[float]:
@@ -327,6 +393,10 @@ def build_observation(
     gx: float = 0.0,
     gy: float = 0.0,
     gz: float = 0.0,
+    vx: Optional[float] = None,
+    vy: Optional[float] = None,
+    vz: Optional[float] = None,
+    with_velocity: bool = False,
     min_confidence: float = 0.25,
     sort_by_u: bool = False,
     frame_w: float = FRAME_W,
@@ -394,6 +464,10 @@ def build_observation(
     for value in (gx, gy, gz):
         f = _num(value)
         state.append(0.0 if math.isnan(f) else _clip(f, GYRO_CLIP))
+    if with_velocity:
+        for value in (vx, vy, vz):
+            f = _num(value)
+            state.append(0.0 if math.isnan(f) else _clip(f, VEL_CLIP))
 
     if gate_index is None:
         return corners + vis + state
@@ -453,6 +527,10 @@ def observation_from_row(
     *,
     sort_by_u: bool = False,
     with_context: bool = False,
+    with_velocity: bool = False,
+    vx: float = 0.0,
+    vy: float = 0.0,
+    vz: float = 0.0,
 ) -> list[float]:
     """Build an observation from one telemetry CSV row.
 
@@ -482,9 +560,74 @@ def observation_from_row(
         gx=_num(row.get('gx_imu')),
         gy=_num(row.get('gy_imu')),
         gz=_num(row.get('gz_imu')),
+        vx=vx,
+        vy=vy,
+        vz=vz,
+        with_velocity=with_velocity,
         sort_by_u=sort_by_u,
         gate_index=row.get('active_gate') if with_context else None,
     )
+
+
+def commanded_velocity_from_rows(rows: Sequence[dict]) -> list[list[float]]:
+    """Replay commanded body velocity over a telemetry log.
+
+    Uses wall-clock ``t`` (physics on this plant tracks wall, not sim_boot).
+    Zeros on a new ``attempt``. Same integrator the live policy steps.
+    """
+    import numpy as np
+    from ekf.commanded_accel import BodyVelocityIntegrator
+
+    try:
+        import config as _cfg
+        hover0 = float(getattr(_cfg, 'HOVER_THRUST', 0.255))
+        k_body = np.array(
+            [
+                float(getattr(_cfg, 'DRAG_KX', -0.50)),
+                float(getattr(_cfg, 'DRAG_KY', -0.50)),
+                float(getattr(_cfg, 'DRAG_KZ', -0.15)),
+            ],
+            dtype=np.float64,
+        )
+    except Exception:
+        hover0 = 0.255
+        k_body = None
+
+    integ = BodyVelocityIntegrator(hover_trim=hover0, k_body=k_body)
+    out: list[list[float]] = []
+    prev_t: Optional[float] = None
+    prev_attempt: Optional[int] = None
+    for row in rows:
+        attempt = _num(row.get('attempt'))
+        att_i = int(attempt) if math.isfinite(attempt) else 0
+        if prev_attempt is not None and att_i != prev_attempt:
+            integ.reset()
+            prev_t = None
+        t = _num(row.get('t'))
+        if prev_t is None or not math.isfinite(t):
+            dt = 0.02
+        else:
+            dt = t - prev_t
+        if not math.isfinite(dt) or dt <= 0.0:
+            dt = 0.02
+        roll, pitch = attitude_from_row(row)
+        hover = _num(row.get('hover_trim'))
+        if math.isnan(hover):
+            hover = _num(row.get('hover_thrust'))
+        if math.isnan(hover):
+            hover = hover0
+        thrust = _num(row.get('cmd_thrust'))
+        if math.isnan(thrust):
+            thrust = hover
+        omega = np.array(
+            [_num(row.get('gx_imu')), _num(row.get('gy_imu')), _num(row.get('gz_imu'))],
+            dtype=np.float64,
+        )
+        v = integ.step(dt, thrust, roll, pitch, omega, hover_trim=hover)
+        out.append([float(v[0]), float(v[1]), float(v[2])])
+        prev_t = t if math.isfinite(t) else prev_t
+        prev_attempt = att_i
+    return out
 
 
 def labels_from_row(row: dict) -> list[float]:

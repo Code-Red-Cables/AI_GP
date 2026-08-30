@@ -45,7 +45,7 @@ Expect `HIGHRES_IMU` present. Missing `ATTITUDE` / `ODOMETRY` /
 ## Step 2 — perception
 
 Default detector is YOLO pose (`GATE_DETECTOR_BACKEND=yolo_pose`) with
-`YOLO_POSE_MODEL_PATH=models/ROBOFLOW_RETRAIN.pt`. HSV confirm and the
+`YOLO_POSE_MODEL_PATH=models/gate_pose_v5.pt`. HSV confirm and the
 global HSV fallback are **off**. Do not calibrate HSV as a prerequisite.
 
 Optional: dump frames for later pose eval (`tools/capture_frames.py`) or

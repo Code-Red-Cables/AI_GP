@@ -90,11 +90,12 @@ SENSOR_FUTURE_TOLERANCE_S = 0.05
 CONTROL_MIN_DT_S = 1.0 / 500.0
 CONTROL_MAX_DT_S = 0.05
 
-# ---- PnP + IMU state estimation ----
+# ---- PnP + commanded-physics state estimation ----
 # The VQ2 sim sends no attitude (deprecated) and no LOCAL_POSITION_NED.
-# ekf_estimator.py / ekf/drone_ekf.py dead-reckon HIGHRES_IMU and correct with
-# dual-gate PnP fixes (vision/dual_gate_pnp.py + vision/yolo_pnp.py),
-# publishing shared_data['position_ned'] for the planner.
+# ekf_estimator.py / ekf/drone_ekf.py propagate gyro for attitude and
+# commanded thrust+attitude+drag for velocity (the quadrotor is its own
+# accelerometer — HIGHRES_IMU accel is not integrated). Dual-gate PnP
+# (vision/dual_gate_pnp.py + vision/yolo_pnp.py) corrects position.
 #
 # PID tuning order (matches the procedure proven on the Q2_pnp branch):
 #   1. HOVER_THRUST first — stationary hover, zero commanded velocity.
@@ -130,10 +131,10 @@ if FLIGHT_MODE not in {'assist', 'kalman', 'spline', 'race', 'policy'}:
         'FLIGHT_MODE must be "assist", "kalman", "spline", "race" or "policy"'
     )
 POLICY_WEIGHTS = os.environ.get('POLICY_WEIGHTS', 'models/policy_seed_17.pt')
-# How often the policy history advances. Default matches the coach loop
-# (20 Hz), not CONTROL_HZ. A 99 Hz main.py loop would otherwise compress
-# H=64 into well under a second. Pass --hz 10 to match train --target-dt.
-POLICY_LOOP_HZ = float(os.environ.get('POLICY_LOOP_HZ', '20'))
+# How often the policy history advances. 0.2x seed logs are 0.02 s of sim
+# per row, so 50 Hz matches training. A 99 Hz main.py loop would otherwise
+# compress H=64 into well under a second.
+POLICY_LOOP_HZ = float(os.environ.get('POLICY_LOOP_HZ', '50'))
 
 # ---- Spline waypoint following on DERIVED position (FLIGHT_MODE=spline) ----
 # Capture/replay use the same EKF_USE_PNP so drift stays common-mode.
@@ -917,6 +918,8 @@ CAMERA_TILT_RAD = math.radians(20.0)   # camera tilted 20° UP from body forward
 # magnitude from earlier pitched-flight ax measurements.
 DRAG_KX = float(os.environ.get('DRAG_KX', '-0.50'))
 DRAG_KY = float(os.environ.get('DRAG_KY', '-0.50'))
+# Vertical body drag for commanded-physics velocity. 0 = thrust-gravity only.
+DRAG_KZ = float(os.environ.get('DRAG_KZ', '-0.15'))
 RACE_COURSE_MAP = os.environ.get('RACE_COURSE_MAP', 'course_map.json')
 # Forward drive for FLIGHT_MODE=race. POSITIVE is forward on this plant:
 # FORWARD_PITCH_SIGN is +1 and the manual stick maps W to +lean. The paper's
@@ -990,9 +993,21 @@ CRASH_ENV_IMPULSE_MIN     = float(os.environ.get('CRASH_ENV_IMPULSE_MIN', '0.15'
 # The VQ1 tuning build does publish it; set this to 0 on VQ1 to rehearse the
 # exact crash behaviour VQ2 will give you.
 CRASH_USE_SIM_ODOMETRY    = _env_bool('CRASH_USE_SIM_ODOMETRY', True)
-# When False, EKF only integrates IMU (dead reckoning) — no dual-gate PnP
-# corrections. Use on VQ1 to baseline IMU drift vs truth without vision.
+# When False, EKF only integrates the process model (dead reckoning) — no
+# dual-gate PnP corrections. Use on VQ1 to baseline drift vs truth without
+# vision.
 EKF_USE_PNP               = _env_bool('EKF_USE_PNP', True)
+# Velocity process input. ON: a_ned = g − (thr/hover_trim)·g · (R @ e_z)
+# − drag(v). OFF: integrate HIGHRES_IMU (historically ~0 correlation with
+# true horizontal velocity). Hover trim is the 1 g calibration and is
+# observed in quiet flight (EKF_HOVER_TRIM_TAU_S; 0 disables the observer).
+EKF_COMMANDED_ACCEL       = _env_bool('EKF_COMMANDED_ACCEL', True)
+EKF_COMMANDED_ACCEL_NOISE = float(
+    os.environ.get('EKF_COMMANDED_ACCEL_NOISE', '0.14')
+)
+EKF_HOVER_TRIM_TAU_S      = float(
+    os.environ.get('EKF_HOVER_TRIM_TAU_S', '2.0')
+)
 # ---- Bounded attitude references (stop roll/pitch/yaw integrating away) ----
 # Gyro integration has no absolute reference, so "level" walks a few tenths of
 # a degree per second (141532 drifted +4° → −23° over 50 s). Two aids bound it.
@@ -1112,7 +1127,7 @@ if GATE_DETECTOR_BACKEND not in {
     )
 
 YOLO_POSE_MODEL_PATH = os.environ.get(
-    'YOLO_POSE_MODEL_PATH', 'models/ROBOFLOW_RETRAIN.pt'
+    'YOLO_POSE_MODEL_PATH', 'models/gate_pose_v5.pt'
 )
 YOLO_MODEL_PATH = os.environ.get(
     'YOLO_MODEL_PATH', 'models/gate_detector.pt'

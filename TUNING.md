@@ -52,7 +52,7 @@ comes first — nothing downstream can compensate for it.
 ## Before you start
 
 - Pose weights must exist at `YOLO_POSE_MODEL_PATH` (default
-  `models/ROBOFLOW_RETRAIN.pt`), or `VisionRX` raises at startup.
+  `models/gate_pose_v5.pt`), or `VisionRX` raises at startup.
 - Sim running, logged in, **and in a race** — the menu alone publishes nothing.
 - A gate in view for anything that measures altitude.
 - Every run writes a CSV to `logs/tuning/` with the gains in each row, so any

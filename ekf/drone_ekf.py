@@ -7,8 +7,9 @@ State (16):
   ba (3) — accelerometer bias (m/s^2)
   bg (3) — gyro bias (rad/s)
 
-Prediction: IMU (gyro + accel) at high rate (~100–500 Hz samples).
-Correction: dual-gate PnP body-frame centres rotated into NED at ~30 Hz.
+Prediction: gyro for attitude; commanded thrust + attitude + drag for
+velocity (the quadrotor is its own accelerometer — HIGHRES_IMU accel is
+not integrated). Correction: dual-gate PnP at ~30 Hz.
 
 When Gate 2 leaves the FOV the filter keeps predicting from IMU alone —
 dead-reckoning memory — so the yaw look-at and path toward the last Gate-2
@@ -22,6 +23,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+
+from ekf.commanded_accel import commanded_accel_ned
 
 G = 9.80665
 G_NED = np.array([0.0, 0.0, G], dtype=np.float64)
@@ -205,6 +208,10 @@ class DroneEKF:
         gate_yaw_anchor_n: int = 15,
         gate_bias_innov_max: float = math.radians(8.0),
         gyro_bias_limit: float = math.radians(1.5),
+        use_commanded_accel: bool = True,
+        hover_trim: float = 0.255,
+        drag_k_body: Optional[np.ndarray] = None,
+        commanded_accel_noise: float = 0.14,
     ):
         self.x = np.zeros(self.N, dtype=np.float64)
         self.x[self.IDX_Q] = 1.0  # identity quaternion
@@ -231,6 +238,15 @@ class DroneEKF:
         self.gate_yaw_anchor_n = gate_yaw_anchor_n
         self.gate_bias_innov_max = gate_bias_innov_max
         self.gyro_bias_limit = gyro_bias_limit
+        self.use_commanded_accel = bool(use_commanded_accel)
+        self.hover_trim = float(hover_trim)
+        self.drag_k_body = (
+            None
+            if drag_k_body is None
+            else np.asarray(drag_k_body, dtype=np.float64).reshape(3)
+        )
+        self.commanded_accel_noise = float(commanded_accel_noise)
+        self.last_accel_ned = np.zeros(3, dtype=np.float64)
         self.last_horizon_innov = (0.0, 0.0)
         self.last_yaw_innov = 0.0
         self._last_horizon_t: Optional[float] = None
@@ -265,6 +281,10 @@ class DroneEKF:
             gate_yaw_anchor_n=self.gate_yaw_anchor_n,
             gate_bias_innov_max=self.gate_bias_innov_max,
             gyro_bias_limit=self.gyro_bias_limit,
+            use_commanded_accel=self.use_commanded_accel,
+            hover_trim=self.hover_trim,
+            drag_k_body=self.drag_k_body,
+            commanded_accel_noise=self.commanded_accel_noise,
         )
         self._last_t = timestamp
 
@@ -502,10 +522,21 @@ class DroneEKF:
         gyro_rad_s: np.ndarray,
         accel_m_s2: np.ndarray,
         timestamp: float,
+        *,
+        thrust: Optional[float] = None,
+        hover_trim: Optional[float] = None,
     ) -> EKFState:
-        """Propagate with IMU. Safe to call at ~100–500 Hz sample rate."""
+        """Propagate attitude from gyro; velocity from commanded physics.
+
+        ``accel_m_s2`` is used only for the parked-pad gravity snap (and the
+        optional coasting tilt aid). Position / velocity integrate
+        ``commanded_accel_ned`` when ``use_commanded_accel`` is set — missing
+        thrust is treated as hover (1 g along body −z).
+        """
         gyro = np.asarray(gyro_rad_s, dtype=np.float64).reshape(3)
         accel = np.asarray(accel_m_s2, dtype=np.float64).reshape(3)
+        if hover_trim is not None and math.isfinite(float(hover_trim)):
+            self.hover_trim = float(hover_trim)
         if self._last_t is None:
             self._last_t = timestamp
             return self.state()
@@ -523,6 +554,9 @@ class DroneEKF:
         bg = self.x[self.IDX_BG : self.IDX_BG + 3]
         omega = gyro - bg
         acc_body = accel - ba
+        thr = self.hover_trim if thrust is None else float(thrust)
+        if not math.isfinite(thr):
+            thr = self.hover_trim
 
         # Gravity tilt before using R for position (else parked tip reads as
         # identity and NED accel is wrong — localize 171202).
@@ -559,12 +593,27 @@ class DroneEKF:
                     )
 
         remaining = dt
+        vel_noise = (
+            self.commanded_accel_noise
+            if self.use_commanded_accel
+            else self.accel_noise
+        )
         while remaining > 1e-9:
             step = min(remaining, 0.05)
             remaining -= step
             q = quat_normalize(self.x[self.IDX_Q : self.IDX_Q + 4])
             R = quat_to_rot(q)
-            acc_ned = R @ acc_body + G_NED
+            if self.use_commanded_accel:
+                acc_ned = commanded_accel_ned(
+                    R,
+                    thr,
+                    self.hover_trim,
+                    self.x[self.IDX_V : self.IDX_V + 3],
+                    self.drag_k_body,
+                )
+            else:
+                acc_ned = R @ acc_body + G_NED
+            self.last_accel_ned = acc_ned
 
             self.x[self.IDX_P : self.IDX_P + 3] += (
                 self.x[self.IDX_V : self.IDX_V + 3] * step
@@ -577,8 +626,8 @@ class DroneEKF:
             )
 
             # Covariance: diagonal process noise (practical racing EKF).
-            q_pos = (0.5 * self.accel_noise * step * step) ** 2
-            q_vel = (self.accel_noise * step) ** 2
+            q_pos = (0.5 * vel_noise * step * step) ** 2
+            q_vel = (vel_noise * step) ** 2
             q_att = (self.gyro_noise * step) ** 2
             q_bias = (self.bias_noise * step) ** 2
             for i in range(3):

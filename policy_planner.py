@@ -13,11 +13,13 @@ from __future__ import annotations
 import collections
 import math
 import os
+import time
 from typing import Deque, Optional
 
 import numpy as np
 
 import config
+from ekf.commanded_accel import BodyVelocityIntegrator
 from race_obs import (
     BIN_DECODE_WINDOW,
     DEFAULT_HISTORY,
@@ -66,6 +68,8 @@ def observation_from_shared(
     *,
     sort_by_u: bool = False,
     with_context: bool = False,
+    with_velocity: bool = False,
+    vel_body=None,
 ) -> list[float]:
     """Build one observation row from the live shared_data dict."""
     gate = shared_data.get('gate_detection') or {}
@@ -77,6 +81,15 @@ def observation_from_shared(
     if with_context:
         race = shared_data.get('race_status') or {}
         gate_index = race.get('active_gate')
+    vx = vy = vz = None
+    if with_velocity:
+        src = vel_body
+        if src is None:
+            src = shared_data.get('cmd_vel_body')
+        if src is None:
+            vx = vy = vz = 0.0
+        else:
+            vx, vy, vz = float(src[0]), float(src[1]), float(src[2])
     return build_observation(
         kps,
         confs,
@@ -85,6 +98,10 @@ def observation_from_shared(
         gx=_num(imu.get('xgyro')),
         gy=_num(imu.get('ygyro')),
         gz=_num(imu.get('zgyro')),
+        vx=vx,
+        vy=vy,
+        vz=vz,
+        with_velocity=with_velocity,
         sort_by_u=sort_by_u,
         gate_index=gate_index,
     )
@@ -132,7 +149,22 @@ class PolicyPlanner:
         )
         self._sort_by_u = bool(blob.get('sort_by_u', False))
         self._with_context = bool(blob.get('context', False))
+        self._with_velocity = bool(blob.get('velocity', False))
         self._expect_dim = int(arch.get('n_in', FEATURE_DIM))
+        if self._expect_dim in (32, 51):
+            self._with_velocity = True
+        self._vel = BodyVelocityIntegrator(
+            hover_trim=float(getattr(config, 'HOVER_THRUST', 0.255)),
+            k_body=np.array(
+                [
+                    float(getattr(config, 'DRAG_KX', -0.50)),
+                    float(getattr(config, 'DRAG_KY', -0.50)),
+                    float(getattr(config, 'DRAG_KZ', -0.15)),
+                ],
+                dtype=np.float64,
+            ),
+        )
+        self._last_obs_t: Optional[float] = None
         self._buf = collections.deque(maxlen=self._history)
         # Overlapping chunk predictions for the current and future steps; the
         # planner averages whatever is available for "now" (ACT-style temporal
@@ -147,21 +179,52 @@ class PolicyPlanner:
         print(
             f'[POLICY] loaded {path}  H={self._history}  chunk={self._chunk}  '
             f'bins={self._bins or "off (regression)"}  '
-            f'context={self._with_context}  device={self._device}  '
-            f'sort_by_u={self._sort_by_u}',
+            f'context={self._with_context}  velocity={self._with_velocity}  '
+            f'device={self._device}  sort_by_u={self._sort_by_u}',
             flush=True,
         )
 
     def reset_episode(self) -> None:
         self._buf.clear()
         self._plans.clear()
+        self._vel.reset()
+        self._last_obs_t = None
+
+    def _step_velocity(self, shared_data: dict) -> Optional[list[float]]:
+        if not self._with_velocity:
+            return None
+        now = time.monotonic()
+        dt = 0.02 if self._last_obs_t is None else now - self._last_obs_t
+        self._last_obs_t = now
+        ctrl = shared_data.get('control_output') or {}
+        hover = _num(
+            ctrl.get('hover_thrust'),
+            float(getattr(config, 'HOVER_THRUST', 0.255)),
+        )
+        thrust = _num(ctrl.get('thrust'), hover)
+        roll, pitch = _live_attitude(shared_data)
+        imu = shared_data.get('highres_imu') or {}
+        omega = np.array(
+            [
+                _num(imu.get('xgyro')),
+                _num(imu.get('ygyro')),
+                _num(imu.get('zgyro')),
+            ],
+            dtype=np.float64,
+        )
+        v = self._vel.step(dt, thrust, roll, pitch, omega, hover_trim=hover)
+        shared_data['cmd_vel_body'] = [float(v[0]), float(v[1]), float(v[2])]
+        return shared_data['cmd_vel_body']
 
     def compute_target(self, shared_data: dict) -> dict:
         shared_data['planner_mode'] = self.name
+        vel = self._step_velocity(shared_data)
         obs = observation_from_shared(
             shared_data,
             sort_by_u=self._sort_by_u,
             with_context=self._with_context,
+            with_velocity=self._with_velocity,
+            vel_body=vel,
         )
         if len(obs) != self._expect_dim:
             raise RuntimeError(
@@ -257,5 +320,9 @@ class PolicyPlanner:
             'n_vis': float(sum(obs[16:24])),
             'history': len(self._buf),
             'visual_snap': snapped,
+            'vector': list(obs),
+            'vx': float(vel[0]) if vel is not None else None,
+            'vy': float(vel[1]) if vel is not None else None,
+            'vz': float(vel[2]) if vel is not None else None,
         }
         return target

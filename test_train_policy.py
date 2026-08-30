@@ -17,7 +17,7 @@ def _write(rows):
     fields = [
         't', 'control_authority', 'active_gate', 'attempt', 'exclude',
         'cmd_thrust', 'cmd_roll_rate', 'cmd_pitch_rate', 'cmd_yaw_rate',
-        'ahrs_roll', 'ahrs_pitch',
+        'ahrs_roll', 'ahrs_pitch', 'last_gate_time_ns',
         'roll', 'pitch', 'gx_imu', 'gy_imu', 'gz_imu',
     ] + [f'kp{i}_{a}' for i in range(8) for a in ('u', 'v', 'c')]
     writer = csv.DictWriter(tmp, fieldnames=fields)
@@ -276,6 +276,30 @@ class WindowStrideTests(unittest.TestCase):
         w = X[20]
         self.assertAlmostEqual(float(w[-1, 0] * 640.0) - float(w[0, 0] * 640.0),
                                3.0, places=0)
+
+    def test_slow_mo_log_uses_sim_seconds_not_wall(self):
+        """0.2x CE logs 10 Hz wall / 50 Hz sim — row_dt must be 0.02 s."""
+        from tools.train_policy import sim_time_scale
+
+        rows = []
+        for i in range(40):
+            # Held last_gate like the logger: +0.1 s sim every 0.5 s wall (0.2x).
+            gate_i = max(0, (i - 5) // 5)
+            rows.append({
+                't': f'{i * 0.1:.4f}',
+                'last_gate_time_ns': str(int(gate_i * 0.1 * 1e9)) if i >= 5 else '0',
+                'control_authority': 'human',
+                'cmd_thrust': '0.3', 'cmd_roll_rate': '0.0',
+                'cmd_pitch_rate': '0.0', 'cmd_yaw_rate': '0.0',
+                'gx_imu': '0', 'gy_imu': '0', 'gz_imu': '0',
+                **{f'kp{k}_u': '100' for k in range(8)},
+            })
+        times = [i * 0.1 for i in range(40)]
+        self.assertAlmostEqual(sim_time_scale(rows, times), 0.2, places=2)
+        _o, _l, _w, _v, _m, _g, _a, dt = load_run(
+            _write(rows), lead_s=0.0, tail_s=0.0, sort_by_u=False,
+        )
+        self.assertAlmostEqual(dt, 0.02, places=3)
 
 
 class ExcludeTests(unittest.TestCase):

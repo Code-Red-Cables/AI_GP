@@ -16,6 +16,8 @@ from race_obs import (
     DEFAULT_HISTORY,
     FEATURE_DIM,
     FEATURE_DIM_CTX,
+    FEATURE_DIM_VEL,
+    FEATURE_DIM_VEL_CTX,
     FEATURE_NAMES,
     KEYPOINT_COUNT,
     NOT_SEEN,
@@ -23,6 +25,9 @@ from race_obs import (
     VISUAL_END,
     apply_visual_snap,
     build_observation,
+    commanded_velocity_from_rows,
+    context_gate,
+    feature_dim,
     labels_from_row,
     observation_from_row,
     stack_history,
@@ -180,6 +185,66 @@ class VisualSnapTests(unittest.TestCase):
         self.assertEqual(frames[0][VISUAL_END:STATE_END], old[VISUAL_END:STATE_END])
         self.assertEqual(frames[0][STATE_END:], new[STATE_END:])
         self.assertEqual(len(frames[0]), FEATURE_DIM_CTX)
+
+    def test_velocity_is_state_and_does_not_snap(self):
+        old = build_observation(
+            [[80.0, 80.0]] * KEYPOINT_COUNT,
+            roll=0.1, gx=0.3, vx=4.0, vy=-1.0, vz=0.2,
+            with_velocity=True,
+            gate_index=2,
+        )
+        new = build_observation(
+            [[400.0, 180.0]] * KEYPOINT_COUNT,
+            roll=0.9, gx=1.0, vx=9.0, vy=2.0, vz=-3.0,
+            with_velocity=True,
+            gate_index=5,
+        )
+        self.assertEqual(len(old), FEATURE_DIM_VEL_CTX)
+        frames = [list(old)]
+        apply_visual_snap(frames, new)
+        self.assertEqual(frames[0][:VISUAL_END], new[:VISUAL_END])
+        self.assertEqual(frames[0][VISUAL_END:STATE_END + 3], old[VISUAL_END:STATE_END + 3])
+        self.assertEqual(context_gate(frames[0]), 5)
+
+
+class CommandedVelocityObsTests(unittest.TestCase):
+    def test_dims(self):
+        self.assertEqual(feature_dim(False, False), FEATURE_DIM)
+        self.assertEqual(feature_dim(False, True), FEATURE_DIM_VEL)
+        self.assertEqual(feature_dim(True, True), FEATURE_DIM_VEL_CTX)
+        self.assertEqual(len(build_observation(_kps(), with_velocity=True)), FEATURE_DIM_VEL)
+
+    def test_log_replay_matches_integrator(self):
+        rows = []
+        t = 0.0
+        for i in range(40):
+            t += 0.02
+            rows.append({
+                't': str(t),
+                'attempt': '1',
+                'cmd_thrust': '0.255',
+                'hover_thrust': '0.255',
+                'ahrs_roll': '0.0',
+                'ahrs_pitch': str(-0.35 if i > 5 else 0.0),
+                'gx_imu': '0', 'gy_imu': '0', 'gz_imu': '0',
+            })
+        series = commanded_velocity_from_rows(rows)
+        self.assertEqual(len(series), 40)
+        self.assertGreater(series[-1][0], 0.3)
+
+    def test_row_width_with_velocity(self):
+        row = {'roll': '0.1', 'pitch': '-0.2',
+               'gx_imu': '0.3', 'gy_imu': '0.4', 'gz_imu': '0.5'}
+        pts = _kps()
+        for i, (u, v) in enumerate(pts):
+            row[f'kp{i}_u'] = str(u)
+            row[f'kp{i}_v'] = str(v)
+            row[f'kp{i}_c'] = '0.9'
+        obs = observation_from_row(row, with_velocity=True, vx=1.5, vy=-0.2, vz=0.1)
+        self.assertEqual(len(obs), FEATURE_DIM_VEL)
+        self.assertAlmostEqual(obs[STATE_END], 1.5)
+        self.assertAlmostEqual(obs[STATE_END + 1], -0.2)
+        self.assertAlmostEqual(obs[STATE_END + 2], 0.1)
 
 
 class HistoryTests(unittest.TestCase):

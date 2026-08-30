@@ -123,8 +123,8 @@ fixes: [`models/README.md`](../models/README.md).
 HSV confirm / fallback is **off**. The policy needs identified keypoints,
 not a colour blob. Do not feed HSV-filtered images into the student.
 
-Default live weights: `models/ROBOFLOW_RETRAIN.pt`. Do not switch
-`YOLO_POSE_MODEL_PATH` to a new local train until that file has been copied
+Default live weights: `models/gate_pose_v5.pt`. Do not switch
+`YOLO_POSE_MODEL_PATH` to a newer train until that file has been copied
 in.
 
 ## Seed policy

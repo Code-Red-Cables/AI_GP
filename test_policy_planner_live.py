@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from race_obs import FEATURE_DIM, FEATURE_DIM_CTX
+from race_obs import FEATURE_DIM, FEATURE_DIM_CTX, FEATURE_DIM_VEL_CTX
 
 
 def _shared(gate=7):
@@ -27,26 +27,37 @@ def _shared(gate=7):
     }
 
 
-def _checkpoint(tmp: Path, *, context: bool, chunk: int, bins: int = 0) -> Path:
+def _checkpoint(
+    tmp: Path, *, context: bool, chunk: int, bins: int = 0, velocity: bool = False,
+) -> Path:
     from policy_net import RacePolicy, save_policy
 
     n_in = FEATURE_DIM_CTX if context else FEATURE_DIM
+    if velocity:
+        n_in = FEATURE_DIM_VEL_CTX if context else n_in + 3
     model = RacePolicy(n_in=n_in, history=8, chunk=chunk, bins=bins)
-    path = tmp / f'ctx{int(context)}_chunk{chunk}_bins{bins}.pt'
+    path = tmp / f'ctx{int(context)}_vel{int(velocity)}_chunk{chunk}_bins{bins}.pt'
     save_policy(
         path, model,
-        extra={'context': context, 'chunk': chunk, 'bins': bins},
+        extra={
+            'context': context, 'velocity': velocity,
+            'chunk': chunk, 'bins': bins,
+        },
     )
     return path
 
 
 class PlannerIntegrationTests(unittest.TestCase):
-    def _run(self, *, context: bool, chunk: int, bins: int = 0, steps: int = 8):
+    def _run(
+        self, *, context: bool, chunk: int, bins: int = 0, steps: int = 8,
+        velocity: bool = False,
+    ):
         from policy_planner import PolicyPlanner
 
         with tempfile.TemporaryDirectory() as tmp:
             path = _checkpoint(
-                Path(tmp), context=context, chunk=chunk, bins=bins
+                Path(tmp), context=context, chunk=chunk, bins=bins,
+                velocity=velocity,
             )
             planner = PolicyPlanner(str(path))
             shared = _shared()
@@ -72,6 +83,26 @@ class PlannerIntegrationTests(unittest.TestCase):
     def test_context_and_chunk_together(self):
         target, _shared = self._run(context=True, chunk=5)
         self.assertIsInstance(target['roll_rate'], float)
+
+    def test_velocity_checkpoint_flies_and_publishes_body_vel(self):
+        shared = _shared()
+        shared['control_output'] = {
+            'ahrs_roll': 0.05, 'ahrs_pitch': -0.35, 'thrust': 0.255,
+            'hover_thrust': 0.255,
+        }
+        from policy_planner import PolicyPlanner
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _checkpoint(
+                Path(tmp), context=True, chunk=1, velocity=True,
+            )
+            planner = PolicyPlanner(str(path))
+            target = None
+            for _ in range(8):
+                target = planner.compute_target(shared)
+        self.assertIn('thrust', target)
+        self.assertEqual(len(shared['policy_obs']['vector']), FEATURE_DIM_VEL_CTX)
+        self.assertIsNotNone(shared['cmd_vel_body'])
 
     def test_categorical_head_decodes_inside_the_action_range(self):
         """A discretised policy decodes to a continuous value in range.

@@ -57,8 +57,15 @@ class ObservationPanel:
 
     WINDOW = 'policy input'
 
-    def __init__(self, *, with_context: bool = False, scale: float = 1.0):
+    def __init__(
+        self,
+        *,
+        with_context: bool = False,
+        with_velocity: bool = False,
+        scale: float = 1.0,
+    ):
         self.with_context = bool(with_context)
+        self.with_velocity = bool(with_velocity)
         self.scale = float(scale)
         self._enabled = True
         self._cv2 = None
@@ -263,12 +270,20 @@ class ObservationPanel:
         line(f'gyro x/y/z {_fmt(obs[base + 2])} {_fmt(obs[base + 3])} '
              f'{_fmt(obs[base + 4])}')
 
-        if len(obs) > FEATURE_DIM:
+        imu_end = base + 5
+        if len(obs) in (FEATURE_DIM + 3, FEATURE_DIM + 3 + N_GATES + 1):
+            header('COMMANDED VEL (body)')
+            line(f'vx/vy/vz   {_fmt(obs[imu_end])} {_fmt(obs[imu_end + 1])} '
+                 f'{_fmt(obs[imu_end + 2])} m/s')
+            imu_end += 3
+
+        if len(obs) > imu_end:
             header('COURSE CONTEXT')
-            ctx = obs[FEATURE_DIM:]
-            hot = [i for i in range(N_GATES) if ctx[i] > 0.5]
+            ctx = obs[imu_end:]
+            hot = [i for i in range(N_GATES) if i < len(ctx) and ctx[i] > 0.5]
+            frac = ctx[N_GATES] if len(ctx) > N_GATES else 0.0
             line(f'active gate  {hot[0] if hot else "none"}'
-                 f'   progress {_fmt(ctx[N_GATES])}')
+                 f'   progress {_fmt(frac)}')
 
         race = shared_data.get('race_status') or {}
         header('RACE')
@@ -311,9 +326,15 @@ class ObservationPanel:
     def render(self, shared_data: dict) -> Optional[np.ndarray]:
         from policy_planner import observation_from_shared
 
-        obs = observation_from_shared(
-            shared_data, with_context=self.with_context
-        )
+        published = (shared_data.get('policy_obs') or {}).get('vector')
+        if published is not None:
+            obs = list(published)
+        else:
+            obs = observation_from_shared(
+                shared_data,
+                with_context=self.with_context,
+                with_velocity=self.with_velocity,
+            )
         img = self._frame(shared_data)
         # One detector on the camera: GateNet diamonds *or* YOLO keypoints,
         # never both. Presence of a gatenet payload is the switch — that is

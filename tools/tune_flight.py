@@ -433,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_man.add_argument(
         '--slow-mo', action='store_true',
         help='start with client slow-mo ON (match Cheat Engine / DxWnd). '
-             'Also scales telem LOG_HZ so H=32 still spans ~0.64 s of sim time.',
+             'Telem stays 50 Hz wall — do not drop log rate with CE.',
     )
     p_man.add_argument(
         '--slow-mo-scale', type=float, default=None,
@@ -459,6 +459,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_coach.add_argument(
         '--weights', default=None,
         help='policy checkpoint (default POLICY_WEIGHTS / models/policy.pt)',
+    )
+    p_coach.add_argument(
+        '--yolo', default=None, metavar='PATH',
+        help='pose weights (default YOLO_POSE_MODEL_PATH / '
+             'models/gate_pose_v5.pt)',
     )
     p_coach.add_argument(
         '--planner', choices=('policy', 'race', 'assist', 'kalman'),
@@ -679,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
              '(like a normal acro drone)',
     )
     common(p_acro, 0.0)
+    p_acro.set_defaults(hz=50.0)
     p_acro.add_argument(
         '--roll-rate-deg', type=float, default=None,
         help='full-stick roll rate °/s (default ACRO_ROLL_RATE_DEG)',
@@ -727,6 +733,16 @@ def build_parser() -> argparse.ArgumentParser:
         '--slow-mo-scale', type=float, default=None,
         help='client/CE slow-mo factor (default PILOT_SLOW_MO_SCALE; use 0.2)',
     )
+    p_acro.add_argument(
+        '--replay-attitude', default=None, metavar='PATH',
+        help='open-loop acro rate tape (export with '
+             'tools/export_attitude_tape.py --rates)',
+    )
+    p_acro.add_argument(
+        '--yolo', default=None, metavar='PATH',
+        help='pose weights (default YOLO_POSE_MODEL_PATH / '
+             'models/gate_pose_v5.pt)',
+    )
 
     p_prac = sub.add_parser(
         'practice',
@@ -757,6 +773,10 @@ def export_gain_overrides(args) -> dict:
         if value is not None:
             os.environ[env] = repr(float(value))
             applied[env] = float(value)
+    yolo = getattr(args, 'yolo', None)
+    if yolo:
+        os.environ['YOLO_POSE_MODEL_PATH'] = str(yolo)
+        applied['YOLO_POSE_MODEL_PATH'] = str(yolo)
     # Never let a tuning run auto-reset or bound itself via the race client.
     os.environ.setdefault('AUTO_RESET_ON_CRASH', '0')
     os.environ.setdefault('RUN_MAX_SECONDS', '0')
@@ -841,10 +861,11 @@ def export_gain_overrides(args) -> dict:
             except ValueError:
                 s = 0.77
             s = max(0.05, min(1.0, s))
-            # Keep ~50 Hz of *sim* samples under CE slow-mo.
-            log_hz = max(5.0, 50.0 * s)
-            os.environ['LOG_HZ'] = repr(log_hz)
-            applied['LOG_HZ'] = log_hz
+            # Do NOT scale LOG_HZ down with CE. 10 Hz wall at 0.2x throws
+            # away every other acro stick update; playback then invents
+            # slams from the leftover peaks. Always keep 50 Hz wall rows.
+            os.environ['LOG_HZ'] = '50'
+            applied['LOG_HZ'] = 50.0
     return applied
 
 
@@ -4286,7 +4307,7 @@ def _seed_logging_preflight(shared_data, *, slow_mo_scale: float | None) -> None
     import config
     from pathlib import Path as _Path
 
-    weights = _Path(getattr(config, 'YOLO_POSE_MODEL_PATH', 'models/gate_pose.pt'))
+    weights = _Path(getattr(config, 'YOLO_POSE_MODEL_PATH', 'models/gate_pose_v5.pt'))
     print('', flush=True)
     print('=== SEED LOGGING (HG-DAgger) ===', flush=True)
     print(
@@ -4351,10 +4372,11 @@ def run_manual(args) -> int:
         slow_mo_scale = float(getattr(config, 'PILOT_SLOW_MO_SCALE', 0.77) or 0.77)
     if slow_mo_on:
         slow_mo_scale = max(0.05, min(1.0, slow_mo_scale))
-        shared_data['log_hz'] = max(5.0, 50.0 * slow_mo_scale)
     else:
         slow_mo_scale = 1.0
-        shared_data['log_hz'] = float(getattr(config, 'LOG_HZ', 50) or 50)
+    # Always 50 Hz wall rows — slow-mo used to drop this to 10 Hz and
+    # throw away acro stick flicks.
+    shared_data['log_hz'] = float(getattr(config, 'LOG_HZ', 50) or 50)
 
     _seed_logging_preflight(
         shared_data,
@@ -4539,12 +4561,10 @@ def run_manual(args) -> int:
             if slowmos > slowmos_seen:
                 slowmos_seen = slowmos
                 slow_mo_on = not slow_mo_on
-                shared_data['log_hz'] = (
-                    max(5.0, 50.0 * slow_mo_scale) if slow_mo_on else 50.0
-                )
                 print(
                     f'[SLOW-MO] {"ON" if slow_mo_on else "OFF"} '
-                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]}',
+                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]} '
+                    '(log rate stays 50 Hz wall)',
                     flush=True,
                 )
 
@@ -4814,6 +4834,7 @@ def run_coach(args) -> int:
         from obs_panel import ObservationPanel
         panel = ObservationPanel(
             with_context=bool(getattr(planner, '_with_context', False)),
+            with_velocity=bool(getattr(planner, '_with_velocity', False)),
             scale=float(getattr(args, 'panel_scale', 1.0) or 1.0),
         )
         print('[COACH] input panel on (q or Esc in the window closes it)',
@@ -5492,8 +5513,8 @@ def run_pilot(args) -> int:
     state_estimator = components.get('state_estimator')
     logger = components.get('logger')
 
-    # Client slow-mo (seed laps at CE 0.2): scale telem rate so H=32 spans
-    # ~0.64 s of sim time, matching 50 Hz at 1x.
+    # Client slow-mo (seed laps at CE 0.2): log stays 50 Hz wall so acro
+    # stick flicks are not subsampled. Training resamples via sim time.
     slow_mo_on = bool(getattr(args, 'slow_mo', False)) or bool(
         getattr(config, 'PILOT_SLOW_MO', 0)
     )
@@ -5503,10 +5524,7 @@ def run_pilot(args) -> int:
     else:
         slow_mo_scale = float(getattr(config, 'PILOT_SLOW_MO_SCALE', 0.77) or 0.77)
     slow_mo_scale = max(0.05, min(1.0, slow_mo_scale))
-    if slow_mo_on:
-        shared_data['log_hz'] = max(5.0, 50.0 * slow_mo_scale)
-    else:
-        shared_data['log_hz'] = float(os.environ.get('LOG_HZ', '50') or 50)
+    shared_data['log_hz'] = float(os.environ.get('LOG_HZ', '50') or 50)
 
     if acro_mode:
         log_event = shared_data.get('log_event')
@@ -5699,11 +5717,21 @@ def run_pilot(args) -> int:
         att_start_delay_wall_s = max(0.0, att_start_offset_s) / max(
             1e-6, att_record_speed
         )
+        tape_hz = att_clock.hz()
+        if tape_hz > float(args.hz) + 0.5:
+            print(
+                f'[REPLAY] raising loop {args.hz:.0f} → {tape_hz:.0f} Hz '
+                f'(tape is {len(att_clock.samples)} samples / '
+                f'{att_clock.duration:.2f}s; 20 Hz skips the launch punch)',
+                flush=True,
+            )
+            args.hz = tape_hz
         print(
             f'[REPLAY] attitude tape {attitude_path}  '
             f'{att_clock.duration:.1f}s  n={len(att_clock.samples)}  '
             f'control={"acro_rates (exact/ZOH)" if att_acro_rates else "angle"}  '
-            f'start={att_start_offset_s * 1000:.1f}ms after GO',
+            f'start={att_start_offset_s * 1000:.1f}ms after GO  '
+            f'loop={args.hz:.0f} Hz',
             flush=True,
         )
     assist_after = getattr(args, 'assist_after_gate', None)
@@ -6091,9 +6119,54 @@ def run_pilot(args) -> int:
     last_t = None
     att_last_idx = None
     handoff_wait_announced = False
+    att_sim_clock = None
+    att_sim0 = None
+    att_elapsed_last = 0.0
+    if att_clock is not None:
+        from sim_clock import SimClock, sim_boot_s
+        att_sim_clock = SimClock(
+            initial_speed=slow_mo_scale if slow_mo_on else 1.0,
+        )
+
+        def _tick_replay_clock() -> None:
+            att_sim_clock.tick(time.monotonic(), sim_boot_s(shared_data))
+
+        def _replay_elapsed(now: float, engaged: bool) -> float:
+            nonlocal att_sim0, att_elapsed_last
+            sim_now = att_sim_clock.tick(now, sim_boot_s(shared_data))
+            if not engaged:
+                return 0.0
+            if att_sim0 is None:
+                att_sim0 = sim_now
+                att_elapsed_last = 0.0
+                return 0.0
+            raw = max(0.0, sim_now - att_sim0)
+            # Cap the increment, not the total. A hitch used to jump
+            # elapsed by 140 ms and skip the launch punch.
+            cap = 1.5 / max(float(args.hz), 1.0)
+            if raw > att_elapsed_last + cap:
+                att_sim0 += raw - (att_elapsed_last + cap)
+                raw = att_elapsed_last + cap
+            att_elapsed_last = raw
+            return raw
+
+        def _wait_replay_go(t_reset_mono: float) -> None:
+            if not _wait_for_race_go(
+                shared_data, label='REPLAY', on_tick=_tick_replay_clock,
+            ):
+                hold_s = _countdown_hold_s(args)
+                _wait_aligned_to_countdown(
+                    shared_data, t_reset_mono, hold_s,
+                    label='REPLAY',
+                    need_vision=not pure_fly,
+                    vision_grace_s=0.0 if pure_fly else 2.0,
+                    on_tick=_tick_replay_clock,
+                )
+            att_sim_clock.lock_speed_from_span()
     # Wall-rate loop; see run_manual. Slow-mo must not stretch this period or
-    # stick polling becomes visibly laggy, and `elapsed` also drives the
-    # attitude-tape playhead, which does its own speed inference.
+    # stick polling becomes visibly laggy. Tape playhead uses SimClock, not
+    # this period — but the loop still has to be ≥ tape Hz so ZOH does not
+    # skip launch samples (default --hz 20 vs a 50 Hz seed tape).
     period = 1.0 / max(args.hz, 1.0)
     started = time.monotonic()
     slowmos_seen = 0
@@ -6106,31 +6179,43 @@ def run_pilot(args) -> int:
         1, int(getattr(config, 'PILOT_ENGAGE_TICKS', 3) or 3)
     )
     engage_streak = {'n': 0, 'why': ''}
-    # Attitude-tape replay is itself the input → arm after countdown.
+    # Attitude-tape replay is itself the input → arm after the sim's GO.
     # Manual / fly: stay disarmed until YOU tip a stick or key.
     pilot_engaged = mode != 'manual'
     if pilot_engaged:
-        hold_s = _countdown_hold_s(args)
-        if pure_fly:
-            _wait_aligned_to_countdown(
-                shared_data, t_reset, hold_s,
-                label='PAD', need_vision=False, vision_grace_s=0.0,
-            )
+        if att_clock is not None:
+            _wait_replay_go(t_reset)
         else:
-            if not _wait_aligned_to_countdown(
-                shared_data, t_reset, hold_s,
-                label='PAD', need_vision=True,
-            ):
-                print('[FAIL] no gate in view', flush=True)
-                shutdown(components)
-                return 1
+            hold_s = _countdown_hold_s(args)
+            if pure_fly:
+                _wait_aligned_to_countdown(
+                    shared_data, t_reset, hold_s,
+                    label='PAD', need_vision=False, vision_grace_s=0.0,
+                )
+            else:
+                if not _wait_aligned_to_countdown(
+                    shared_data, t_reset, hold_s,
+                    label='PAD', need_vision=True,
+                ):
+                    print('[FAIL] no gate in view', flush=True)
+                    shutdown(components)
+                    return 1
         if att_start_delay_wall_s > 0.0:
             time.sleep(att_start_delay_wall_s)
         controller.arm()
         shared_data['flight_started'] = True
         # Tape t=0 is arm/GO, not the start of the slow-motion countdown.
         started = time.monotonic()
-        print('[SIM] armed — attitude replay', flush=True)
+        att_sim0 = None
+        att_elapsed_last = 0.0
+        if att_sim_clock is not None:
+            print(
+                f'[SIM] armed — attitude replay  '
+                f'CE speed≈{att_sim_clock.speed:.2f}',
+                flush=True,
+            )
+        else:
+            print('[SIM] armed — attitude replay', flush=True)
         if practice_rec is not None:
             practice_rec.start(time.perf_counter())
     else:
@@ -6498,23 +6583,25 @@ def run_pilot(args) -> int:
         started = time.monotonic()
         if att_clock is not None:
             att_clock.reset()
+            att_sim0 = None
+            att_elapsed_last = 0.0
             mode = 'attitude'
-            hold_s_r = _countdown_hold_s(args)
-            _wait_aligned_to_countdown(
-                shared_data, t_reset, hold_s_r,
-                label='PAD',
-                need_vision=not pure_fly,
-                vision_grace_s=0.0 if pure_fly else 2.0,
-            )
+            _wait_replay_go(t_reset)
             if att_start_delay_wall_s > 0.0:
                 time.sleep(att_start_delay_wall_s)
             controller.arm()
             shared_data['flight_started'] = True
             started = time.monotonic()
+            att_sim0 = None
+            att_elapsed_last = 0.0
             pilot_engaged = True
             if practice_rec is not None:
                 practice_rec.start(time.perf_counter())
-            print('[SIM] re-armed — attitude replay', flush=True)
+            print(
+                f'[SIM] re-armed — attitude replay  '
+                f'CE speed≈{att_sim_clock.speed:.2f}',
+                flush=True,
+            )
         else:
             mode = 'manual'
             pilot_engaged = False
@@ -6544,7 +6631,13 @@ def run_pilot(args) -> int:
         while True:
             now = time.monotonic()
             # Freeze HUD/time until you engage (manual/fly).
-            elapsed = (now - started) if pilot_engaged else 0.0
+            # Replay playhead is sim seconds (SimClock), not wall — otherwise
+            # a leftover 0.2x CE plays the whole lap's rates in ~3.5 s of
+            # physics and inverts a pitch flick that was never inverted.
+            if att_clock is not None:
+                elapsed = _replay_elapsed(now, pilot_engaged)
+            else:
+                elapsed = (now - started) if pilot_engaged else 0.0
             if pilot_engaged and args.seconds > 0 and elapsed >= args.seconds:
                 print('\n[STOP] time limit', flush=True)
                 break
@@ -6569,12 +6662,10 @@ def run_pilot(args) -> int:
             if slowmos > slowmos_seen:
                 slowmos_seen = slowmos
                 slow_mo_on = not slow_mo_on
-                shared_data['log_hz'] = (
-                    max(5.0, 50.0 * slow_mo_scale) if slow_mo_on else 50.0
-                )
                 print(
                     f'[SLOW-MO] {"ON" if slow_mo_on else "OFF"} '
-                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]}',
+                    f'x{slow_mo_scale:.2f}  log_hz={shared_data["log_hz"]} '
+                    '(log rate stays 50 Hz wall)',
                     flush=True,
                 )
 

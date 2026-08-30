@@ -4,8 +4,8 @@ Publishes ``shared_data['attitude']`` and ``shared_data['position_ned']`` from
 the EKF, and ``shared_data['ekf_state']`` for the dual-gate planner.
 
 When Gate 2 leaves the FOV the correction step simply omits it; the EKF
-prediction continues from IMU so Gate 2's last NED fix remains a
-dead-reckoning look-at target.
+keeps propagating with commanded thrust + attitude so Gate 2's last NED
+fix remains a dead-reckoning look-at target.
 """
 
 from __future__ import annotations
@@ -18,17 +18,38 @@ from typing import Optional
 import numpy as np
 
 import config
+from ekf.commanded_accel import observe_hover_trim
 from ekf.drone_ekf import DroneEKF
 
 
 class EKFEstimator:
     def __init__(self, data: dict):
         self.data = data
-        self.ekf = DroneEKF()
+        self.ekf = DroneEKF(
+            use_commanded_accel=bool(
+                getattr(config, 'EKF_COMMANDED_ACCEL', True)
+            ),
+            hover_trim=float(getattr(config, 'HOVER_THRUST', 0.255)),
+            drag_k_body=np.array(
+                [
+                    float(getattr(config, 'DRAG_KX', -0.50)),
+                    float(getattr(config, 'DRAG_KY', -0.50)),
+                    float(getattr(config, 'DRAG_KZ', -0.15)),
+                ],
+                dtype=np.float64,
+            ),
+            commanded_accel_noise=float(
+                getattr(config, 'EKF_COMMANDED_ACCEL_NOISE', 0.14)
+            ),
+        )
         self.is_running = False
         self._thread: Optional[threading.Thread] = None
         self._last_imu_ts = None
         self._last_pnp_ts = None
+        self._hover_trim = float(getattr(config, 'HOVER_THRUST', 0.255))
+        self._hover_trim_tau_s = float(
+            getattr(config, 'EKF_HOVER_TRIM_TAU_S', 2.0)
+        )
         self._gate_horizon_fixes = 0
         self._gate_yaw_fixes = 0
         self._gate_att_rejects = 0
@@ -76,9 +97,15 @@ class EKFEstimator:
         self._gate_att_max_reproj = float(
             getattr(config, 'EKF_GATE_ATT_MAX_REPROJ_PX', 6.0)
         )
+        if self.ekf.use_commanded_accel:
+            print(
+                '[EKF] velocity from commanded thrust+attitude '
+                f'(hover_trim={self._hover_trim:.3f}, not accelerometer)',
+                flush=True,
+            )
         if not self._use_pnp:
             print(
-                '[EKF] PnP corrections OFF — IMU dead reckoning only '
+                '[EKF] PnP corrections OFF — process-model dead reckoning only '
                 '(EKF_USE_PNP=0)',
                 flush=True,
             )
@@ -103,6 +130,7 @@ class EKFEstimator:
         self.ekf.reset(timestamp=0.0)
         self._last_imu_ts = None
         self._last_pnp_ts = None
+        self._hover_trim = float(getattr(config, 'HOVER_THRUST', 0.255))
         lock = self.data.get('lock')
         cleared = {
             'x': 0.0,
@@ -240,7 +268,40 @@ class EKFEstimator:
                 dtype=np.float64,
             )
             if self.data.get('flight_started'):
-                self.ekf.predict(gyro, accel, t_s)
+                ctrl = self.data.get('control_output') or {}
+                thrust = ctrl.get('thrust')
+                cfg_hover = ctrl.get('hover_thrust')
+                if cfg_hover is not None and math.isfinite(float(cfg_hover)):
+                    # Controller trim is the prior; the observer may walk it.
+                    if abs(self._hover_trim - float(cfg_hover)) > 0.08:
+                        self._hover_trim = float(cfg_hover)
+                thr = None if thrust is None else float(thrust)
+                if thr is not None and math.isfinite(thr):
+                    dt_obs = (
+                        0.0
+                        if self._last_imu_ts is None
+                        else max(0.0, min(0.05, t_s - self._last_imu_ts))
+                    )
+                    st_prev = self.ekf.state()
+                    self._hover_trim = observe_hover_trim(
+                        self._hover_trim,
+                        thr,
+                        roll=float(st_prev.roll_pitch_yaw[0]),
+                        pitch=float(st_prev.roll_pitch_yaw[1]),
+                        rates_rad_s=gyro,
+                        vel_d=float(st_prev.velocity_ned[2]),
+                        dt=dt_obs,
+                        tau_s=self._hover_trim_tau_s,
+                    )
+                else:
+                    thr = None
+                self.ekf.predict(
+                    gyro,
+                    accel,
+                    t_s,
+                    thrust=thr,
+                    hover_trim=self._hover_trim,
+                )
             else:
                 self.ekf._last_t = t_s
             self._last_imu_ts = t_s
@@ -328,6 +389,13 @@ class EKFEstimator:
             'horizon_innov_pitch': float(self.ekf.last_horizon_innov[1]),
             'yaw_innov': float(self.ekf.last_yaw_innov),
             'gyro_bias': st.gyro_bias.tolist(),
+            'hover_trim': float(self._hover_trim),
+            'accel_source': (
+                'commanded' if self.ekf.use_commanded_accel else 'imu'
+            ),
+            'a_cmd_n': float(self.ekf.last_accel_ned[0]),
+            'a_cmd_e': float(self.ekf.last_accel_ned[1]),
+            'a_cmd_d': float(self.ekf.last_accel_ned[2]),
         }
         if lock is not None:
             with lock:

@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 DEFAULT_WEIGHTS = 'models/policy_seed_17.pt'
-DEFAULT_LOOP_HZ = 20.0
+DEFAULT_LOOP_HZ = 50.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,8 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--hz', type=float, default=DEFAULT_LOOP_HZ,
-        help='policy history rate in Hz (default 20, matching coach). '
-             'Training --target-dt is 0.1 s; pass --hz 10 to match that.',
+        help='policy history rate in Hz (default 50). 0.2x seed logs are '
+             '0.02 s of sim per row; 10 Hz holds the opening pitch 5x too long.',
     )
     parser.add_argument(
         '--seconds', type=float, default=0.0,
@@ -57,7 +57,7 @@ def add_policy_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--yolo', default=None, metavar='PATH',
         help='pose weights (default YOLO_POSE_MODEL_PATH / '
-             'models/ROBOFLOW_RETRAIN.pt)',
+             'models/gate_pose_v5.pt)',
     )
     parser.add_argument(
         '--detector', choices=('yolo_pose', 'gatenet', 'hsv', 'yolo_hybrid'),
@@ -71,6 +71,10 @@ def add_policy_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         '--panel-scale', type=float, default=1.0,
         help='scale factor for the --panel window',
+    )
+    parser.add_argument(
+        '--no-reset', action='store_true',
+        help='one attempt only: do not send cmd 31000 after a crash',
     )
 
 
@@ -107,11 +111,19 @@ def apply_flight_env(args) -> dict:
     os.environ['EKF_USE_PNP'] = '0'
     os.environ['VISION_DISPLAY'] = '0'
     os.environ['TAKEOFF_DURATION_S'] = '0'
-    os.environ.setdefault('AUTO_RESET_ON_CRASH', '0')
-    os.environ.setdefault('CRASH_USE_SIM_ODOMETRY', '0')
+    auto_reset = not bool(getattr(args, 'no_reset', False))
+    os.environ['AUTO_RESET_ON_CRASH'] = '1' if auto_reset else '0'
+    # Floor z on VQ1 is sim odometry. Leave it on so a pad dive actually
+    # triggers 31000 instead of sitting in the dirt until you quit.
+    os.environ['CRASH_USE_SIM_ODOMETRY'] = '1' if auto_reset else '0'
+    # Default cooldown is 4 s — longer than a pad slam. Policy re-arm
+    # uses 0.4 s in CrashMonitor regardless; set the env so logs match.
+    if auto_reset:
+        os.environ['CRASH_RESET_COOLDOWN_S'] = '0.40'
     applied['EKF_USE_PNP'] = 0.0
     applied['VISION_DISPLAY'] = 0.0
     applied['TAKEOFF_DURATION_S'] = 0.0
+    applied['AUTO_RESET_ON_CRASH'] = 1.0 if auto_reset else 0.0
     return applied
 
 

@@ -26,6 +26,7 @@ from race_obs import (  # noqa: E402
     decode_bin_probs,
     labels_from_row,
     observation_from_row,
+    commanded_velocity_from_rows,
     stack_history,
 )
 
@@ -51,12 +52,16 @@ def main():
     history = int(arch.get('history', 32))
     bins = int(arch.get('bins', 0))
     ctx = bool(blob.get('context', False))
+    vel = bool(blob.get('velocity', False))
+    n_in = int(arch.get('n_in', 0) or 0)
+    if n_in in (32, 51):
+        vel = True
 
     paths = [p for p in sorted(glob.glob(args.glob))
              if sum(1 for _ in open(p)) - 1 >= args.min_rows]
     paths = paths[:args.max_runs]
     print(f'weights={os.path.basename(args.weights)} history={history} '
-          f'bins={bins} context={ctx}')
+          f'bins={bins} context={ctx} velocity={vel}')
     print(f'runs={len(paths)}')
 
     preds, acts = [], []
@@ -64,8 +69,17 @@ def main():
         with open(p, newline='') as fh:
             rows = list(csv.DictReader(fh))
         buf = []
-        for r in rows:
-            buf.append(observation_from_row(r, with_context=ctx))
+        vels = commanded_velocity_from_rows(rows) if vel else None
+        for i, r in enumerate(rows):
+            vx = vy = vz = 0.0
+            if vels is not None:
+                vx, vy, vz = vels[i]
+            buf.append(
+                observation_from_row(
+                    r, with_context=ctx, with_velocity=vel,
+                    vx=vx, vy=vy, vz=vz,
+                )
+            )
             if len(buf) > history:
                 buf.pop(0)
             if r.get('cmd_thrust') in (None, '') or not attitude_is_trusted(r):

@@ -7,6 +7,10 @@ SIM_SERVER_UDP_IP   = '127.0.0.1'
 SIM_SERVER_UDP_PORT = 14550
 
 
+def _policy_mode() -> bool:
+    return str(getattr(config, 'FLIGHT_MODE', '')).strip().lower() == 'policy'
+
+
 def _z_sources():
     """Altitude keys for crash logic, best first.
 
@@ -14,7 +18,13 @@ def _z_sources():
     there. The VQ1 build does publish it, which makes crash detection more
     reliable but no longer representative — set CRASH_USE_SIM_ODOMETRY=0 to
     rehearse VQ2 behaviour on the richer build.
+
+    Policy never falls back to EKF ``position_ned``. Commanded-accel EKF
+    ``pos_d`` runs away after a pitch slam and looks like a 20 m fall
+    while the craft is still in the air (092128).
     """
+    if _policy_mode():
+        return ('local_position_ned',)
     if config.CRASH_USE_SIM_ODOMETRY:
         return ('local_position_ned', 'position_ned')
     return ('position_ned',)
@@ -51,6 +61,23 @@ def _max_abs_z(shared_data):
     return best
 
 
+def _crash_grace_s() -> float:
+    """Seconds after arm during which floor hits are ignored.
+
+    Policy pad-slams in well under 1 s. The 2 s race/assist grace plus the
+    4 s reset cooldown ate the entire next crash, so auto-reset looked dead.
+    """
+    if _policy_mode():
+        return 0.40
+    return max(2.0, float(config.SIM_RESET_SETTLE_S) + 0.5)
+
+
+def _crash_cooldown_s() -> float:
+    if _policy_mode():
+        return 0.40
+    return float(config.CRASH_RESET_COOLDOWN_S)
+
+
 class CrashMonitor:
     """Detect floor crashes relative to the post-reset spawn, not absolute NED."""
 
@@ -70,9 +97,11 @@ class CrashMonitor:
         self.peak_climb = 0.0
         self.crash_since = None
         self.gate_slam_until = 0.0
-        self.grace_until = time.monotonic() + max(
-            2.0, config.SIM_RESET_SETTLE_S + 0.5
-        )
+        self.grace_until = time.monotonic() + _crash_grace_s()
+        try:
+            shared_data['attempt'] = self.attempt
+        except (TypeError, KeyError):
+            pass
         print(
             f'[SIM] attempt={self.attempt} z0={self.z0:.3f}',
             flush=True,
@@ -82,7 +111,7 @@ class CrashMonitor:
         """Return True once a floor crash is confirmed."""
         if now < self.grace_until:
             return False
-        if now - self.last_reset_at < config.CRASH_RESET_COOLDOWN_S:
+        if now - self.last_reset_at < _crash_cooldown_s():
             return False
 
         # 071313: auto-reset fired 30 ms before GATE_PASSED while phase=coast.
@@ -130,57 +159,43 @@ class CrashMonitor:
                 return False
 
         z = _read_z(shared_data)
-        if z is None:
-            return False
-        if self.z0 is None:
-            self.z0 = z
+        climbed = 0.0
+        fallen_below_spawn = False
+        dropped_from_peak = False
+        if z is not None:
+            if self.z0 is None:
+                self.z0 = z
+            climbed = self.z0 - z  # positive when above spawn
+            if climbed > self.peak_climb:
+                self.peak_climb = climbed
 
-        climbed = self.z0 - z  # positive when above spawn
-        if climbed > self.peak_climb:
-            self.peak_climb = climbed
+            # EKF/odom runaway (071945/0748): local can look fine while EKF blows.
+            # 0829: after a bad reset, peak_climb stayed ~0 while |z|→20 and the
+            # drone hovered in freefall until the time bound — don't require climb.
+            z_run = _max_abs_z(shared_data)
+            if z_run is not None and z_run > 15.0:
+                if self.crash_since is None:
+                    self.crash_since = now
+                return (now - self.crash_since) >= config.CRASH_CONFIRM_S
+            if abs(z - (self.z0 or 0.0)) > 25.0:
+                if self.crash_since is None:
+                    self.crash_since = now
+                return (now - self.crash_since) >= config.CRASH_CONFIRM_S
 
-        # EKF/odom runaway (071945/0748): local can look fine while EKF blows.
-        # 0829: after a bad reset, peak_climb stayed ~0 while |z|→20 and the
-        # drone hovered in freefall until the time bound — don't require climb.
-        z_run = _max_abs_z(shared_data)
-        if z_run is not None and z_run > 15.0:
-            if self.crash_since is None:
-                self.crash_since = now
-            return (now - self.crash_since) >= config.CRASH_CONFIRM_S
-        if abs(z - (self.z0 or 0.0)) > 25.0:
-            if self.crash_since is None:
-                self.crash_since = now
-            return (now - self.crash_since) >= config.CRASH_CONFIRM_S
+            # Only treat "below spawn" as a crash after we actually flew —
+            # otherwise a bad post-reset z0 causes an immediate re-trigger.
+            fallen_below_spawn = (
+                self.peak_climb >= 0.40
+                and climbed <= -config.CRASH_FLOOR_D_M
+            )
+            # Was airborne then lost most of the climb (tumble / drop).
+            dropped_from_peak = (
+                self.peak_climb >= 0.50
+                and climbed <= self.peak_climb - 0.80
+                and climbed < 0.05
+            )
 
-        # Only treat "below spawn" as a crash after we actually flew —
-        # otherwise a bad post-reset z0 causes an immediate re-trigger.
-        fallen_below_spawn = (
-            self.peak_climb >= 0.40
-            and climbed <= -config.CRASH_FLOOR_D_M
-        )
-        # Was airborne then lost most of the climb (tumble / drop).
-        dropped_from_peak = (
-            self.peak_climb >= 0.50
-            and climbed <= self.peak_climb - 0.80
-            and climbed < 0.05
-        )
-
-        env_slam = False
-        col = shared_data.get('collision') or {}
-        if col.get('id') == 1002:
-            try:
-                impulse = float(col.get('impulse') or 0.0)
-                ts_ns = int(col.get('ts') or 0)
-            except (TypeError, ValueError):
-                impulse, ts_ns = 0.0, 0
-            age_s = (time.time_ns() - ts_ns) * 1e-9 if ts_ns else 999.0
-            if (
-                impulse >= config.CRASH_ENV_IMPULSE_MIN
-                and 0.0 <= age_s <= 0.5
-                and self.peak_climb >= 0.35
-                and climbed < 0.20
-            ):
-                env_slam = True
+        env_slam = _env_slam(shared_data, climbed, self.peak_climb)
 
         crashed = fallen_below_spawn or dropped_from_peak or env_slam
         if crashed:
@@ -190,6 +205,29 @@ class CrashMonitor:
 
         self.crash_since = None
         return False
+
+
+def _env_slam(shared_data, climbed: float, peak_climb: float) -> bool:
+    col = shared_data.get('collision') or {}
+    if col.get('id') != 1002:
+        return False
+    try:
+        impulse = float(col.get('impulse') or 0.0)
+        ts_ns = int(col.get('ts') or 0)
+    except (TypeError, ValueError):
+        impulse, ts_ns = 0.0, 0
+    age_s = (time.time_ns() - ts_ns) * 1e-9 if ts_ns else 999.0
+    if not (0.0 <= age_s <= 0.5):
+        return False
+    if _policy_mode():
+        # Hard world/floor hit only. Soft pad scrape (0.05–0.2) is not a
+        # crash, and EKF "climb" must not gate this — odo is often missing.
+        return impulse >= 1.0
+    return (
+        impulse >= config.CRASH_ENV_IMPULSE_MIN
+        and climbed < 0.20
+        and peak_climb >= 0.35
+    )
 
 
 def _log_attempt(shared_data, monitor: CrashMonitor, logger) -> None:
@@ -325,8 +363,15 @@ def _reset_after_crash(
     # poisoned the next attempt. Clear until mavlink/EKF republish.
     shared_data['local_position_ned'] = None
     if not config.PERCEPTION_ONLY:
-        _wait_pad_vision(shared_data)
-        _early_start_hold()
+        # Policy crash re-arm: do not sit 45 s for a gate box while inverted
+        # in the dirt, and do not replay the 3.4 s early-start hold. First
+        # arm still uses the full pad wait + hold in run_racing().
+        if _policy_mode():
+            _wait_pad_vision(shared_data, timeout_s=1.5)
+            print('[SIM] policy crash re-arm — skip early-start hold', flush=True)
+        else:
+            _wait_pad_vision(shared_data)
+            _early_start_hold()
         controller.arm()
         shared_data['flight_started'] = True
     monitor.last_reset_at = time.monotonic()
@@ -393,6 +438,7 @@ def run_racing():
             scale = 1.0
         panel = ObservationPanel(
             with_context=bool(getattr(planner, '_with_context', False)),
+            with_velocity=bool(getattr(planner, '_with_velocity', False)),
             scale=scale,
         )
         print('[PANEL] observation window on (q or Esc closes the window)',

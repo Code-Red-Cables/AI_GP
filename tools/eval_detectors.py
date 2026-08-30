@@ -139,7 +139,7 @@ def main() -> None:
 
     yolo_det = None
     if not args.skip_yolo:
-        weights = Path(args.weights) if args.weights else ROOT / 'models' / 'ROBOFLOW_RETRAIN.pt'
+        weights = Path(args.weights) if args.weights else ROOT / 'models' / 'gate_pose_v5.pt'
         if not weights.is_file():
             print(f'yolo weights missing ({weights}) — skipping YOLO arm')
         else:

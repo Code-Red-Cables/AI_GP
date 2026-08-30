@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+import camera_model as cm
 import config
 from ekf.drag_ekf import DragEKF
 from vision.gate_ls_pose import solve_keypoints_ls
@@ -85,6 +86,8 @@ class RacePlanner:
         self._ekf = DragEKF(
             k_x=float(getattr(config, 'DRAG_KX', -0.5)),
             k_y=float(getattr(config, 'DRAG_KY', -0.5)),
+            k_z=float(getattr(config, 'DRAG_KZ', -0.15)),
+            hover_trim=float(getattr(config, 'HOVER_THRUST', 0.255)),
         )
         self._course = self._load_course(course_map_path or DEFAULT_COURSE_MAP)
         self._mode = 'align'  # align | arc
@@ -183,15 +186,29 @@ class RacePlanner:
     ) -> tuple[float, float]:
         """Advance the drag EKF; return body (forward, right) velocity.
 
-        Lateral velocity is the paper's damping term in eq. 22, recovered from
-        specific force via the drag model (eq. 14) rather than differentiated
-        from a noisy position.
+        Velocity is commanded physics (tilt + collective + drag), not
+        ``v = a_imu / k``. IMU accel is ignored for this integral.
         """
         accel, gyro = self._imu(shared_data)
         now = time.monotonic()
         dt = 0.01 if self._last_imu_t is None else max(1e-3, min(0.05, now - self._last_imu_t))
         self._last_imu_t = now
-        self._ekf.predict(accel, gyro, roll, pitch, yaw, dt)
+        ctrl = shared_data.get('control_output') or {}
+        hover = _num(
+            ctrl.get('hover_thrust'),
+            float(getattr(config, 'HOVER_THRUST', 0.255)),
+        )
+        thrust = _num(ctrl.get('thrust'), hover)
+        self._ekf.predict(
+            accel,
+            gyro,
+            roll,
+            pitch,
+            yaw,
+            dt,
+            thrust=thrust,
+            hover_trim=hover,
+        )
         v_xy = self._ekf.body_velocity_xy(accel)
         return float(v_xy[0]), float(v_xy[1])
 
@@ -380,10 +397,10 @@ class RacePlanner:
         self._arc_psi += sign * (v / r) * dt
 
         theta_c = math.radians(float(getattr(config, 'RACE_PITCH_DEG', -5.0)))
-        # Specific force leftovers in the body-fixed earth frame: approximate
-        # with body accel (drag already embedded).
-        a_y = float(accel[1])
-        a_z = float(accel[2])
+        # Coordinated-turn leftovers from commanded world accel (not IMU).
+        a_body = cm.rot_world_body(roll, pitch, yaw).T @ self._ekf.last_accel_ned
+        a_y = float(a_body[1])
+        a_z = float(a_body[2])
         num = (a_y - sign * (v * v) / r) * math.cos(theta_c)
         den = -G - a_z
         if abs(den) < 1e-3:
